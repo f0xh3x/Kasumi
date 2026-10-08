@@ -1,0 +1,940 @@
+//! The engine thread: owns the config, keeps one overlay window per monitor,
+//! polls the cursor to drive the hover state machine and click-through, and
+//! hides overlays behind fullscreen apps.
+
+use crate::config::{self, Anchor, Animation, Bar, Config, Geometry, MonitorRule};
+use crate::providers::{self, SharedConfig};
+use crate::win::{self, Monitor};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewUrl, WebviewWindowBuilder};
+
+/// Extra window height below the tallest shape so spring overshoot isn't clipped.
+const OVERSHOOT_MARGIN: f64 = 24.0;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Rect {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
+/// Everything the frontend of one overlay needs to draw itself (logical px).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Layout {
+    pub label: String,
+    pub monitor: String,
+    pub width: f64,
+    pub height: f64,
+    pub scale: f64,
+    pub geometry: Geometry,
+    pub animation: Animation,
+    pub bar: Bar,
+    pub notches: Vec<NotchLayout>,
+    pub widgets: toml::Table,
+    pub osd: config::Osd,
+    pub theme: config::Theme,
+    /// Draw notches that would touch or overlap as one.
+    pub combine_notches: bool,
+    pub expanded: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotchLayout {
+    pub id: String,
+    pub x: f64,
+    pub width: f64,
+    pub height: f64,
+    pub trigger_x: f64,
+    pub trigger_width: f64,
+    pub widgets: Vec<String>,
+    pub panel: Option<String>,
+    pub panel_width: f64,
+    pub panel_height: f64,
+    /// Every widget in it hides under windows and one covers it: the notch retracts.
+    pub hidden: bool,
+    /// Widgets hidden (under a window) while the rest of the notch stays.
+    pub hidden_widgets: Vec<String>,
+    /// "left"/"right" for the notch hugging that corner: its content keeps the
+    /// open bar's distance from the edge, so it doesn't shift as the bar opens.
+    pub edge: Option<String>,
+}
+
+/// A notch's measured content width, and without its hide-under-windows widgets.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
+pub struct NotchWidth {
+    pub full: f64,
+    pub compact: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Hover {
+    Idle,
+    Dwell(Instant),
+    Open,
+    Leave(Instant),
+}
+
+struct Overlay {
+    monitor: Monitor,
+    layout: Layout,
+    /// Interactive areas reported by the frontend, logical px relative to the window.
+    regions: Vec<Rect>,
+    hover: Hover,
+    expanded: bool,
+    hidden: bool,
+    ignoring: bool,
+    hwnd: Option<isize>,
+    /// Docking notches currently pushed out of their corner by a window.
+    undocked: Vec<String>,
+    /// When a fullscreen window was first seen on this monitor (hide is debounced).
+    fullscreen_since: Option<Instant>,
+    /// This monitor's notches, as resolved from the config (for docking).
+    defs: Vec<config::Notch>,
+    /// Content widths of auto-width notches, measured by the frontend.
+    measured: HashMap<String, NotchWidth>,
+}
+
+impl Overlay {
+    fn hit(&self, x: f64, y: f64) -> bool {
+        if self.regions.is_empty() {
+            // Frontend hasn't reported yet: assume the open bar.
+            return y >= 0.0 && y < self.layout.geometry.expanded_height && x >= 0.0 && x < self.layout.width;
+        }
+        self.regions.iter().any(|r| r.contains(x, y))
+    }
+}
+
+#[derive(Default)]
+pub struct Shared {
+    overlays: HashMap<String, Overlay>,
+    /// Overlays whose notches need repositioning (new measured widths).
+    relayout: HashSet<String>,
+}
+
+pub type SharedState = Arc<Mutex<Shared>>;
+
+pub struct ReloadSender(pub Sender<()>);
+
+#[derive(Clone, Serialize)]
+struct StatePayload {
+    expanded: bool,
+}
+
+// Commands are async so they run off the main thread and never contend with
+// window operations the engine dispatches there.
+
+#[tauri::command]
+pub async fn get_layout(window: tauri::WebviewWindow, state: State<'_, SharedState>) -> Result<Layout, String> {
+    let sh = state.lock().unwrap();
+    let o = sh.overlays.get(window.label()).ok_or("unknown overlay")?;
+    let mut layout = o.layout.clone();
+    layout.expanded = o.expanded;
+    Ok(layout)
+}
+
+#[tauri::command]
+pub async fn set_regions(window: tauri::WebviewWindow, state: State<'_, SharedState>, regions: Vec<Rect>) -> Result<(), String> {
+    let mut sh = state.lock().unwrap();
+    if let Some(o) = sh.overlays.get_mut(window.label()) {
+        o.regions = regions;
+    }
+    Ok(())
+}
+
+/// The frontend measured its notches' content; positions are recomputed with
+/// these widths (the engine thread picks this up on its next tick).
+#[tauri::command]
+pub async fn set_notch_widths(
+    window: tauri::WebviewWindow,
+    state: State<'_, SharedState>,
+    widths: HashMap<String, NotchWidth>,
+) -> Result<(), String> {
+    let mut sh = state.lock().unwrap();
+    let label = window.label().to_string();
+    let Some(o) = sh.overlays.get_mut(&label) else { return Ok(()) };
+    let near = |a: &NotchWidth, b: &NotchWidth| (a.full - b.full).abs() <= 0.5 && (a.compact - b.compact).abs() <= 0.5;
+    let changed = widths.iter().any(|(id, w)| o.measured.get(id).is_none_or(|old| !near(old, w)));
+    if changed {
+        o.measured.extend(widths);
+        sh.relayout.insert(label);
+    }
+    Ok(())
+}
+
+/// The frontend measured content (e.g. a bar dropdown) taller than the window: grow it.
+#[tauri::command]
+pub async fn set_content_height(window: tauri::WebviewWindow, state: State<'_, SharedState>, height: f64) -> Result<(), String> {
+    let (hwnd, m, h) = {
+        let mut sh = state.lock().unwrap();
+        let Some(o) = sh.overlays.get_mut(window.label()) else { return Ok(()) };
+        let wanted = (height + OVERSHOOT_MARGIN).ceil();
+        if wanted <= o.layout.height {
+            return Ok(());
+        }
+        o.layout.height = wanted;
+        (o.hwnd, o.monitor.clone(), wanted)
+    };
+    if let Some(hwnd) = hwnd {
+        let h_px = (h * m.scale).ceil() as i32;
+        window
+            .run_on_main_thread(move || win::place(hwnd, m.left, m.top, m.width(), h_px))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Converts logical px within an overlay to physical screen coordinates.
+pub fn to_screen(app: &AppHandle, label: &str, x: f64, y: f64) -> Option<(i32, i32)> {
+    let state = app.state::<SharedState>();
+    let sh = state.lock().unwrap();
+    let m = &sh.overlays.get(label)?.monitor;
+    Some((m.left + (x * m.scale).round() as i32, m.top + (y * m.scale).round() as i32))
+}
+
+/// The overlay an OSD should appear on: the one under the cursor, else the
+/// primary monitor's. None while that overlay is hidden (fullscreen app).
+pub fn osd_target(app: &AppHandle) -> Option<String> {
+    let (cx, cy) = win::cursor_pos()?;
+    let state = app.state::<SharedState>();
+    let sh = state.lock().unwrap();
+    let on = |o: &Overlay| {
+        let m = &o.monitor;
+        cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
+    };
+    let (label, o) = sh
+        .overlays
+        .iter()
+        .find(|(_, o)| on(o))
+        .or_else(|| sh.overlays.iter().find(|(_, o)| o.monitor.primary))?;
+    (!o.hidden).then(|| label.clone())
+}
+
+/// Frontend console errors, forwarded to the app log.
+#[tauri::command]
+pub async fn fe_log(window: tauri::WebviewWindow, message: String) {
+    eprintln!("[statusnotch:{}] {message}", window.label());
+}
+
+pub fn start(app: &AppHandle) {
+    let shared: SharedState = Arc::default();
+    app.manage(shared.clone());
+    let (tx, rx) = mpsc::channel();
+    app.manage(ReloadSender(tx.clone()));
+
+    // Load first: on first run it creates the directory the watcher needs.
+    let cfg = config::load().unwrap_or_else(|e| {
+        eprintln!("[statusnotch] config error, using defaults: {e}");
+        config::fallback()
+    });
+    let shared_cfg: SharedConfig = Arc::new(RwLock::new(cfg.clone()));
+    providers::start(app, shared_cfg.clone());
+
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("statusnotch-engine".into())
+        .spawn(move || {
+            let watcher = config::watch(tx);
+            if watcher.is_none() {
+                eprintln!("[statusnotch] config hot-reload unavailable");
+            }
+            Engine { app, shared, cfg, shared_cfg, monitors: Vec::new(), reload_rx: rx, _watcher: watcher }.run();
+        })
+        .expect("spawn engine thread");
+}
+
+struct Engine {
+    app: AppHandle,
+    shared: SharedState,
+    cfg: Config,
+    /// Copy of `cfg` the providers read.
+    shared_cfg: SharedConfig,
+    monitors: Vec<Monitor>,
+    reload_rx: Receiver<()>,
+    _watcher: Option<notify::RecommendedWatcher>,
+}
+
+/// Left edge (logical px) of a notch. A docked notch hangs past the screen edge by
+/// its round-off width, so its tip runs flush into the corner.
+fn notch_x(n: &config::Notch, width: f64, g: &Geometry, docked: bool) -> f64 {
+    let off = if docked && n.anchor != Anchor::Center { -g.notch_corner_radius } else { n.offset.resolve(width) };
+    match n.anchor {
+        Anchor::Left => off,
+        Anchor::Center => (width - n.width) / 2.0 + off,
+        Anchor::Right => width - off - n.width,
+    }
+}
+
+/// Left edges of all notches. Auto-width notches on the same side are stacked
+/// from the side's corner (or offset) inward, one notch-flare apart; a side's
+/// docking follows its outermost notch. Legacy notches are placed on their own.
+fn notch_positions(defs: &[config::Notch], width: f64, g: &Geometry, gap: f64, undocked: &[String]) -> Vec<f64> {
+    let mut xs = vec![0.0; defs.len()];
+    let spacing = 2.0 * g.concave_radius + gap;
+    for anchor in [Anchor::Left, Anchor::Center, Anchor::Right] {
+        let idx: Vec<usize> = (0..defs.len()).filter(|&i| defs[i].auto_width && defs[i].anchor == anchor).collect();
+        if idx.is_empty() {
+            continue;
+        }
+        match anchor {
+            Anchor::Left | Anchor::Right => {
+                // Outermost first: left side in order, right side from the end.
+                let order: Vec<usize> = if anchor == Anchor::Left { idx } else { idx.into_iter().rev().collect() };
+                let outer = &defs[order[0]];
+                let docked = outer.dock && !undocked.contains(&outer.id);
+                let mut x = notch_x(outer, width, g, docked);
+                xs[order[0]] = x;
+                for w in order.windows(2) {
+                    let (prev, cur) = (&defs[w[0]], &defs[w[1]]);
+                    x = if anchor == Anchor::Left { x + prev.width + spacing } else { x - spacing - cur.width };
+                    xs[w[1]] = x;
+                }
+            }
+            Anchor::Center => {
+                let total: f64 = idx.iter().map(|&i| defs[i].width).sum::<f64>() + spacing * (idx.len() - 1) as f64;
+                let mut x = (width - total) / 2.0 + defs[idx[0]].offset.resolve(width);
+                for &i in &idx {
+                    xs[i] = x;
+                    x += defs[i].width + spacing;
+                }
+            }
+        }
+    }
+    for (i, n) in defs.iter().enumerate().filter(|(_, n)| !n.auto_width) {
+        xs[i] = notch_x(n, width, g, n.dock && !undocked.contains(&n.id));
+    }
+    xs
+}
+
+fn intersects(r: &windows::Win32::Foundation::RECT, x0: i32, y0: i32, x1: i32, y1: i32) -> bool {
+    r.left < x1 && r.right > x0 && r.top < y1 && r.bottom > y0
+}
+
+impl Engine {
+    fn run(mut self) {
+        let mut last_monitor_check = Instant::now();
+        let mut last_fullscreen_check = Instant::now();
+        let mut last_keyboard_check = Instant::now();
+        let mut keyboard = crate::osd::KeyboardWatch::default();
+        let mut reload_at: Option<Instant> = None;
+
+        self.monitors = win::monitors();
+        self.reconcile();
+
+        loop {
+            let now = Instant::now();
+            if crate::instance::settings_requested() {
+                crate::settings::open(&self.app);
+            }
+            if crate::instance::quit_requested() {
+                eprintln!("[statusnotch] quitting: a new instance took over");
+                self.app.exit(0);
+                return;
+            }
+
+            // Editors fire several events per save; reload once things settle.
+            while self.reload_rx.try_recv().is_ok() {
+                reload_at = Some(now + Duration::from_millis(150));
+            }
+            if reload_at.is_some_and(|t| now >= t) {
+                reload_at = None;
+                match config::load() {
+                    Ok(cfg) => {
+                        *self.shared_cfg.write().unwrap() = cfg.clone();
+                        self.cfg = cfg;
+                        self.reconcile();
+                        eprintln!("[statusnotch] config reloaded");
+                    }
+                    Err(e) => eprintln!("[statusnotch] config error, keeping previous: {e}"),
+                }
+            }
+
+            if now - last_monitor_check >= Duration::from_secs(1) {
+                last_monitor_check = now;
+                let m = win::monitors();
+                if m != self.monitors {
+                    self.monitors = m;
+                    self.reconcile();
+                }
+            }
+
+            self.process_relayouts();
+
+            if now - last_keyboard_check >= Duration::from_millis(100) {
+                last_keyboard_check = now;
+                keyboard.tick(&self.app);
+            }
+
+            if now - last_fullscreen_check >= Duration::from_millis(250) {
+                last_fullscreen_check = now;
+                self.update_fullscreen();
+            }
+
+            if self.tick_hover(now) {
+                // The bar opened or closed: re-dock right away instead of on the next tick.
+                let ours: Vec<isize> = self.shared.lock().unwrap().overlays.values().filter_map(|o| o.hwnd).collect();
+                self.update_docking(&ours);
+            }
+
+            let poll = Duration::from_millis(self.cfg.timing.poll_ms.clamp(4, 100));
+            if let Some(rest) = poll.checked_sub(now.elapsed()) {
+                std::thread::sleep(rest);
+            }
+        }
+    }
+
+    fn rule_for(&self, m: &Monitor, index: usize) -> Option<&MonitorRule> {
+        self.cfg.monitors.iter().find(|r| {
+            let s = r.matcher.trim();
+            let lower = s.to_lowercase();
+            match lower.as_str() {
+                "*" => true,
+                "primary" => m.primary,
+                _ if s.starts_with('#') => s[1..].parse::<usize>().is_ok_and(|n| n == index + 1),
+                _ => {
+                    m.device.eq_ignore_ascii_case(s)
+                        || (!m.friendly.is_empty() && m.friendly.to_lowercase().contains(&lower))
+                }
+            }
+        })
+    }
+
+    fn build_layout(
+        &self,
+        label: &str,
+        m: &Monitor,
+        rule: Option<&MonitorRule>,
+        undocked: &[String],
+        measured: &HashMap<String, NotchWidth>,
+    ) -> Layout {
+        let width = m.width() as f64 / m.scale;
+        let g = &self.cfg.geometry;
+        let (mut defs, bar) = self.cfg.resolve_layout(rule);
+        defs.retain(|n| n.widgets.iter().any(|w| self.cfg.widget_enabled(w)));
+        for n in defs.iter_mut().filter(|n| n.auto_width) {
+            if let Some(w) = measured.get(&n.id) {
+                n.width = w.full;
+            }
+        }
+        // Covered notches ("undocked": a window is at their spot): widgets set to
+        // hide under windows leave; a notch left empty retracts.
+        let mut hidden: HashSet<String> = HashSet::new();
+        let mut hidden_widgets: HashMap<String, Vec<String>> = HashMap::new();
+        for n in defs.iter_mut().filter(|n| undocked.contains(&n.id)) {
+            let shown: Vec<&String> = n.widgets.iter().filter(|w| self.cfg.widget_enabled(w)).collect();
+            let hide: Vec<String> = shown.iter().filter(|w| self.cfg.widget_hides_when_maximized(w)).map(|w| (*w).clone()).collect();
+            if hide.is_empty() {
+                continue;
+            }
+            if hide.len() == shown.len() {
+                hidden.insert(n.id.clone());
+            } else {
+                if let Some(w) = measured.get(&n.id).filter(|w| n.auto_width && w.compact > 0.0) {
+                    n.width = w.compact;
+                }
+                hidden_widgets.insert(n.id.clone(), hide);
+            }
+        }
+        // Only notches set to avoid windows move aside; retracted ones keep their spot
+        // and don't push their neighbours.
+        let moved: Vec<String> =
+            defs.iter().filter(|n| n.avoid_windows && undocked.contains(&n.id)).map(|n| n.id.clone()).collect();
+        let visible: Vec<config::Notch> = defs.iter().filter(|n| !hidden.contains(&n.id)).cloned().collect();
+        let placed: HashMap<String, f64> = visible
+            .iter()
+            .map(|n| n.id.clone())
+            .zip(notch_positions(&visible, width, g, self.cfg.notch.gap, &moved))
+            .collect();
+        let xs: Vec<f64> = defs.iter().map(|n| placed.get(&n.id).copied().unwrap_or_else(|| notch_x(n, width, g, n.dock))).collect();
+
+        // The outermost notch of each side, if it hugs the corner.
+        let outermost = |side: Anchor| {
+            let mut side_notches = visible.iter().filter(|n| n.anchor == side && n.auto_width);
+            let outer = if side == Anchor::Left { side_notches.next() } else { side_notches.last() };
+            outer.filter(|n| n.dock).map(|n| n.id.clone())
+        };
+        let (left_edge, right_edge) = (outermost(Anchor::Left), outermost(Anchor::Right));
+
+        let mut notches: Vec<NotchLayout> = defs
+            .iter()
+            .zip(xs)
+            .map(|(n, x)| {
+                let visible = n.width + 2.0 * g.concave_radius;
+                let is_hidden = hidden.contains(&n.id);
+                // A retracted notch can't be hovered (the hot corners still work).
+                let tw = if is_hidden { 0.0 } else { n.trigger_width.as_ref().map_or(0.8 * visible, |l| l.resolve(visible)).max(1.0) };
+                NotchLayout {
+                    id: n.id.clone(),
+                    x,
+                    width: n.width,
+                    height: n.height.unwrap_or(g.notch_height),
+                    trigger_x: x + (n.width - tw) / 2.0,
+                    trigger_width: tw,
+                    widgets: n.widgets.iter().filter(|w| self.cfg.widget_enabled(w)).cloned().collect(),
+                    panel: n.panel.clone(),
+                    panel_width: n.panel_width,
+                    panel_height: n.panel_height,
+                    hidden: is_hidden,
+                    edge: if left_edge.as_ref() == Some(&n.id) {
+                        Some("left".into())
+                    } else if right_edge.as_ref() == Some(&n.id) {
+                        Some("right".into())
+                    } else {
+                        None
+                    },
+                    hidden_widgets: hidden_widgets.remove(&n.id).unwrap_or_default(),
+                }
+            })
+            .collect();
+        notches.sort_by(|a, b| a.x.total_cmp(&b.x));
+
+        let tallest = notches
+            .iter()
+            .map(|n| if n.panel.is_some() { g.expanded_height + n.panel_height } else { n.height })
+            .fold(g.expanded_height, f64::max);
+
+        Layout {
+            label: label.to_string(),
+            monitor: if m.friendly.is_empty() { m.device.clone() } else { m.friendly.clone() },
+            width,
+            height: (tallest + OVERSHOOT_MARGIN).ceil(),
+            scale: m.scale,
+            geometry: g.clone(),
+            animation: self.cfg.animation.clone(),
+            bar: {
+                let mut bar = bar;
+                for group in [&mut bar.left, &mut bar.center, &mut bar.right] {
+                    group.retain(|w| self.cfg.widget_enabled(w));
+                }
+                bar
+            },
+            notches,
+            widgets: self.cfg.widgets.clone(),
+            osd: self.cfg.osd.clone(),
+            theme: self.cfg.theme.clone(),
+            combine_notches: self.cfg.notch.combine_overlapping,
+            expanded: false,
+        }
+    }
+
+    /// Creates, updates or destroys overlay windows to match monitors + config.
+    fn reconcile(&mut self) {
+        let mut desired: Vec<(String, Monitor, Layout, Vec<config::Notch>)> = Vec::new();
+        for (i, m) in self.monitors.iter().enumerate() {
+            let rule = self.rule_for(m, i);
+            eprintln!(
+                "[statusnotch] monitor #{} {} '{}'{} -> rule {:?}",
+                i + 1,
+                m.device,
+                m.friendly,
+                if m.primary { " (primary)" } else { "" },
+                rule.map(|r| r.matcher.as_str())
+            );
+            if rule.is_some_and(|r| !r.enabled) {
+                continue;
+            }
+            let label = format!("overlay-{}", m.device.trim_start_matches(['\\', '.']));
+            let (undocked, measured) = self
+                .shared
+                .lock()
+                .unwrap()
+                .overlays
+                .get(&label)
+                .map(|o| (o.undocked.clone(), o.measured.clone()))
+                .unwrap_or_default();
+            let layout = self.build_layout(&label, m, rule, &undocked, &measured);
+            let defs = self.cfg.resolve_layout(rule).0;
+            desired.push((label, m.clone(), layout, defs));
+        }
+
+        let mut to_destroy = Vec::new();
+        let mut to_create = Vec::new();
+        let mut to_update = Vec::new();
+        {
+            let mut sh = self.shared.lock().unwrap();
+            sh.overlays.retain(|label, _| {
+                let keep = desired.iter().any(|(l, ..)| l == label);
+                if !keep {
+                    to_destroy.push(label.clone());
+                }
+                keep
+            });
+            for (label, m, layout, defs) in desired {
+                match sh.overlays.get_mut(&label) {
+                    Some(o) => {
+                        let moved = o.monitor != m || o.layout.height != layout.height;
+                        o.monitor = m.clone();
+                        o.layout = layout.clone();
+                        o.defs = defs;
+                        to_update.push((label, m, layout, moved, o.hwnd, o.expanded));
+                    }
+                    None => {
+                        sh.overlays.insert(
+                            label.clone(),
+                            Overlay {
+                                monitor: m.clone(),
+                                layout: layout.clone(),
+                                regions: Vec::new(),
+                                hover: Hover::Idle,
+                                expanded: false,
+                                hidden: false,
+                                ignoring: true,
+                                hwnd: None,
+                                undocked: Vec::new(),
+                                fullscreen_since: None,
+                                defs,
+                                measured: HashMap::new(),
+                            },
+                        );
+                        to_create.push((label, m, layout));
+                    }
+                }
+            }
+        }
+
+        for label in to_destroy {
+            if let Some(w) = self.app.get_webview_window(&label) {
+                let _ = w.destroy();
+            }
+        }
+        for (label, m, mut layout, moved, hwnd, expanded) in to_update {
+            if let (true, Some(h)) = (moved, hwnd) {
+                let h_px = (layout.height * m.scale).ceil() as i32;
+                let _ = self.app.run_on_main_thread(move || win::place(h, m.left, m.top, m.width(), h_px));
+            }
+            layout.expanded = expanded;
+            let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://layout", layout);
+        }
+        for (label, m, layout) in to_create {
+            if let Err(e) = self.create_window(&label, &m, &layout) {
+                eprintln!("[statusnotch] failed to create overlay {label}: {e}");
+                self.shared.lock().unwrap().overlays.remove(&label);
+            }
+        }
+    }
+
+    fn create_window(&self, label: &str, m: &Monitor, layout: &Layout) -> tauri::Result<()> {
+        eprintln!("[statusnotch] creating {label}");
+        let window = WebviewWindowBuilder::new(&self.app, label, WebviewUrl::App("index.html".into()))
+            .title("StatusNotch")
+            .transparent(true)
+            .decorations(false)
+            .shadow(false)
+            .always_on_top(true)
+            // No skip_taskbar(): it calls into Explorer's taskbar synchronously and
+            // hangs window creation whenever Explorer is hung. Instead a style guard
+            // (win::guard_overlay_style, installed before the window is shown) keeps
+            // it a tool window, so it never gets a taskbar button or Alt+Tab entry.
+            .resizable(false)
+            .focused(false)
+            .focusable(false)
+            .visible(false)
+            .build()?;
+        let hwnd = window.hwnd()?.0 as isize;
+        eprintln!("[statusnotch] built {label}");
+        if let Some(o) = self.shared.lock().unwrap().overlays.get_mut(label) {
+            o.hwnd = Some(hwnd);
+        }
+        let (x, y, w, h) = (m.left, m.top, m.width(), (layout.height * m.scale).ceil() as i32);
+        self.app.run_on_main_thread(move || {
+            let _ = window.set_ignore_cursor_events(true);
+            win::guard_overlay_style(hwnd);
+            win::place(hwnd, x, y, w, h);
+            // Show through tao so its visibility flag stays in sync; it re-applies
+            // that flag whenever window styles change (e.g. click-through toggles).
+            let _ = window.show();
+            eprintln!("[statusnotch] shown {}", window.label());
+        })?;
+        Ok(())
+    }
+
+    fn update_fullscreen(&mut self) {
+        let ours: Vec<isize> = {
+            let sh = self.shared.lock().unwrap();
+            sh.overlays.values().filter_map(|o| o.hwnd).collect()
+        };
+        let fs = win::fullscreen_monitor(&ours);
+        self.update_docking(&ours);
+        let mut changes = Vec::new();
+        {
+            let mut sh = self.shared.lock().unwrap();
+            for (label, o) in sh.overlays.iter_mut() {
+                let fullscreen = fs.as_ref().is_some_and(|(r, _)| o.monitor.same_rect(r));
+                // Hide only once fullscreen has lasted a moment, so short-lived
+                // full-screen windows can't make the overlay flicker; show at once.
+                o.fullscreen_since = if fullscreen { o.fullscreen_since.or(Some(Instant::now())) } else { None };
+                let hide = self.cfg.general.hide_in_fullscreen
+                    && o.fullscreen_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(500));
+                if hide != o.hidden {
+                    match (&fs, hide) {
+                        (Some((_, why)), true) => eprintln!("[statusnotch] hiding {label}: {why}"),
+                        _ => eprintln!("[statusnotch] showing {label}"),
+                    }
+                    o.hidden = hide;
+                    changes.push((label.clone(), o.hwnd, hide));
+                }
+            }
+        }
+        for (label, hwnd, hide) in changes {
+            let app = self.app.clone();
+            let _ = self.app.run_on_main_thread(move || {
+                if let Some(w) = app.get_webview_window(&label) {
+                    let _ = if hide { w.hide() } else { w.show() };
+                }
+                if let (false, Some(h)) = (hide, hwnd) {
+                    win::raise_topmost(h);
+                }
+            });
+        }
+    }
+
+    /// Repositions notches of overlays whose measured widths changed.
+    fn process_relayouts(&mut self) {
+        let jobs: Vec<(String, Monitor, Vec<String>, HashMap<String, NotchWidth>)> = {
+            let mut sh = self.shared.lock().unwrap();
+            let labels: Vec<String> = sh.relayout.drain().collect();
+            labels
+                .into_iter()
+                .filter_map(|l| {
+                    let o = sh.overlays.get(&l)?;
+                    Some((l.clone(), o.monitor.clone(), o.undocked.clone(), o.measured.clone()))
+                })
+                .collect()
+        };
+        for (label, m, undocked, measured) in jobs {
+            let idx = self.monitors.iter().position(|x| x == &m).unwrap_or(0);
+            let layout = self.build_layout(&label, &m, self.rule_for(&m, idx), &undocked, &measured);
+            let notches = layout.notches.clone();
+            if let Some(o) = self.shared.lock().unwrap().overlays.get_mut(&label) {
+                o.layout.notches = layout.notches;
+            }
+            let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://positions", notches);
+        }
+    }
+
+    /// Moves docking notches out of their corner while an app window reaches
+    /// under them (e.g. a maximized window's caption buttons), and back after.
+    fn update_docking(&mut self, ours: &[isize]) {
+        // Notches that react to windows: ones that move aside, and ones with widgets
+        // that hide under windows.
+        let cfg = &self.cfg;
+        let watched = |n: &config::Notch| {
+            (n.dock && n.avoid_windows && n.anchor != Anchor::Center)
+                || n.widgets.iter().any(|w| cfg.widget_enabled(w) && cfg.widget_hides_when_maximized(w))
+        };
+        let any_dockable = {
+            let sh = self.shared.lock().unwrap();
+            sh.overlays.values().any(|o| o.defs.iter().any(|n| watched(n)))
+        };
+        if !any_dockable {
+            return;
+        }
+        let windows = win::app_windows(ours);
+        let g = &self.cfg.geometry;
+        let mut changed: Vec<(String, Monitor, Vec<String>)> = Vec::new();
+        {
+            let sh = self.shared.lock().unwrap();
+            for (label, o) in sh.overlays.iter() {
+                let m = &o.monitor;
+                let width = m.width() as f64 / m.scale;
+                let mut undocked = Vec::new();
+                let dockable = o.defs.iter().filter(|n| watched(n));
+                // While the bar is open it covers the caption buttons anyway: dock everything.
+                for n in dockable.filter(|_| !o.expanded) {
+                    let Some(nl) = o.layout.notches.iter().find(|nl| nl.id == n.id) else { continue };
+                    // The area the notch covers in its own spot (side notches: in the
+                    // corner), flare included, at its full width.
+                    let full = o.measured.get(&n.id).map_or(nl.width, |w| w.full);
+                    let mut sized = (*n).clone();
+                    sized.width = full;
+                    let x = if n.anchor == Anchor::Center { nl.x } else { notch_x(&sized, width, g, true) };
+                    let (zx0, zx1) = (x - g.concave_radius, x + full + g.concave_radius);
+                    let px = |v: f64| m.left + (v.clamp(0.0, width) * m.scale).round() as i32;
+                    let bottom = m.top + ((nl.height + 4.0) * m.scale).round() as i32;
+                    if let Some((class, r)) = windows.iter().find(|(_, r)| intersects(r, px(zx0), m.top, px(zx1), bottom)) {
+                        if !o.undocked.contains(&n.id) {
+                            eprintln!(
+                                "[statusnotch] {label}: '{}' undocked by {class} at ({},{})-({},{})",
+                                n.id, r.left, r.top, r.right, r.bottom
+                            );
+                        }
+                        undocked.push(n.id.clone());
+                    } else if o.undocked.contains(&n.id) && !o.expanded {
+                        eprintln!("[statusnotch] {label}: '{}' docked again", n.id);
+                    }
+                }
+                if undocked != o.undocked {
+                    changed.push((label.clone(), m.clone(), undocked));
+                }
+            }
+        }
+        for (label, m, undocked) in changed {
+            let idx = self.monitors.iter().position(|x| x == &m).unwrap_or(0);
+            let measured = self.shared.lock().unwrap().overlays.get(&label).map(|o| o.measured.clone()).unwrap_or_default();
+            let layout = self.build_layout(&label, &m, self.rule_for(&m, idx), &undocked, &measured);
+            let notches = layout.notches.clone();
+            {
+                let mut sh = self.shared.lock().unwrap();
+                let Some(o) = sh.overlays.get_mut(&label) else { continue };
+                o.undocked = undocked;
+                o.layout.notches = layout.notches;
+            }
+            let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://positions", notches);
+        }
+    }
+
+    /// Returns true if any overlay opened or closed.
+    fn tick_hover(&mut self, now: Instant) -> bool {
+        let Some((cx, cy)) = win::cursor_pos() else { return false };
+        let t = &self.cfg.timing;
+        let dwell = Duration::from_millis(t.dwell_ms);
+        let grace = Duration::from_millis(t.grace_ms);
+
+        let mut emits: Vec<(String, bool)> = Vec::new();
+        let mut click_through: Vec<(String, isize, bool)> = Vec::new();
+        let mut raise: Vec<isize> = Vec::new();
+        {
+            let mut sh = self.shared.lock().unwrap();
+            for (label, o) in sh.overlays.iter_mut() {
+                let m = &o.monitor;
+                let on_monitor = cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom;
+                let lx = (cx - m.left) as f64 / m.scale;
+                let ly = (cy - m.top) as f64 / m.scale;
+                let edge = (t.edge_px * m.scale).max(1.0);
+                let at_edge = on_monitor && ((cy - m.top) as f64) < edge;
+                // Anywhere on a notch's body (or the top edge above it) within its trigger
+                // zone, or the top-left hot corner.
+                let size = t.hot_corner;
+                let pos = t.hot_corner_position.as_str();
+                let tl = t.hot_top_left.unwrap_or(pos == "top_left");
+                let tr = t.hot_top_right.unwrap_or(pos == "top_right");
+                let edge = t.hot_top_edge.unwrap_or(pos == "top_edge");
+                let in_hot_corner = t.hot_corner_enabled
+                    && ly >= 0.0
+                    && ((tl && ly < size && lx >= 0.0 && lx < size)
+                        || (tr && ly < size && lx >= o.layout.width - size && lx <= o.layout.width)
+                        || (edge && at_edge));
+                let in_trigger = !o.hidden
+                    && on_monitor
+                    && (in_hot_corner
+                        || o.layout.notches.iter().any(|n| {
+                            lx >= n.trigger_x
+                                && lx < n.trigger_x + n.trigger_width
+                                && (at_edge || (ly >= 0.0 && ly < n.height))
+                        }));
+                let in_bar = !o.hidden && on_monitor && o.expanded && o.hit(lx, ly);
+
+                let next = match o.hover {
+                    Hover::Idle if in_trigger => Hover::Dwell(now),
+                    Hover::Idle => Hover::Idle,
+                    Hover::Dwell(_) if !in_trigger => Hover::Idle,
+                    Hover::Dwell(t0) if now - t0 >= dwell => Hover::Open,
+                    Hover::Dwell(t0) => Hover::Dwell(t0),
+                    Hover::Open if in_bar || in_trigger => Hover::Open,
+                    Hover::Open => Hover::Leave(now),
+                    Hover::Leave(_) if in_bar || in_trigger => Hover::Open,
+                    Hover::Leave(t0) if o.hidden || now - t0 >= grace => Hover::Idle,
+                    Hover::Leave(t0) => Hover::Leave(t0),
+                };
+                o.hover = next;
+
+                let expanded = matches!(next, Hover::Open | Hover::Leave(_));
+                if expanded != o.expanded {
+                    o.expanded = expanded;
+                    if !expanded {
+                        o.regions.clear();
+                    } else if let Some(h) = o.hwnd {
+                        raise.push(h);
+                    }
+                    emits.push((label.clone(), expanded));
+                }
+
+                let ignore = !(o.expanded && o.hit(lx, ly) && on_monitor);
+                if ignore != o.ignoring {
+                    if let Some(h) = o.hwnd {
+                        o.ignoring = ignore;
+                        click_through.push((label.clone(), h, ignore));
+                    }
+                }
+            }
+        }
+
+        for h in raise {
+            win::raise_topmost(h);
+        }
+        let toggled = !emits.is_empty();
+        for (label, expanded) in emits {
+            let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://state", StatePayload { expanded });
+        }
+        for (label, hwnd, ignore) in click_through {
+            let app = self.app.clone();
+            let _ = self.app.run_on_main_thread(move || {
+                if let Some(w) = app.get_webview_window(&label) {
+                    let _ = w.set_ignore_cursor_events(ignore);
+                    // tao rewrites the extended style when toggling; restore ours.
+                    win::apply_overlay_style(hwnd);
+                }
+            });
+        }
+        toggled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn notch(id: &str, anchor: Anchor, width: f64, dock: bool) -> config::Notch {
+        config::Notch {
+            id: id.into(),
+            anchor,
+            offset: config::Length::Px(150.0),
+            width,
+            height: None,
+            trigger_width: None,
+            widgets: vec![id.into()],
+            panel: None,
+            dock,
+            avoid_windows: true,
+            panel_width: 0.0,
+            panel_height: 0.0,
+            auto_width: true,
+        }
+    }
+
+    #[test]
+    fn side_notches_stack_from_the_corner() {
+        let g = Geometry::default();
+        let spacing = 2.0 * g.concave_radius + 8.0;
+        let defs = [
+            notch("menu", Anchor::Left, 80.0, true),
+            notch("language", Anchor::Left, 70.0, true),
+            notch("media", Anchor::Right, 100.0, true),
+            notch("temps", Anchor::Right, 120.0, true),
+        ];
+        let xs = notch_positions(&defs, 1000.0, &g, 8.0, &[]);
+        // Left: the first hugs the corner, the next follows one flare-gap later.
+        assert_eq!(xs[0], -g.notch_corner_radius);
+        assert_eq!(xs[1], xs[0] + 80.0 + spacing);
+        // Right: the last in the list is outermost and hugs the corner.
+        assert_eq!(xs[3], 1000.0 + g.notch_corner_radius - 120.0);
+        assert_eq!(xs[2], xs[3] - spacing - 100.0);
+
+        // Moved aside: the whole side shifts to the offset.
+        let xs = notch_positions(&defs, 1000.0, &g, 8.0, &["temps".into()]);
+        assert_eq!(xs[3], 1000.0 - 150.0 - 120.0);
+        assert_eq!(xs[2], xs[3] - spacing - 100.0);
+    }
+}

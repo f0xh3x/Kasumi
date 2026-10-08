@@ -1,0 +1,160 @@
+# StatusNotch config. Hot-reloaded on save.
+# All sizes are logical px (DIPs) and scale with each monitor's DPI.
+
+[timing]
+poll_ms = 16       # cursor poll interval
+dwell_ms = 10      # how long the cursor must rest on a trigger zone before opening
+grace_ms = 300     # how long the cursor may be outside the bar before closing
+edge_px = 8        # cursor must be within this distance of the top edge
+hot_corner = 12     # size of the hot corners (px square)
+hot_top_left = true  # resting the cursor here opens the bar
+hot_top_right = false
+hot_top_edge = false # anywhere along the top edge
+
+[general]
+hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
+
+[theme]
+background = "#000000"
+text = "#ffffff"
+dim_opacity = 0.45        # secondary text
+accent = "#ffffff"
+warn = "#ff9f43"           # hot temperatures
+font_size = 13
+
+[geometry]
+expanded_height = 30      # full-width bar height when open (same as the notch)
+corner_radius = 14        # bottom corners of the bar while it spreads (square at the screen edges)
+concave_radius = 33       # width of the flare from the edge into the notch's slanted middle
+notch_height = 30         # default collapsed notch height (per-notch override: height)
+notch_corner_radius = 25.5 # width of the round-off from the slanted middle into the tip
+panel_concave_radius = 10  # popups (calendar, menu): fillet where they leave the bar
+panel_corner_radius = 12   # popups: bottom corners
+
+[animation]
+# Springs: higher stiffness = faster, lower damping = more bounce.
+expand_stiffness = 3440   # vertical: bar dropping down
+expand_damping = 92
+spread_stiffness = 2120   # horizontal: bar spreading out of the notches (style = "spread")
+spread_damping = 80
+panel_stiffness = 775     # panels (calendar) dropping out of a notch
+panel_damping = 43
+mass = 1
+style = "drop"            # drop: bar slides out of the top edge | spread: grows sideways out of the notches
+
+# On-screen display: the notch grows into a pill showing the new level.
+[osd]
+enabled = true
+notch = "clock"              # notch that grows (on the monitor under the cursor)
+width = 230
+height = 34
+duration_ms = 1500
+volume_step = 2              # percent per volume key press
+replace_volume_keys = true   # take over the volume keys; the Windows volume flyout won't show
+brightness = true            # built-in panel brightness (Fn keys)
+keyboard = true              # pop a small notch at the language widget when the keyboard layout changes
+keyboard_width = 120
+
+# Bar spacing (widgets in the open bar).
+[bar]
+padding = 18
+gap = 18
+
+# Where widgets sit, and which show as their own notch on their side.
+# A widget listed in no side isn't shown.
+[layout]
+left = ["menu", "language"]
+center = ["clock"]
+right = ["tray", "weather", "media", "temps"]
+notch = ["clock"]
+
+# Notches: widgets listed in [layout] notch show as a notch on their side.
+[notch]
+merge = true              # notch widgets on the same side share one notch
+combine_overlapping = true # notches that would touch are drawn as one
+
+[notch.left]
+hug = true                # sit in the corner
+avoid_windows = true      # move aside while a window's caption buttons are there
+offset = 150              # px from the edge when moved aside / not hugging
+
+[notch.right]
+hug = true
+avoid_windows = true
+offset = 150
+
+[notch.center]
+offset = 0                # shift from the middle
+
+# Per-monitor rules; first match wins. match = "*", "primary", "#2" (index, left to right),
+# a device name, or part of the monitor's friendly name (e.g. "DELL").
+# enabled = false hides StatusNotch there; layout = { ... } gives a monitor its own layout.
+[[monitors]]
+match = "*"
+
+[widgets.clock]
+format = "%H:%M"
+
+# CPU/GPU temperatures from LibreHardwareMonitor's remote web server
+# (Options > Remote Web Server). Pick your sensors in Settings > Widgets > PC temps.
+[widgets.temps]
+enabled = false
+url = "http://localhost:8085/data.json"     # or set port = 8085
+cpu_sensor = "/amdcpu/0/temperature/2"       # SensorId from data.json (Core Tctl/Tdie)
+gpu_sensor = "/gpu-nvidia/0/temperature/0"   # GPU Core
+interval_ms = 1000
+warn = 90                                    # readings at or above this turn orange
+# Extra readings for the temps panel (SensorIds from data.json):
+cpu_load = "/amdcpu/0/load/0"
+cpu_power = "/amdcpu/0/power/0"
+cpu_clock = "/amdcpu/0/clock/1"
+gpu_load = "/gpu-nvidia/0/load/0"
+gpu_power = "/gpu-nvidia/0/power/0"
+vram_used = "/gpu-nvidia/0/smalldata/1"
+vram_total = "/gpu-nvidia/0/smalldata/2"
+ram_used = "/ram/data/0"
+ram_available = "/ram/data/1"
+
+# Now playing from the Windows media session (Spotify, browsers, ...).
+[widgets.media]
+enabled = false
+max_width = 240                              # px for "title — artist" before it ellipsizes
+scroll = true                                # long titles scroll instead of ending in "…"
+
+# Open-Meteo, no API key. Pick your city in Settings > Widgets > Weather.
+[widgets.weather]
+enabled = false
+location = "Vilnius"
+latitude = 54.68916
+longitude = 25.2798
+units = "metric"                             # metric | imperial
+interval_min = 15
+hours = 8                                    # hours shown in the weather panel
+
+# Notification-area icons, hosted from apps' Shell_NotifyIcon calls (Explorer's tray keeps working).
+[widgets.tray]
+icons_per_row = 5
+hide = ["explorer.exe"]                      # process names whose icons are left out
+
+# Hamburger menu. action: "open" (a path or shell: folder), "settings", "sleep",
+# "lock", "restart", "shutdown". confirm = true needs a second click within 3 s.
+[widgets.menu]
+width = 210
+items = [
+  { label = "This PC", icon = "\uE7F4", action = "open", target = "shell:MyComputerFolder" },
+  { label = "Downloads", icon = "\uE896", action = "open", target = "~/Downloads" },
+  { label = "Documents", icon = "\uE8A5", action = "open", target = "~/Documents" },
+  { label = "Pictures", icon = "\uEB9F", action = "open", target = "~/Pictures" },
+  { label = "Recycle bin", icon = "\uE74D", action = "open", target = "shell:RecycleBinFolder" },
+  { separator = true },
+  { label = "Settings", icon = "\uE713", action = "settings" },
+  { separator = true },
+  { label = "Sleep", icon = "\uE708", action = "sleep" },
+  { label = "Restart", icon = "\uE777", action = "restart", confirm = true },
+  { label = "Shut down", icon = "\uE7E8", action = "shutdown", confirm = true },
+  { label = "Lock", icon = "\uE72E", action = "lock" },
+]
+
+# Keyboard layout indicator (click to switch).
+[widgets.language]
+enabled = false

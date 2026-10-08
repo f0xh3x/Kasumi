@@ -1,0 +1,112 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
+// Mirrors the Rust data providers (src-tauri/src/providers). Values are pushed
+// on change as "notch://data" events; `get_data` returns the latest snapshot.
+
+export interface Temps {
+  ok: boolean;
+  cpu: number | null;
+  gpu: number | null;
+  cpuName?: string;
+  gpuName?: string;
+  cpuLoad?: number | null;
+  cpuPower?: number | null;
+  /** MHz */
+  cpuClock?: number | null;
+  gpuLoad?: number | null;
+  gpuPower?: number | null;
+  /** MB */
+  vramUsed?: number | null;
+  vramTotal?: number | null;
+  /** GB */
+  ramUsed?: number | null;
+  ramAvailable?: number | null;
+}
+
+export interface Media {
+  title: string;
+  artist: string;
+  playing: boolean;
+  canPrevious: boolean;
+  canNext: boolean;
+  canPlayPause: boolean;
+  canSeek: boolean;
+  /** Position as of `updatedAt` (Unix ms); extrapolate while playing. */
+  positionMs: number;
+  durationMs: number;
+  updatedAt: number;
+  /** Album art as a data URL. */
+  art: string | null;
+  app: string;
+}
+
+export interface Weather {
+  temp: number;
+  feels: number;
+  code: number;
+  isDay: boolean;
+  min: number;
+  max: number;
+  location: string;
+  hourly: HourlyWeather[];
+}
+
+export interface HourlyWeather {
+  /** Local time, e.g. "2026-10-07T16:00". */
+  time: string;
+  temp: number;
+  code: number;
+  isDay: boolean;
+}
+
+export interface TrayIcon {
+  id: string;
+  tip: string;
+  exe: string;
+  w: number;
+  h: number;
+  /** Base64 RGBA pixels. */
+  rgba: string;
+}
+
+export interface Keyboard {
+  /** ISO 639-2 code, e.g. "ENG", "LIT". */
+  code: string;
+  name: string;
+}
+
+interface DataMap {
+  temps: Temps | null;
+  media: Media | null;
+  weather: Weather | null;
+  tray: TrayIcon[] | null;
+  keyboard: Keyboard | null;
+}
+
+type Key = keyof DataMap;
+
+const values = new Map<Key, unknown>();
+const listeners = new Map<Key, Set<(v: never) => void>>();
+
+function set(key: Key, value: unknown): void {
+  values.set(key, value);
+  listeners.get(key)?.forEach((cb) => cb(value as never));
+}
+
+/** Calls `cb` now (if a value is known) and on every change. Returns an unsubscribe function. */
+export function subscribe<K extends Key>(key: K, cb: (value: DataMap[K]) => void): () => void {
+  let set = listeners.get(key);
+  if (!set) listeners.set(key, (set = new Set()));
+  set.add(cb as (v: never) => void);
+  if (values.has(key)) cb(values.get(key) as DataMap[K]);
+  return () => set.delete(cb as (v: never) => void);
+}
+
+export async function initData(): Promise<void> {
+  await listen<{ key: Key; value: unknown }>("notch://data", (e) => set(e.payload.key, e.payload.value));
+  const snapshot = await invoke<Partial<Record<Key, unknown>>>("get_data");
+  for (const [key, value] of Object.entries(snapshot) as [Key, unknown][]) {
+    if (!values.has(key)) set(key, value);
+  }
+}

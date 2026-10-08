@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>StatusNotch Settings</title>
+  </head>
+  <body>
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-title" data-tauri-drag-region>StatusNotch</div>
+      <div class="titlebar-buttons">
+        <button id="tb-min" class="tb" title="Minimize"><span class="icon">&#xE921;</span></button>
+        <button id="tb-max" class="tb" title="Maximize"><span class="icon">&#xE922;</span></button>
+        <button id="tb-close" class="tb close" title="Close"><span class="icon">&#xE8BB;</span></button>
+      </div>
+    </header>
+    <div id="app"></div>
+    <div id="toast"></div>
+    <script type="module" src="/src/settings/main.ts"></script>
+  </body>
+</html>

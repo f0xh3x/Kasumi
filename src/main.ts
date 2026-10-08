@@ -1,0 +1,715 @@
+import "@fontsource/inter/600.css";
+import "./styles.css";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { initData } from "./data";
+import { computeFrame, type Bump } from "./geometry";
+import { Spring } from "./spring";
+import type { Layout, NotchLayout, Rect } from "./types";
+import { createPanel, createWidget, panelFor, type Widget } from "./widgets";
+
+const svg = document.getElementById("shape") as unknown as SVGSVGElement;
+const fill = document.getElementById("fill") as unknown as SVGPathElement;
+const content = document.getElementById("content") as HTMLDivElement;
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** "#rrggbb" + opacity → "rgba(r, g, b, a)" (other color syntaxes pass through). */
+function withAlpha(color: string, alpha: number): string {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color.trim());
+  if (!m) return color;
+  const [r, g, b] = m.slice(1).map((h) => parseInt(h, 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function applyTheme(t: Layout["theme"]): void {
+  const root = document.documentElement.style;
+  root.setProperty("--bg", t.background);
+  root.setProperty("--fg", t.text);
+  root.setProperty("--fg-dim", withAlpha(t.text, t.dimOpacity));
+  root.setProperty("--accent", t.accent);
+  root.setProperty("--warn", t.warn);
+  document.body.style.fontSize = `${t.fontSize}px`;
+}
+
+function div(className: string): HTMLDivElement {
+  const d = document.createElement("div");
+  d.className = className;
+  return d;
+}
+
+/**
+ * Something that hangs from the bar's bottom edge: a notch (always present,
+ * optionally with a panel), or a bar widget's dropdown (only while open).
+ */
+interface Drop {
+  key: string;
+  x: number;
+  width: number;
+  height: number;
+  inHull: boolean;
+  panelWidth: number;
+  panelHeight: number;
+  hasPanel: boolean;
+  spring: Spring;
+  /** Notches: animated left edge, so position changes (docking) slide. */
+  xs: Spring | null;
+  /** Notches: 1 shown, 0 retracted into the top edge (hidden under a window). */
+  shown?: Spring;
+  /** Notch content, laid out in the notch's row. */
+  slot: HTMLDivElement | null;
+  panelEl: HTMLDivElement | null;
+  /** For bar dropdowns: the widget the panel drops from. */
+  anchor: HTMLElement | null;
+}
+
+/** Space between a notch's content and the start of its curves, each side. */
+const NOTCH_PAD = 10;
+
+class Overlay {
+  private layout: Layout | null = null;
+  private expanded = false;
+  private expand = new Spring(0, 0, 420, 32);
+  private spread = new Spring(0, 0, 260, 28);
+  private drops: Drop[] = [];
+
+  // OSD: a notch briefly grows into a pill with an icon, level bar and value.
+  private osd = new Spring(0, 0, 420, 32);
+  private osdTimer = 0;
+  private osdEl = div("osd");
+  private osdIcon = document.createElement("span");
+  private osdFill = div("osd-fill");
+  private osdValue = document.createElement("span");
+
+  // Keyboard-layout peek: a small notch pops out at the language widget.
+  private peek = new Spring(0, 0, 420, 32);
+  private peekTimer = 0;
+  private peekDrop: Drop | null = null;
+  private peekEl = div("peek");
+  private langEl: HTMLElement | null = null;
+
+  // Notch widgets glide to their place in the bar as it opens, then hand over to
+  // the bar's own copy (same spot, so the swap is invisible).
+  private barEls = new Map<string, HTMLElement>();
+  private notchEls: { slot: HTMLDivElement; name: string; el: HTMLElement }[] = [];
+
+  private widgets: Widget[] = [];
+  private bar = div("bar");
+  private groups: Partial<Record<"left" | "center" | "right", HTMLDivElement>> = {};
+  // Notch widths follow their content: measured here, positioned by Rust.
+  private notchObserver = new ResizeObserver(() => this.scheduleMeasure());
+  private measureTimer = 0;
+  private lastWidths = "";
+
+  private running = false;
+  private lastTime = 0;
+  private lastRegions = "";
+  private requestedHeight = 0;
+
+  apply(layout: Layout): void {
+    const first = this.layout === null;
+    const prevSprings = new Map(this.drops.map((d) => [d.key, d.spring]));
+    const prevX = new Map(this.drops.flatMap((d) => (d.xs ? [[d.key, d.xs] as const] : [])));
+    this.layout = layout;
+    applyTheme(layout.theme);
+
+    const a = layout.animation;
+    this.expand.configure(a.expandStiffness, a.expandDamping, a.mass);
+    this.spread.configure(a.spreadStiffness, a.spreadDamping, a.mass);
+    this.osd.configure(a.expandStiffness, a.expandDamping, a.mass);
+    this.peek.configure(a.expandStiffness, a.expandDamping, a.mass);
+
+    if (first) {
+      this.expanded = layout.expanded;
+      this.expand.target = layout.expanded ? 1 : 0;
+      this.expand.snap();
+    }
+    this.spread.target = this.spreadTarget();
+    if (first || layout.animation.style !== "spread") this.spread.snap();
+
+    // Oversized so the window can grow (dropdowns) without resizing the SVG.
+    svg.setAttribute("width", String(layout.width));
+    svg.setAttribute("height", "2000");
+    svg.setAttribute("viewBox", `0 0 ${layout.width} 2000`);
+    this.requestedHeight = 0;
+    this.buildDom(layout, prevSprings, prevX);
+    this.notchObserver.disconnect();
+    for (const d of this.drops) for (const c of d.slot?.children ?? []) this.notchObserver.observe(c);
+    this.scheduleMeasure();
+    this.measureBarDrops();
+    this.render();
+    this.kick();
+    this.sendRegions();
+  }
+
+  setExpanded(expanded: boolean): void {
+    this.expanded = expanded;
+    this.expand.target = expanded ? 1 : 0;
+    this.spread.target = this.spreadTarget();
+    if (!expanded) for (const d of this.drops) d.spring.target = 0;
+    this.kick();
+    this.sendRegions();
+  }
+
+  /** Rust moved notches (e.g. a docking notch left its corner): slide them over. */
+  updatePositions(notches: NotchLayout[]): void {
+    const L = this.layout;
+    if (!L) return;
+    for (const n of notches) {
+      const i = L.notches.findIndex((m) => m.id === n.id);
+      if (i >= 0) L.notches[i] = n;
+      const d = this.drops.find((d) => d.key === `notch:${n.id}`);
+      if (d?.xs) {
+        d.x = n.x;
+        d.xs.target = n.x;
+        d.width = n.width;
+        if (d.slot) {
+          d.slot.style.width = `${n.width}px`;
+          this.padEdge(d.slot, n);
+        }
+      }
+      if (d?.shown) d.shown.target = n.hidden ? 0 : 1;
+      this.markHidden(n);
+    }
+    this.kick();
+    this.sendRegions();
+  }
+
+  /** "drop" keeps the bar full width so it slides out of the top edge; "spread" grows it sideways. */
+  private spreadTarget(): number {
+    return this.layout?.animation.style === "spread" && !this.expanded ? 0 : 1;
+  }
+
+  private toggleDrop(drop: Drop, force?: boolean): void {
+    if (!this.expanded || !drop.hasPanel) return;
+    const open = force ?? drop.spring.target < 0.5;
+    if (open) this.measureBarDrops();
+    for (const d of this.drops) d.spring.target = d === drop && open ? 1 : 0;
+    this.kick();
+    this.sendRegions();
+  }
+
+  /** A dropdown's content changed size: re-measure and reshape if it's open. */
+  private resizeDrops(): void {
+    if (!this.layout) return;
+    this.measureBarDrops();
+    this.kick();
+    this.sendRegions();
+  }
+
+  private closeAll = (): void => {
+    for (const d of this.drops) d.spring.target = 0;
+    this.kick();
+    this.sendRegions();
+  };
+
+  private buildDom(L: Layout, prevSprings: Map<string, Spring>, prevX: Map<string, Spring>): void {
+    for (const w of this.widgets) w.dispose?.();
+    this.widgets = [];
+    this.drops = [];
+    this.langEl = null;
+    this.barEls.clear();
+    this.notchEls = [];
+    this.lastWidths = "";
+    content.replaceChildren();
+
+    const a = L.animation;
+    const spring = (key: string) => {
+      const sp = prevSprings.get(key) ?? new Spring(0, 0, a.panelStiffness, a.panelDamping, a.mass);
+      sp.configure(a.panelStiffness, a.panelDamping, a.mass);
+      return sp;
+    };
+    const ctx = { close: this.closeAll, resize: () => this.resizeDrops() };
+    const opts = (name: string) => L.widgets[name] ?? {};
+    const mountPanel = (name: string, width?: number, height?: number) => {
+      const panel = div(`panel panel-${name}`);
+      if (width) panel.style.width = `${width}px`;
+      if (height) panel.style.height = `${height}px`;
+      const w = createPanel(name, opts(name), ctx);
+      this.widgets.push(w);
+      panel.append(w.el);
+      content.append(panel);
+      return panel;
+    };
+
+    // Full-width bar row: slides down with the hull.
+    this.bar = div("bar");
+    this.bar.style.width = `${L.width}px`;
+    this.bar.style.height = `${L.geometry.expandedHeight}px`;
+    this.bar.style.padding = `0 ${L.bar.padding}px`;
+    content.append(this.bar);
+    for (const side of ["left", "center", "right"] as const) {
+      const group = div(`group ${side}`);
+      group.style.gap = `${L.bar.gap}px`;
+      this.bar.append(group);
+      this.groups[side] = group;
+      for (const name of L.bar[side]) {
+        const w = createWidget(name, opts(name));
+        this.widgets.push(w);
+        group.append(w.el);
+        this.barEls.set(name, w.el);
+        if (name === "language") this.langEl = w.el;
+        const panelName = panelFor(name);
+        if (!panelName) continue;
+        // A bar widget with a panel of the same name gets a dropdown.
+        const drop: Drop = {
+          key: `bar:${name}`,
+          x: 0,
+          width: 0,
+          height: 0,
+          inHull: false,
+          panelWidth: 0,
+          panelHeight: 0,
+          hasPanel: true,
+          spring: spring(`bar:${name}`),
+          xs: null,
+          slot: null,
+          panelEl: mountPanel(panelName, Number(opts(name).width) || undefined),
+          anchor: w.el,
+        };
+        w.el.classList.add("clickable");
+        w.el.addEventListener("click", () => this.toggleDrop(drop));
+        this.drops.push(drop);
+      }
+    }
+
+    // Notches, with their optional panels.
+    for (const n of L.notches) {
+      const slot = div("slot");
+      slot.dataset.id = n.id;
+      slot.style.width = `${n.width}px`;
+      // Same spacing as the bar, so widgets don't shift as it opens.
+      slot.style.gap = `${L.bar.gap}px`;
+      this.padEdge(slot, n);
+      slot.dataset.notch = n.id;
+      for (const name of n.widgets) {
+        const w = createWidget(name, { ...opts(name), inNotch: true });
+        this.widgets.push(w);
+        slot.append(w.el);
+        this.notchEls.push({ slot, name, el: w.el });
+      }
+      this.markHidden(n);
+      content.append(slot);
+      const drop: Drop = {
+        key: `notch:${n.id}`,
+        x: n.x,
+        width: n.width,
+        height: n.height,
+        inHull: true,
+        panelWidth: n.panel ? n.panelWidth : n.width,
+        panelHeight: n.panel ? n.panelHeight : 0,
+        hasPanel: !!n.panel,
+        spring: spring(`notch:${n.id}`),
+        xs: (() => {
+          const xs = prevX.get(`notch:${n.id}`) ?? new Spring(n.x, n.x, a.spreadStiffness, a.spreadDamping, a.mass);
+          xs.configure(a.spreadStiffness, a.spreadDamping, a.mass);
+          xs.target = n.x;
+          return xs;
+        })(),
+        shown: new Spring(n.hidden ? 0 : 1, n.hidden ? 0 : 1, a.spreadStiffness, a.spreadDamping, a.mass),
+        slot,
+        panelEl: n.panel ? mountPanel(n.panel, n.panelWidth || undefined, n.panelHeight || undefined) : null,
+        anchor: null,
+      };
+      if (n.panel) {
+        slot.classList.add("clickable");
+        slot.addEventListener("click", () => this.toggleDrop(drop));
+      }
+      this.drops.push(drop);
+    }
+
+    // The keyboard peek: a zero-size bump until it pops (x holds its center).
+    this.peekDrop = {
+      key: "peek",
+      x: 0,
+      width: 0,
+      height: 0,
+      inHull: false,
+      panelWidth: 0,
+      panelHeight: 0,
+      hasPanel: false,
+      spring: new Spring(0, 0, 1, 1),
+      xs: null,
+      slot: null,
+      panelEl: null,
+      anchor: null,
+    };
+    this.drops.push(this.peekDrop);
+    this.peekEl = div("peek");
+    content.append(this.peekEl);
+
+    // OSD content, drawn over the OSD notch (clipped by the shape like everything else).
+    this.osdIcon.className = "icon";
+    this.osdValue.className = "osd-value";
+    const track = div("osd-track");
+    track.append(this.osdFill);
+    this.osdEl = div("osd");
+    this.osdEl.append(this.osdIcon, track, this.osdValue);
+    content.append(this.osdEl);
+  }
+
+  private scheduleMeasure(): void {
+    clearTimeout(this.measureTimer);
+    this.measureTimer = window.setTimeout(() => this.measureNotches(), 80);
+  }
+
+  /** Reports each notch's content width (plus its curves and padding) to Rust. */
+  private measureNotches(): void {
+    const L = this.layout;
+    if (!L) return;
+    const base = 2 * L.geometry.notchCornerRadius + 2 * NOTCH_PAD;
+    const widths: Record<string, { full: number; compact: number }> = {};
+    const hides = (name: string) => L.widgets[name]?.hide_when_maximized === true;
+    for (const n of L.notches) {
+      const pad = base + this.edgeExtra(n);
+      const span = (els: HTMLElement[], gap: number) =>
+        els.length ? Math.ceil(els.reduce((sum, k) => sum + k.offsetWidth, 0) + gap * (els.length - 1) + pad) : 0;
+      const slot = this.drops.find((d) => d.key === `notch:${n.id}`)?.slot;
+      if (!slot) continue;
+      // Widgets with nothing to show (e.g. media while idle) take no room.
+      const kids = this.notchEls.filter((e) => e.slot === slot && e.el.offsetWidth > 0);
+      if (!kids.length) continue;
+      const gap = parseFloat(getComputedStyle(slot).columnGap) || 0;
+      // Full width, and without the widgets that hide under windows.
+      widths[n.id] = {
+        full: span(kids.map((k) => k.el), gap),
+        compact: span(kids.filter((k) => !hides(k.name)).map((k) => k.el), gap),
+      };
+    }
+    const sent = JSON.stringify(widths);
+    if (sent === "{}" || sent === this.lastWidths) return;
+    this.lastWidths = sent;
+    invoke("set_notch_widths", { widths }).catch((e) => report(`set_notch_widths: ${e}`));
+  }
+
+  /** Extra room on a corner-hugging notch's outer side, up to the bar's edge padding. */
+  private edgeExtra(n: NotchLayout): number {
+    return n.edge ? Math.max(0, this.layout!.bar.padding - NOTCH_PAD) : 0;
+  }
+
+  /** Content of a corner notch sits as far from the screen edge as in the open bar. */
+  private padEdge(slot: HTMLDivElement, n: NotchLayout): void {
+    const extra = `${this.edgeExtra(n)}px`;
+    slot.style.paddingLeft = n.edge === "left" ? extra : "";
+    slot.style.paddingRight = n.edge === "right" ? extra : "";
+  }
+
+  /** Widgets hidden under a window leave the notch's flow (still measurable) and fade. */
+  private markHidden(n: NotchLayout): void {
+    for (const e of this.notchEls) {
+      if (e.slot.dataset.notch === n.id) e.el.classList.toggle("covered", n.hiddenWidgets.includes(e.name));
+    }
+  }
+
+  /** Bar dropdowns hang from their widget; their size is the panel's natural size. */
+  private measureBarDrops(): void {
+    const L = this.layout;
+    if (!L) return;
+    let tallest = 0;
+    for (const d of this.drops) {
+      if (!d.panelEl) continue;
+      if (!d.anchor) {
+        // Notch panels fit their content's height (panel_height is only the
+        // starting value), and its width too unless one is configured.
+        const notch = this.layout?.notches.find((n) => `notch:${n.id}` === d.key);
+        if (!notch?.panelWidth) {
+          d.panelEl.style.width = "auto";
+          d.panelWidth = d.panelEl.offsetWidth;
+          d.panelEl.style.width = `${d.panelWidth}px`;
+        }
+        d.panelEl.style.height = "auto";
+        d.panelHeight = d.panelEl.offsetHeight;
+        d.panelEl.style.height = `${d.panelHeight}px`;
+        tallest = Math.max(tallest, d.panelHeight);
+        continue;
+      }
+      d.panelWidth = d.panelEl.offsetWidth;
+      d.panelHeight = d.panelEl.offsetHeight;
+      // Dropdowns have zero collapsed width, so x is the panel's center.
+      const anchorBox = d.anchor.getBoundingClientRect();
+      const panelBox = d.panelEl.getBoundingClientRect();
+      const panelIcon = d.panelEl.querySelector('[data-align="icon"] .icon')?.getBoundingClientRect();
+      if (panelIcon) {
+        // Panels that opt in (the menu) line their icon column up under the widget's icon.
+        const anchorIcon = (d.anchor.querySelector(".icon") ?? d.anchor).getBoundingClientRect();
+        d.x = anchorIcon.left - (panelIcon.left - panelBox.left) + d.panelWidth / 2;
+      } else {
+        // Everything else centers under the whole widget.
+        d.x = anchorBox.left + anchorBox.width / 2;
+      }
+      tallest = Math.max(tallest, d.panelHeight);
+    }
+    // Rust sizes the window for notch panels only; ask for room for dropdowns too.
+    const needed = L.geometry.expandedHeight + tallest;
+    if (needed > this.requestedHeight) {
+      this.requestedHeight = needed;
+      invoke("set_content_height", { height: needed }).catch((e) => report(`set_content_height: ${e}`));
+    }
+  }
+
+  /** Drops in path order (left to right by collapsed center). */
+  private ordered(): Drop[] {
+    return [...this.drops].sort((a, b) => a.x + a.width / 2 - (b.x + b.width / 2));
+  }
+
+  /** The notch that grows into the OSD pill. */
+  private osdDrop(): Drop | undefined {
+    const L = this.layout;
+    if (!L) return undefined;
+    const holder = L.notches.find((n) => n.id === L.osd.notch || n.widgets.includes(L.osd.notch));
+    return (
+      (holder && this.drops.find((d) => d.key === `notch:${holder.id}`)) ??
+      this.drops.find((d) => d.key === "notch:center") ??
+      this.drops.find((d) => d.inHull)
+    );
+  }
+
+  /** Shows a level on the OSD notch, then shrinks back after the configured duration. */
+  showOsd(e: { kind: "volume" | "brightness" | "keyboard"; level: number; muted: boolean; text?: string }): void {
+    const L = this.layout;
+    if (!L || !this.osdDrop()) return;
+    const pct = Math.round(e.level * 100);
+    let glyph = 0xe706; // Brightness
+    if (e.kind === "keyboard") glyph = 0xe765;
+    if (e.kind === "volume") {
+      glyph = e.muted ? 0xe74f : pct === 0 ? 0xe992 : pct < 34 ? 0xe993 : pct < 67 ? 0xe994 : 0xe995;
+    }
+    this.osdIcon.textContent = String.fromCharCode(glyph);
+    this.osdFill.style.width = `${pct}%`;
+    this.osdEl.classList.toggle("muted", e.muted);
+    this.osdValue.textContent = e.text ?? String(pct);
+    this.osdEl.classList.toggle("text", e.text !== undefined);
+    this.osd.target = 1;
+    clearTimeout(this.osdTimer);
+    this.osdTimer = window.setTimeout(() => {
+      this.osd.target = 0;
+      this.kick();
+    }, L.osd.durationMs);
+    this.kick();
+  }
+
+  /** Keyboard layout changed: pop a small notch at the language widget (or use the OSD). */
+  showKeyboard(e: { code: string; name: string }): void {
+    const L = this.layout;
+    if (!L) return;
+    if (this.expanded && this.langEl) return;
+    const anchor = this.langEl?.getBoundingClientRect();
+    if (!anchor || !this.peekDrop || this.expanded) {
+      this.showOsd({ kind: "keyboard", level: 0, muted: false, text: e.code });
+      return;
+    }
+    this.peekDrop.x = anchor.left + anchor.width / 2;
+    const glyph = document.createElement("span");
+    glyph.className = "icon";
+    glyph.textContent = String.fromCharCode(0xe765);
+    const code = document.createElement("span");
+    code.textContent = e.code;
+    this.peekEl.replaceChildren(glyph, code);
+    this.peek.target = 1;
+    clearTimeout(this.peekTimer);
+    this.peekTimer = window.setTimeout(() => {
+      this.peek.target = 0;
+      this.kick();
+    }, L.osd.durationMs);
+    this.kick();
+  }
+
+  private bumps(drops: Drop[], useTarget: boolean): Bump[] {
+    const L = this.layout!;
+    const od = this.osdDrop();
+    const o = Math.max(0, useTarget ? this.osd.target : this.osd.value);
+    const k = Math.max(0, useTarget ? this.peek.target : this.peek.value);
+    return drops.map((d) => {
+      if (d === this.peekDrop) {
+        const width = L.osd.keyboardWidth * k;
+        return {
+          x: d.x - width / 2,
+          width,
+          height: L.geometry.notchHeight * k,
+          panelWidth: width,
+          panelHeight: 0,
+          p: 0,
+          inHull: false,
+          rounded: 0,
+        };
+      }
+      let x = d.xs ? (useTarget ? d.xs.target : d.xs.value) : d.x;
+      let width = d.width;
+      let height = d.height;
+      if (d.shown) {
+        // Retracting (hidden under a window): shrink into the top edge around the center.
+        const s = clamp01(useTarget ? d.shown.target : d.shown.value);
+        x += (width * (1 - s)) / 2;
+        width *= s;
+        height *= s;
+      }
+      if (d === od && o > 0) {
+        // Grow around the notch's center.
+        const cx = x + d.width / 2;
+        width = d.width + (L.osd.width - d.width) * o;
+        height = d.height + (L.osd.height - d.height) * o;
+        x = cx - width / 2;
+      }
+      return {
+      x,
+      width,
+      height,
+      panelWidth: d.panelWidth,
+      panelHeight: d.panelHeight,
+      p: d.hasPanel ? (useTarget ? d.spring.target : d.spring.value) : 0,
+      inHull: d.inHull,
+      };
+    });
+  }
+
+  private render(): void {
+    const L = this.layout;
+    if (!L) return;
+    const H = L.geometry.expandedHeight;
+    const drops = this.ordered();
+    const frame = computeFrame(L, this.expand.value, this.spread.value, this.bumps(drops, false));
+
+    queueMicrotask(() => this.glide());
+    fill.setAttribute("d", frame.d);
+    content.style.clipPath = `path("${frame.d}")`;
+
+    this.bar.style.transform = `translateY(${frame.base - H}px)`;
+    this.bar.style.opacity = String(clamp01((this.expand.value - 0.25) / 0.6));
+
+    const od = this.osdDrop();
+    const o = clamp01(this.osd.value);
+    drops.forEach((d, i) => {
+      const bf = frame.bumps[i];
+      if (d.slot) {
+        d.slot.style.height = `${bf.rowDepth}px`;
+        d.slot.style.transform = `translateX(${bf.anchorCx - d.width / 2}px)`;
+        // Cross-fade the notch's own content with the OSD.
+        const shown = d.shown ? clamp01(d.shown.value * 1.5 - 0.5) : 1;
+        d.slot.style.opacity = String(shown * (d === od ? 1 - clamp01(o * 1.8) : 1));
+      }
+      if (d === this.peekDrop) {
+        const k = clamp01(this.peek.value);
+        this.peekEl.style.transform = `translate(${bf.cx}px, ${bf.rowDepth / 2}px) translate(-50%, -50%)`;
+        this.peekEl.style.opacity = String(clamp01(k * 1.8 - 0.5) * (1 - clamp01(this.expand.value)));
+        this.peekEl.style.visibility = k > 0.01 ? "visible" : "hidden";
+      }
+      if (d === od) {
+        const inner = L.osd.width - 2 * L.geometry.notchCornerRadius - 8;
+        this.osdEl.style.width = `${inner}px`;
+        this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${bf.rowDepth / 2}px) translateY(-50%)`;
+        this.osdEl.style.opacity = String(clamp01(o * 1.8 - 0.5));
+        this.osdEl.style.visibility = o > 0.01 ? "visible" : "hidden";
+      }
+      if (d.panelEl) {
+        const p = d.spring.value;
+        d.panelEl.style.visibility = p > 0.01 ? "visible" : "hidden";
+        d.panelEl.style.opacity = String(clamp01(p * 1.4 - 0.2));
+        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${bf.depth - d.panelHeight}px)`;
+      }
+    });
+  }
+
+  /**
+   * Moves each notch widget from its spot in the notch toward its twin's spot
+   * in the bar, in step with the bar opening. Once the bar is open the twin
+   * takes over; while it's closing the notch copy is shown again and glides back.
+   */
+  private glide(): void {
+    const handedOver = this.expanded && this.expand.value >= 0.97;
+    const k = clamp01(this.expand.value);
+    for (const { slot, name, el } of this.notchEls) {
+      const twin = this.barEls.get(name);
+      if (!twin) continue;
+      twin.style.visibility = handedOver ? "" : "hidden";
+      twin.classList.toggle("arrived", handedOver);
+      el.style.visibility = handedOver ? "hidden" : "";
+      if (handedOver) continue;
+      // Glide by the part both copies share (e.g. the media title), else the whole widget.
+      const src = el.querySelector<HTMLElement>("[data-glide]") ?? el;
+      const dst = twin.querySelector<HTMLElement>("[data-glide]") ?? twin;
+      // offsetLeft is relative to the slot / bar (the positioned ancestors), for
+      // the widget and its parts alike.
+      // Natural position of the notch copy (content coords: slot is at its translateX).
+      const slotX = new DOMMatrixReadOnly(getComputedStyle(slot).transform).m41;
+      const nx = slotX + src.offsetLeft + src.offsetWidth / 2;
+      const ny = el.offsetTop + el.offsetHeight / 2;
+      // Where the twin's part sits in the fully open bar (the bar is at 0,0 when open).
+      const tx = dst.offsetLeft + dst.offsetWidth / 2;
+      const ty = twin.offsetTop + twin.offsetHeight / 2;
+      el.style.transform = `translate(${(tx - nx) * k}px, ${(ty - ny) * k}px)`;
+    }
+  }
+
+  private kick(): void {
+    if (this.running) return;
+    this.running = true;
+    this.lastTime = performance.now();
+    requestAnimationFrame(this.loop);
+  }
+
+  private loop = (now: number): void => {
+    const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+    this.lastTime = now;
+    const springs = [
+      this.expand,
+      this.spread,
+      this.osd,
+      this.peek,
+      ...this.drops.flatMap((d) => [d.spring, ...(d.xs ? [d.xs] : []), ...(d.shown ? [d.shown] : [])]),
+    ];
+    for (const s of springs) s.step(dt);
+    if (springs.every((s) => s.settled)) {
+      for (const s of springs) s.snap();
+      this.running = false;
+      this.render();
+      return;
+    }
+    this.render();
+    requestAnimationFrame(this.loop);
+  };
+
+  /** Tells Rust where the overlay is interactive, for click-through and hover-leave. */
+  private sendRegions(): void {
+    const L = this.layout;
+    if (!L) return;
+    const regions: Rect[] = [];
+    if (this.expanded) {
+      const H = L.geometry.expandedHeight;
+      const r = L.geometry.panelConcaveRadius;
+      regions.push({ x: 0, y: 0, width: L.width, height: H });
+      const drops = this.ordered();
+      const final = computeFrame(L, 1, 1, this.bumps(drops, true));
+      drops.forEach((d, i) => {
+        if (!d.hasPanel || d.spring.target < 0.5) return;
+        const bf = final.bumps[i];
+        regions.push({ x: bf.left - r, y: H - 1, width: bf.right - bf.left + 2 * r, height: bf.depth - H + 1 });
+      });
+    }
+    const key = JSON.stringify(regions);
+    if (key === this.lastRegions) return;
+    this.lastRegions = key;
+    invoke("set_regions", { regions }).catch((e) => console.error("set_regions", e));
+  }
+}
+
+// Surface frontend errors in the app log (the overlay has no visible devtools).
+const report = (message: string) => invoke("fe_log", { message }).catch(() => {});
+window.addEventListener("error", (e) => report(`${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener("unhandledrejection", (e) => report(`unhandled: ${e.reason}`));
+
+async function main(): Promise<void> {
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+  const overlay = new Overlay();
+  const win = getCurrentWebviewWindow();
+  await win.listen<Layout>("notch://layout", (e) => overlay.apply(e.payload));
+  await win.listen<{ expanded: boolean }>("notch://state", (e) => overlay.setExpanded(e.payload.expanded));
+  await win.listen<NotchLayout[]>("notch://positions", (e) => overlay.updatePositions(e.payload));
+  await win.listen<{ code: string; name: string }>("notch://keyboard", (e) => overlay.showKeyboard(e.payload));
+  await win.listen<{ kind: "volume" | "brightness"; level: number; muted: boolean }>("notch://osd", (e) =>
+    overlay.showOsd(e.payload),
+  );
+  await initData().catch((e) => report(`data: ${e}`));
+  overlay.apply(await invoke<Layout>("get_layout"));
+}
+
+main().catch((e) => report(`main: ${e}`));
