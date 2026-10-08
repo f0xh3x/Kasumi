@@ -370,6 +370,9 @@ body.maximized { border: 0; border-radius: 0; }
 .bucket.disabled { grid-column: 1 / -1; min-height: 0; background: transparent; border: 1px dashed rgba(255, 255, 255, 0.12); }
 .bucket.disabled .bucket-list { flex-direction: row; flex-wrap: wrap; min-height: 34px; }
 .bucket.disabled .chip { opacity: 0.5; }
+/* Widgets on another bar: draggable over, shown in full. */
+.bucket.elsewhere { border-style: solid; }
+.bucket.elsewhere .chip { opacity: 0.85; }
 
 /* Presets */
 .preset-save { display: flex; gap: 8px; }

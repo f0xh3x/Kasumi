@@ -154,14 +154,18 @@ function ruleFor(cfg: Cfg, m: MonitorInfo): any | undefined {
   });
 }
 
-/** The layout a monitor actually shows. */
-function monitorLayout(cfg: Cfg, name: string): LayoutCfg {
+/** The layout a monitor actually shows on a surface (default: the selected one). */
+function monitorLayout(cfg: Cfg, name: string, surface = scope.surface): LayoutCfg {
   const m = monitorsCache?.find((x) => x.name === name);
   const r = m ? ruleFor(cfg, m) : ownRule(cfg, name)?.[1];
-  const own = r?.surfaces?.[scope.surface];
+  const own = r?.surfaces?.[surface];
   if (hasLists(own)) return normalize(own);
-  return globalLayout(cfg);
+  return surfaceLayout(cfg, surface);
 }
+
+/** A surface's layout in the current scope (global, or the selected monitor's). */
+const scopedLayout = (cfg: Cfg, surface: string): LayoutCfg =>
+  scope.monitor ? monitorLayout(cfg, scope.monitor, surface) : surfaceLayout(cfg, surface);
 
 /** Rewrites (or creates, before the catch-all) the named monitor's rule. */
 function ruleOps(cfg: Cfg, name: string, update: (r: any) => void): Op[] {
@@ -186,19 +190,26 @@ function ruleOps(cfg: Cfg, name: string, update: (r: any) => void): Op[] {
   return [{ path: ["monitors"], value: rules }];
 }
 
-/** Edits that store `next` as the layout of the current scope. */
+/** Edits that store `next` as the selected surface's layout in the current scope. */
 function layoutOps(cfg: Cfg, next: LayoutCfg): Op[] {
-  const s = scope.surface;
-  if (!scope.monitor) return LISTS.map((k) => ({ path: ["surfaces", s, k], value: next[k] }));
-  const global = globalLayout(cfg);
+  return layoutsOps(cfg, { [scope.surface]: next });
+}
+
+/** Edits that store new layouts for several surfaces in the current scope. */
+function layoutsOps(cfg: Cfg, changed: Record<string, LayoutCfg>): Op[] {
+  if (!scope.monitor) {
+    return Object.entries(changed).flatMap(([s, next]) => LISTS.map((k) => ({ path: ["surfaces", s, k], value: next[k] })));
+  }
   return ruleOps(cfg, scope.monitor, (r) => {
-    const own = ((r.surfaces ??= {})[s] ??= {});
-    own.custom_layout = true;
-    // "Follow global while unchanged": a layout equal to the global one isn't stored.
-    const follow = own.follow_unchanged !== false && sameLayout(next, global);
-    for (const k of LISTS) {
-      if (follow) delete own[k];
-      else own[k] = next[k];
+    for (const [s, next] of Object.entries(changed)) {
+      const own = ((r.surfaces ??= {})[s] ??= {});
+      own.custom_layout = true;
+      // "Follow global while unchanged": a layout equal to the global one isn't stored.
+      const follow = own.follow_unchanged !== false && sameLayout(next, surfaceLayout(cfg, s));
+      for (const k of LISTS) {
+        if (follow) delete own[k];
+        else own[k] = next[k];
+      }
     }
   });
 }
@@ -350,27 +361,60 @@ const monitorToggles: Editor = (ctx) => {
   return box;
 };
 
-/** Drag widgets between Left / Center / Right / Disabled. */
+/**
+ * Drag widgets between Left / Center / Right of the selected surface, the other
+ * surfaces and Disabled. A widget lives in one place: putting it somewhere takes
+ * it out of wherever it was.
+ */
 const placement: Editor = (ctx) => {
-  const L = currentLayout(ctx.cfg);
+  const cur = scope.surface;
+  const ids = surfaceIds(ctx.cfg);
+  const layouts: Record<string, LayoutCfg> = Object.fromEntries(ids.map((s) => [s, scopedLayout(ctx.cfg, s)]));
+  const L = layouts[cur];
+  const known = (id: string) => WIDGETS.some((w) => w.id === id);
+  const placedOn = (id: string) => ids.filter((s) => sideOf(layouts[s], id));
+  const isOff = (id: string) => !enabled(ctx.cfg, id) || placedOn(id).length === 0;
   const root = $("div", "sorter");
   let dragging: string | null = null;
-  const columns: [Side | "disabled", string][] = [
+
+  type Bucket = Side | "disabled" | `surface:${string}`;
+  const columns: [Bucket, string][] = [
     ["left", "Left"],
     ["center", "Center"],
     ["right", "Right"],
+    ...ids.filter((s) => s !== cur).map((s): [Bucket, string] => [`surface:${s}`, `In the ${surfaceName(s, ctx.cfg.surfaces?.[s]).toLowerCase()}`]),
     ["disabled", "Disabled"],
   ];
-  const isOff = (id: string) => !enabled(ctx.cfg, id) || !sideOf(L, id);
+  const listOf = (bucket: Bucket): string[] => {
+    if (bucket === "disabled") return WIDGETS.map((w) => w.id).filter(isOff);
+    if (bucket.startsWith("surface:")) {
+      const l = layouts[bucket.slice(8)];
+      return SIDES.flatMap((side) => l[side]).filter((id) => enabled(ctx.cfg, id) && known(id));
+    }
+    return L[bucket as Side].filter((id) => enabled(ctx.cfg, id) && known(id));
+  };
+
+  /** Layouts with `id` taken out of every surface (and its notch lists). */
+  const without = (id: string) => {
+    const next: Record<string, LayoutCfg> = structuredClone(layouts);
+    for (const s of ids) {
+      for (const side of SIDES) next[s][side] = next[s][side].filter((x) => x !== id);
+      next[s].notch = next[s].notch.filter((x) => x !== id);
+    }
+    return next;
+  };
+  /** Only the surfaces whose layout changed. */
+  const changedOnly = (next: Record<string, LayoutCfg>) =>
+    Object.fromEntries(Object.entries(next).filter(([s, l]) => !sameLayout(l, layouts[s])));
 
   for (const [bucket, title] of columns) {
-    const ids =
-      bucket === "disabled" ? WIDGETS.map((w) => w.id).filter(isOff) : L[bucket].filter((id) => enabled(ctx.cfg, id) && WIDGETS.some((w) => w.id === id));
+    const elsewhere = bucket.startsWith("surface:");
     const list = $("div", "bucket-list");
-    for (const id of ids) {
+    for (const id of listOf(bucket)) {
       const w = WIDGETS.find((x) => x.id === id)!;
       const chip = $("div", "chip", glyph(w.icon), w.label);
-      if (bucket !== "disabled" && L.notch.includes(id)) chip.append($("span", "chip-badge", "notch"));
+      const notchIn = elsewhere ? layouts[bucket.slice(8)] : L;
+      if (bucket !== "disabled" && notchIn.notch.includes(id)) chip.append($("span", "chip-badge", "notch"));
       chip.draggable = true;
       chip.dataset.id = id;
       chip.addEventListener("dragstart", (e) => {
@@ -385,7 +429,8 @@ const placement: Editor = (ctx) => {
       });
       list.append(chip);
     }
-    const col = $("div", `bucket${bucket === "disabled" ? " disabled" : ""}`, $("div", "bucket-title", title), list);
+    const strip = bucket === "disabled" || elsewhere;
+    const col = $("div", `bucket${strip ? " disabled" : ""}${elsewhere ? " elsewhere" : ""}`, $("div", "bucket-title", title), list);
     const indexAt = (y: number) => {
       const chips = [...list.querySelectorAll<HTMLElement>(".chip:not(.dragging)")];
       const i = chips.findIndex((c) => y < c.getBoundingClientRect().top + c.offsetHeight / 2);
@@ -396,7 +441,7 @@ const placement: Editor = (ctx) => {
       e.preventDefault();
       col.classList.add("over");
       const { i, chips } = indexAt(e.clientY);
-      chips.forEach((c, j) => c.classList.toggle("drop-before", j === i && bucket !== "disabled"));
+      chips.forEach((c, j) => c.classList.toggle("drop-before", j === i && !strip));
     });
     col.addEventListener("dragleave", (e) => {
       if (!col.contains(e.relatedTarget as Node)) {
@@ -409,31 +454,35 @@ const placement: Editor = (ctx) => {
       col.classList.remove("over");
       const id = dragging;
       if (!id) return;
-      const { i, chips } = indexAt(e.clientY);
-      const index = chips.slice(0, i).filter((c) => c.dataset.id !== id).length;
-      const next = structuredClone(L);
-      for (const s of SIDES) next[s] = next[s].filter((x) => x !== id);
       const ops: Op[] = [];
       if (bucket === "disabled") {
-        if (scope.monitor) {
-          next.notch = next.notch.filter((x) => x !== id); // just not on this monitor
-        } else {
-          // Off everywhere, but keep its spot so switching it back on restores it.
-          ops.push({ path: ["widgets", id, "enabled"], value: false });
-          ctx.saveMany(ops);
-          return;
-        }
-      } else {
-        next[bucket].splice(Math.min(index, next[bucket].length), 0, id);
-        if (!enabled(ctx.cfg, id)) ops.push({ path: ["widgets", id, "enabled"], value: true });
+        // Out of this surface; switched off only when it's now nowhere at all.
+        const next = structuredClone(layouts);
+        for (const side of SIDES) next[cur][side] = next[cur][side].filter((x) => x !== id);
+        next[cur].notch = next[cur].notch.filter((x) => x !== id);
+        const stillPlaced = ids.some((s) => sideOf(next[s], id));
+        if (!scope.monitor && !stillPlaced && enabled(ctx.cfg, id)) ops.push({ path: ["widgets", id, "enabled"], value: false });
+        ctx.saveMany([...ops, ...layoutsOps(ctx.cfg, changedOnly(next))]);
+        return;
       }
-      ctx.saveMany([...ops, ...layoutOps(ctx.cfg, next)]);
+      const next = without(id);
+      if (elsewhere) {
+        // Sent to another surface: it lands in that surface's center.
+        next[bucket.slice(8)].center.push(id);
+      } else {
+        const { i, chips } = indexAt(e.clientY);
+        const index = chips.slice(0, i).filter((c) => c.dataset.id !== id).length;
+        const side = next[cur][bucket as Side];
+        side.splice(Math.min(index, side.length), 0, id);
+      }
+      if (!enabled(ctx.cfg, id)) ops.push({ path: ["widgets", id, "enabled"], value: true });
+      ctx.saveMany([...ops, ...layoutsOps(ctx.cfg, changedOnly(next))]);
     });
     root.append(col);
   }
   const help = scope.monitor
-    ? "Drag widgets between sides; Disabled hides a widget on this monitor only."
-    : "Drag widgets between sides. Disabled switches a widget off everywhere. Widgets marked “notch” show as their own notch on their side.";
+    ? "Drag widgets between sides and bars; Disabled hides a widget on this monitor's bar."
+    : "Drag widgets between sides and bars — a widget lives in one place. Disabled takes it off this bar (and switches it off when it's nowhere else). Widgets marked “notch” show as their own notch on their side.";
   return $("div", "", root, $("p", "card-help", help));
 };
 
