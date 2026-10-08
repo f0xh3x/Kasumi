@@ -568,9 +568,11 @@ class Overlay {
   showKeyboard(e: { code: string; name: string }): void {
     const L = this.layout;
     if (!L) return;
-    if (this.expanded && this.langEl) return;
+    // The language widget shows the new layout itself whenever it's visible.
+    if (this.languageVisible()) return;
     const anchor = this.langEl?.getBoundingClientRect();
-    if (!anchor || !this.peekDrop || this.expanded) {
+    // Docks (tiny handle / covered): grow the OSD pill rather than a second bump.
+    if (!anchor || !this.peekDrop || this.expanded || L.mode === "dock") {
       this.showOsd({ kind: "keyboard", level: 0, muted: false, text: e.code });
       return;
     }
@@ -588,6 +590,17 @@ class Overlay {
       this.kick();
     }, L.osd.durationMs);
     this.kick();
+  }
+
+  /** Whether the language widget can be seen right now (open bar, or in a notch). */
+  private languageVisible(): boolean {
+    const L = this.layout;
+    if (!L) return false;
+    if (this.expanded && this.langEl) return true;
+    const notch = L.notches.find((n) => n.widgets.includes("language"));
+    if (!notch || notch.hidden || notch.hiddenWidgets.includes("language")) return false;
+    // A dock notch at the tiny handle size shows no content.
+    return L.mode !== "dock" || (!notch.shrunk && L.rest !== "tiny");
   }
 
   private bumps(drops: Drop[], useTarget: boolean): Bump[] {

@@ -63,6 +63,13 @@ keyboard_width = 120
 padding = 18
 gap = 18
 
+# Heights (px) of the named sizes docks rest and open at.
+[sizes]
+tiny = 12
+small = 30
+medium = 45
+large = 60
+
 # Bars and docks. Each has an edge (top | bottom), a mode (bar: notches open into
 # the full-width bar | dock: notches grow in place) and its widgets: a side for
 # every shown widget, and which of them show as their own notch on that side.

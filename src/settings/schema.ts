@@ -154,6 +154,7 @@ export const pages: Page[] = [
               { value: "tiny", label: "Tiny" },
               { value: "small", label: "Small" },
               { value: "medium", label: "Medium" },
+              { value: "large", label: "Large" },
             ],
           },
           {
@@ -164,6 +165,7 @@ export const pages: Page[] = [
             options: [
               { value: "small", label: "Small" },
               { value: "medium", label: "Medium" },
+              { value: "large", label: "Large" },
             ],
           },
           {
@@ -176,6 +178,19 @@ export const pages: Page[] = [
         ],
       },
       { title: "This monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorToggles" }] },
+      {
+        title: "Sizes",
+        scope: "global",
+        collapsible: true,
+        icon: 0xe740,
+        help: "Heights of the named sizes docks rest and open at.",
+        fields: [
+          { kind: "slider", label: "Tiny", help: "A bare handle (no content).", path: ["sizes", "tiny"], default: 12, min: 4, max: 24, step: 1, unit: "px" },
+          { kind: "slider", label: "Small", path: ["sizes", "small"], default: 30, min: 20, max: 48, step: 1, unit: "px" },
+          { kind: "slider", label: "Medium", path: ["sizes", "medium"], default: 45, min: 30, max: 72, step: 1, unit: "px" },
+          { kind: "slider", label: "Large", path: ["sizes", "large"], default: 60, min: 40, max: 96, step: 1, unit: "px" },
+        ],
+      },
       { title: "Placement", fields: [{ kind: "custom", editor: "placement" }] },
       { title: "Own notches on this monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorNotches" }] },
       {

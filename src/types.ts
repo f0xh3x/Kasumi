@@ -74,7 +74,7 @@ export interface Theme {
 
 export type Edge = "top" | "bottom";
 export type SurfaceMode = "bar" | "dock";
-export type SizeName = "tiny" | "small" | "medium";
+export type SizeName = "tiny" | "small" | "medium" | "large";
 
 export interface Layout {
   /** Device name of the monitor (`\\.\DISPLAY4`). */

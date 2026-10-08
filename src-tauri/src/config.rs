@@ -339,6 +339,7 @@ pub enum SizeName {
     #[default]
     Small,
     Medium,
+    Large,
 }
 
 /// `[sizes]`: logical px heights of the named sizes.
@@ -348,11 +349,12 @@ pub struct Sizes {
     pub tiny: f64,
     pub small: f64,
     pub medium: f64,
+    pub large: f64,
 }
 
 impl Default for Sizes {
     fn default() -> Self {
-        Self { tiny: 12.0, small: 30.0, medium: 60.0 }
+        Self { tiny: 12.0, small: 30.0, medium: 45.0, large: 60.0 }
     }
 }
 
@@ -362,6 +364,7 @@ impl Sizes {
             SizeName::Tiny => self.tiny,
             SizeName::Small => self.small,
             SizeName::Medium => self.medium,
+            SizeName::Large => self.large,
         }
     }
 }
@@ -803,7 +806,7 @@ mod tests {
         let ids: Vec<_> = notches.iter().map(|n| (n.id.as_str(), n.widgets.len())).collect();
         assert_eq!(ids, [("left", 1), ("center", 2)]);
         assert!(bar.left.is_empty() && bar.center.is_empty() && bar.right.is_empty());
-        assert_eq!(cfg.sizes.px(SizeName::Medium), 60.0);
+        assert_eq!((cfg.sizes.px(SizeName::Medium), cfg.sizes.px(SizeName::Large)), (45.0, 60.0));
     }
 
     #[test]
