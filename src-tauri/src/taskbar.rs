@@ -67,6 +67,18 @@ static FALLBACK: std::sync::Mutex<Vec<Reservation>> = std::sync::Mutex::new(Vec:
 static REGISTERED_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 static WORK_ORIGINAL: std::sync::Mutex<Vec<(RECT, RECT)>> = std::sync::Mutex::new(Vec::new());
 
+/// Per monitor: what Windows made of our last work-area request (it may adjust
+/// it), when something reset it lately, and until when we leave it alone.
+struct WorkState {
+    monitor: RECT,
+    got: RECT,
+    resets: Vec<std::time::Instant>,
+    paused_until: Option<std::time::Instant>,
+    /// How long the next pause is: doubles while it keeps happening (up to 10 min).
+    pause: std::time::Duration,
+}
+static WORK_STATE: std::sync::Mutex<Vec<WorkState>> = std::sync::Mutex::new(Vec::new());
+
 fn work_marker() -> PathBuf {
     crate::config::dir().join("workarea-reserved")
 }
@@ -149,12 +161,59 @@ fn apply_work_areas() {
             fallback.iter().filter(|x| x.monitor == (l, t, r, b) && x.bottom_edge == bottom).map(|x| x.bottom - x.top).max().unwrap_or(0)
         };
         let want = RECT { left: orig.left, right: orig.right, top: orig.top.max(t + strip(false)), bottom: orig.bottom.min(b - strip(true)) };
-        if work_area(&mon) != Some(want) {
-            set_work_area(&want);
-            refit_maximized(&mon);
+        let now = work_area(&mon);
+        let mut states = WORK_STATE.lock().unwrap();
+        let st = match states.iter().position(|s| s.monitor == mon) {
+            Some(i) => &mut states[i],
+            None => {
+                states.push(WorkState {
+                    monitor: mon,
+                    got: RECT::default(),
+                    resets: Vec::new(),
+                    paused_until: None,
+                    pause: std::time::Duration::from_secs(60),
+                });
+                states.last_mut().unwrap()
+            }
+        };
+        // Done: as asked, or as Windows adjusted our request.
+        if now == Some(want) || (now == Some(st.got) && st.got != RECT::default()) {
+            continue;
+        }
+        let at = std::time::Instant::now();
+        if st.paused_until.is_some_and(|until| at < until) {
+            continue;
+        }
+        // Something keeps resetting it (Explorer, a taskbar mod): every change makes
+        // Explorer re-arrange windows, so don't fight it in a loop.
+        if st.got != RECT::default() {
+            st.resets.retain(|x| at.duration_since(*x) < std::time::Duration::from_secs(60));
+            st.resets.push(at);
+            if st.resets.len() > 5 {
+                eprintln!(
+                    "[statusnotch] work area of ({l},{t})-({r},{b}) keeps being reset (Explorer / a taskbar mod); leaving it for {} s",
+                    st.pause.as_secs()
+                );
+                st.paused_until = Some(at + st.pause);
+                st.pause = (st.pause * 2).min(std::time::Duration::from_secs(600));
+                st.resets.clear();
+                continue;
+            }
+        }
+        set_work_area(&want);
+        st.got = work_area(&mon).unwrap_or(want);
+        refit_maximized(&mon);
+        if st.got == want {
             eprintln!("[statusnotch] work area of ({l},{t})-({r},{b}) set to keep reserved strips");
+        } else {
+            let g = st.got;
+            eprintln!(
+                "[statusnotch] work area of ({l},{t})-({r},{b}) set to keep reserved strips (Windows made it ({},{})-({},{}))",
+                g.left, g.top, g.right, g.bottom
+            );
         }
     }
+    WORK_STATE.lock().unwrap().retain(|s| monitors.contains(&(s.monitor.left, s.monitor.top, s.monitor.right, s.monitor.bottom)));
     let before = original.len();
     original.retain(|(m, w)| {
         let keep = monitors.contains(&(m.left, m.top, m.right, m.bottom));
