@@ -481,3 +481,31 @@ html.mode-dock .slot > * { pointer-events: auto; }
 
 /* A panel widened to its dock notch's width: content centered. */
 .panel.widened { display: flex; flex-direction: column; align-items: center; }
+
+/* Launcher: the widget's search icon grows a text field while it's open. */
+.widget.launcher-w { gap: 0; cursor: pointer; }
+.launcher-field, .launcher-own-field {
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  outline: none;
+  pointer-events: auto;
+  user-select: text;
+}
+.launcher-field { width: 0; padding: 0; opacity: 0; transition: width 180ms ease, opacity 140ms ease, margin 180ms ease; }
+.launcher-w.searching .launcher-field { width: 190px; margin-left: 8px; opacity: 1; }
+.launcher-field::placeholder, .launcher-own-field::placeholder { color: var(--fg-dim); }
+.launcher-anchor { width: 0; height: 0; }
+.launcher-panel { display: flex; flex-direction: column; gap: 2px; width: 340px; }
+.launcher-own { display: flex; align-items: center; gap: 10px; padding: 4px 8px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 4px; }
+.launcher-own-field { flex: 1; height: 26px; }
+.launcher-list { display: flex; flex-direction: column; gap: 2px; }
+.launcher-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.launcher-row.selected { background: rgba(255, 255, 255, 0.12); }
+.launcher-row img { width: 22px; height: 22px; object-fit: contain; }
+.launcher-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.launcher-hint { color: var(--fg-dim); padding: 6px 8px; }
+/* Bottom docks: the field sits by the dock and the best match next to it. */
+html.edge-bottom .launcher-panel, html.edge-bottom .launcher-list { flex-direction: column-reverse; }
+html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(255, 255, 255, 0.08); margin: 4px 0 0; padding: 8px 8px 4px; }

@@ -42,6 +42,8 @@ pub struct Config {
     #[serde(default)]
     pub shell: Shell,
     #[serde(default)]
+    pub launcher: LauncherCfg,
+    #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
     pub osd: Osd,
@@ -165,6 +167,21 @@ impl Default for General {
 pub struct Shell {
     /// Hide the Windows taskbar while StatusNotch runs (restored when it quits).
     pub hide_taskbar: bool,
+}
+
+/// `[launcher]`: the app launcher (a panel in a bar or dock).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LauncherCfg {
+    pub enabled: bool,
+    /// Global hotkey, e.g. "Win+Alt+Space".
+    pub hotkey: String,
+}
+
+impl Default for LauncherCfg {
+    fn default() -> Self {
+        Self { enabled: true, hotkey: "Win+Alt+Space".into() }
+    }
 }
 
 /// Colors and text size of the notch, bar and panels.

@@ -100,6 +100,8 @@ export interface Layout {
   widgets: Record<string, Record<string, unknown>>;
   osd: Osd;
   theme: Theme;
+  /** The app launcher is switched on. */
+  launcher: boolean;
   combineNotches: boolean;
   expanded: boolean;
 }

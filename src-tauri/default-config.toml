@@ -17,6 +17,12 @@ hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
 [shell]
 hide_taskbar = false      # hide the Windows taskbar while StatusNotch runs (restored on quit)
 
+# App launcher: opens from the launcher widget, or with the hotkey (from the
+# middle of the dock / bar when no launcher widget is placed).
+[launcher]
+enabled = true
+hotkey = "Win+Alt+Space"
+
 [theme]
 background = "#000000"
 text = "#ffffff"

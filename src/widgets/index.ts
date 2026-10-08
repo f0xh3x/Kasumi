@@ -11,6 +11,7 @@ import { trayButton, trayPanel } from "./tray";
 import { tasks, tasksPanel } from "./tasks";
 import { quick, quickPanel } from "./quick";
 import { buttons } from "./buttons";
+import { launcher, launcherPanel } from "./launcher";
 import { subscribe } from "../data";
 
 export interface Widget {
@@ -70,6 +71,7 @@ const widgets: Record<string, Factory> = {
   tasks,
   quick,
   buttons,
+  launcher,
   language: () => {
     // Click to switch the window you're typing in to the next keyboard layout.
     const root = el("widget language clickable");
@@ -90,6 +92,7 @@ const panels: Record<string, PanelFactory> = {
   temps: tempsPanel,
   tasks: tasksPanel,
   quick: quickPanel,
+  launcher: launcherPanel,
 };
 
 /**

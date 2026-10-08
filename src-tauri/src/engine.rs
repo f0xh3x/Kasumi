@@ -61,6 +61,8 @@ pub struct Layout {
     pub widgets: toml::Table,
     pub osd: config::Osd,
     pub theme: config::Theme,
+    /// The app launcher is switched on.
+    pub launcher: bool,
     /// Draw notches that would touch or overlap as one.
     pub combine_notches: bool,
     pub expanded: bool,
@@ -142,6 +144,8 @@ struct Overlay {
     fullscreen_since: Option<Instant>,
     /// This monitor's notches, as resolved from the config (for docking).
     defs: Vec<config::Notch>,
+    /// Held open regardless of the cursor (the launcher is open on it).
+    pinned: bool,
     /// Content widths of auto-width notches, measured by the frontend.
     measured: HashMap<String, NotchWidth>,
 }
@@ -289,6 +293,96 @@ pub fn overlay_for(app: &AppHandle, widget: &str) -> Option<String> {
         .or_else(|| here.iter().find(|(_, o)| o.edge == Edge::Top))
         .or_else(|| here.first())?;
     (!o.hidden).then(|| (*label).clone())
+}
+
+/// The window that was in front before the launcher took focus.
+static LAUNCHER_PREV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Opens (`open` = Some(true)), closes or toggles the launcher. `label` is the
+/// overlay to use (its launcher widget was clicked); without one: on the monitor
+/// under the cursor, the surface with a launcher widget, else the dock, else the
+/// top bar.
+pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool>) {
+    if !app.state::<SharedConfig>().read().unwrap().launcher.enabled {
+        return;
+    }
+    let state = app.state::<SharedState>();
+    let (label, hwnd, opening) = {
+        let mut sh = state.lock().unwrap();
+        let label = match label {
+            Some(l) => l,
+            None => {
+                let open_one = sh.overlays.iter().find(|(_, o)| o.pinned).map(|(l, _)| l.clone());
+                match open_one.or_else(|| launcher_target(&sh)) {
+                    Some(l) => l,
+                    None => return,
+                }
+            }
+        };
+        let Some(o) = sh.overlays.get_mut(&label) else { return };
+        let opening = open.unwrap_or(!o.pinned);
+        if opening == o.pinned {
+            return;
+        }
+        o.pinned = opening;
+        if opening && !o.expanded {
+            o.expanded = true;
+            o.hover = Hover::Open;
+            let _ = app.emit_to(EventTarget::WebviewWindow { label: label.clone() }, "notch://state", StatePayload { expanded: true });
+        }
+        (label, o.hwnd, opening)
+    };
+    let Some(hwnd) = hwnd else { return };
+    if opening {
+        LAUNCHER_PREV.store(win::foreground(), std::sync::atomic::Ordering::Relaxed);
+    }
+    let handle = app.clone();
+    let l = label.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(w) = handle.get_webview_window(&l) else { return };
+        win::set_activatable(hwnd, opening);
+        let _ = w.set_focusable(opening);
+        if opening {
+            win::raise_topmost(hwnd);
+            win::focus(hwnd);
+            let _ = w.set_focus();
+        }
+    });
+    let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://launcher", serde_json::json!({ "open": opening }));
+}
+
+fn launcher_target(sh: &Shared) -> Option<String> {
+    let (cx, cy) = win::cursor_pos()?;
+    let under = |o: &Overlay| {
+        let m = &o.monitor;
+        cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
+    };
+    let here: Vec<(&String, &Overlay)> = sh.overlays.iter().filter(|(_, o)| under(o) && !o.hidden).collect();
+    let has_widget = |o: &Overlay| {
+        [&o.layout.bar.left, &o.layout.bar.center, &o.layout.bar.right].iter().any(|g| g.iter().any(|w| w.split('#').next() == Some("launcher")))
+            || o.layout.notches.iter().any(|n| n.widgets.iter().any(|w| w.split('#').next() == Some("launcher")))
+    };
+    here.iter()
+        .find(|(_, o)| has_widget(o))
+        .or_else(|| here.iter().find(|(_, o)| o.edge == Edge::Bottom && !o.layout.notches.is_empty()))
+        .or_else(|| here.iter().find(|(_, o)| o.edge == Edge::Top))
+        .map(|(l, _)| (*l).clone())
+}
+
+/// The launcher widget was clicked: open the launcher on this overlay.
+#[tauri::command]
+pub async fn launcher_open(window: tauri::WebviewWindow) {
+    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(true));
+}
+
+/// The launcher closed (Esc, an app launched, focus lost). `refocus`: give the
+/// foreground back to the window that had it.
+#[tauri::command]
+pub async fn launcher_close(window: tauri::WebviewWindow, refocus: bool) {
+    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(false));
+    if refocus {
+        win::restore_foreground(LAUNCHER_PREV.load(std::sync::atomic::Ordering::Relaxed));
+    }
 }
 
 /// Frontend console errors, forwarded to the app log.
@@ -647,6 +741,7 @@ impl Engine {
             widgets: self.cfg.widgets.clone(),
             osd: self.cfg.osd.clone(),
             theme: self.cfg.theme.clone(),
+            launcher: self.cfg.launcher.enabled,
             combine_notches: self.cfg.notch.combine_overlapping,
             expanded: false,
         }
@@ -730,6 +825,7 @@ impl Engine {
                                 fullscreen_since: None,
                                 defs,
                                 measured: HashMap::new(),
+                                pinned: false,
                             },
                         );
                         to_create.push((label, m, layout));
@@ -985,7 +1081,7 @@ impl Engine {
                         }));
                 let in_bar = !o.hidden && on_monitor && o.expanded && o.hit(lx, ly);
 
-                let next = match o.hover {
+                let next = if o.pinned { Hover::Open } else { match o.hover {
                     Hover::Idle if in_trigger => Hover::Dwell(now),
                     Hover::Idle => Hover::Idle,
                     Hover::Dwell(_) if !in_trigger => Hover::Idle,
@@ -996,7 +1092,7 @@ impl Engine {
                     Hover::Leave(_) if in_bar || in_trigger => Hover::Open,
                     Hover::Leave(t0) if o.hidden || now - t0 >= grace => Hover::Idle,
                     Hover::Leave(t0) => Hover::Leave(t0),
-                };
+                } };
                 o.hover = next;
 
                 let expanded = matches!(next, Hover::Open | Hover::Leave(_));

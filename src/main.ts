@@ -6,7 +6,8 @@ import { initData } from "./data";
 import { computeFrame, type Bump } from "./geometry";
 import { Spring } from "./spring";
 import type { Layout, NotchLayout, Rect } from "./types";
-import { createPanel, createWidget, panelFor, type Widget } from "./widgets";
+import { createPanel, createWidget, panelFor, widgetType, type Widget } from "./widgets";
+import { launcherSetOpen } from "./widgets/launcher";
 
 const svg = document.getElementById("shape") as unknown as SVGSVGElement;
 const fill = document.getElementById("fill") as unknown as SVGPathElement;
@@ -100,6 +101,8 @@ class Overlay {
   private notchEls: { slot: HTMLDivElement; name: string; el: HTMLElement }[] = [];
 
   private widgets: Widget[] = [];
+  /** Opens the launcher's panel on this overlay (its widget's, or a fallback one). */
+  private openLauncher: (() => void) | null = null;
   private bar = div("bar");
   private groups: Partial<Record<"left" | "center" | "right", HTMLDivElement>> = {};
   // Notch widths follow their content: measured here, positioned by Rust.
@@ -201,6 +204,13 @@ class Overlay {
     this.sendRegions();
   }
 
+  /** Rust opened (pinned + focused this overlay) or closed the launcher. */
+  setLauncher(open: boolean): void {
+    if (open) this.openLauncher?.();
+    else this.closeAll();
+    launcherSetOpen(open);
+  }
+
   /** Dock: a notch widget's panel morphs out of its notch (one open at a time). */
   private toggleDockPanel(drop: Drop, name: string, force?: boolean): void {
     if (!this.expanded || !drop.panels) return;
@@ -239,6 +249,7 @@ class Overlay {
     this.langEl = null;
     this.barEls.clear();
     this.notchEls = [];
+    this.openLauncher = null;
     this.lastWidths = "";
     content.replaceChildren();
 
@@ -250,11 +261,11 @@ class Overlay {
     };
     const ctx = { close: this.closeAll, resize: () => this.resizeDrops() };
     const opts = (name: string): Record<string, unknown> => ({ ...(L.widgets[name] ?? {}), _device: L.device });
-    const mountPanel = (name: string, width?: number, height?: number) => {
-      const panel = div(`panel panel-${name}`);
+    const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {
+      const panel = div(`panel panel-${widgetType(name)}`);
       if (width) panel.style.width = `${width}px`;
       if (height) panel.style.height = `${height}px`;
-      const w = createPanel(name, opts(name), ctx);
+      const w = createPanel(name, { ...opts(name), ...extra }, ctx);
       this.widgets.push(w);
       panel.append(w.el);
       content.append(panel);
@@ -280,6 +291,7 @@ class Overlay {
         group.append(w.el);
         this.barEls.set(name, w.el);
         if (name === "language") this.langEl = w.el;
+        if (widgetType(name) === "launcher") this.openLauncher = () => w.el.dispatchEvent(new CustomEvent("notch:panel"));
         const panelName = panelFor(name);
         if (!panelName) continue;
         // A bar widget with a panel of the same name gets a dropdown.
@@ -325,6 +337,7 @@ class Overlay {
         slot.append(w.el);
         this.notchEls.push({ slot, name, el: w.el });
         if (name === "language" && dock) this.langEl = w.el;
+        if (dock && widgetType(name) === "launcher") this.openLauncher = () => w.el.dispatchEvent(new CustomEvent("notch:panel"));
         const panelName = dock ? panelFor(name) : null;
         if (panelName) {
           const panel = mountPanel(panelName, Number(opts(name).width) || undefined);
@@ -367,6 +380,42 @@ class Overlay {
         slot.addEventListener("click", () => this.toggleDrop(drop));
       }
       this.drops.push(drop);
+    }
+
+    // No launcher widget here: the hotkey opens a panel with its own search field,
+    // from the middle notch of a dock, or the middle of an open bar.
+    if (L.launcher && !this.openLauncher) {
+      if (dock) {
+        const middle = this.drops
+          .filter((d) => d.inHull && d.panels)
+          .sort((a, b) => Math.abs(a.x + a.width / 2 - L.width / 2) - Math.abs(b.x + b.width / 2 - L.width / 2))[0];
+        if (middle?.panels) {
+          const panel = mountPanel("launcher", undefined, undefined, { _ownField: true });
+          panel.style.visibility = "hidden";
+          middle.panels.set("launcher", panel);
+          this.openLauncher = () => this.toggleDockPanel(middle, "launcher", true);
+        }
+      } else if (this.groups.center) {
+        const anchor = div("launcher-anchor");
+        this.groups.center.append(anchor);
+        const drop: Drop = {
+          key: "bar:launcher",
+          x: 0,
+          width: 0,
+          height: 0,
+          inHull: false,
+          panelWidth: 0,
+          panelHeight: 0,
+          hasPanel: true,
+          spring: spring("bar:launcher"),
+          xs: null,
+          slot: null,
+          panelEl: mountPanel("launcher", undefined, undefined, { _ownField: true }),
+          anchor,
+        };
+        this.drops.push(drop);
+        this.openLauncher = () => this.toggleDrop(drop, true);
+      }
     }
 
     // The keyboard peek: a zero-size bump until it pops (x holds its center).
@@ -834,6 +883,7 @@ async function main(): Promise<void> {
   await win.listen<Layout>("notch://layout", (e) => overlay.apply(e.payload));
   await win.listen<{ expanded: boolean }>("notch://state", (e) => overlay.setExpanded(e.payload.expanded));
   await win.listen<NotchLayout[]>("notch://positions", (e) => overlay.updatePositions(e.payload));
+  await win.listen<{ open: boolean }>("notch://launcher", (e) => overlay.setLauncher(e.payload.open));
   await win.listen<{ code: string; name: string }>("notch://keyboard", (e) => overlay.showKeyboard(e.payload));
   await win.listen<{ kind: "volume" | "brightness"; level: number; muted: boolean }>("notch://osd", (e) =>
     overlay.showOsd(e.payload),

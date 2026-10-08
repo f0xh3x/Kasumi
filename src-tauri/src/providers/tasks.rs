@@ -304,7 +304,7 @@ fn shell_item(path: &str) -> Option<IShellItem> {
     unsafe { SHCreateItemFromParsingName(&HSTRING::from(path), None).ok() }
 }
 
-fn item_icon(item: &IShellItem) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) fn item_icon(item: &IShellItem) -> Option<(u32, u32, Vec<u8>)> {
     unsafe {
         let factory: IShellItemImageFactory = item.cast().ok()?;
         let bmp = factory.GetImage(SIZE { cx: ICON_PX, cy: ICON_PX }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()?;

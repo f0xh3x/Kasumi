@@ -299,6 +299,25 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Launcher",
+        scope: "global",
+        collapsible: true,
+        icon: 0xe721,
+        help: "Search and start apps. With the Launcher widget placed it opens from there (its icon becomes the search field); without it the hotkey opens it from the middle of the dock or bar.",
+        fields: [
+          { kind: "toggle", label: "Launcher", path: ["launcher", "enabled"], default: true },
+          {
+            kind: "text",
+            label: "Hotkey",
+            help: "Like Win+Alt+Space or Ctrl+Alt+K. If the launcher doesn't open, another app has the combination (the log says so). The Win key alone stays Windows' Start menu.",
+            path: ["launcher", "hotkey"],
+            default: "Win+Alt+Space",
+            placeholder: "Win+Alt+Space",
+          },
+          { kind: "custom", editor: "notch:launcher" },
+        ],
+      },
+      {
         title: "Quick settings",
         scope: "global",
         collapsible: true,

@@ -166,8 +166,9 @@ interface WidgetContext {
 ### Launcher
 * An **optional feature** (`[launcher] enabled`), separate from the Windows Start
   menu; the Win key stays untouched. Opened with a **hotkey** (default
-  `Win+Shift+Space`, configurable — `Alt+Space` would clash with PowerToys Run and
-  the window menu) and, optionally, the launcher widget.
+  `Win+Alt+Space`, configurable — `Win+Shift+Space` is Windows' "previous keyboard
+  layout", `Alt+Space` the window menu; on PCs where PowerToys Command Palette
+  holds `Win+Alt+Space`, pick another) and, optionally, the launcher widget.
 * **Data**: every installed app from the Apps folder (`shell:AppsFolder`, which
   covers desktop shortcuts and Store apps alike), names + icons, cached and
   refreshed when Start menu folders change.

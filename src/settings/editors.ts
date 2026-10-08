@@ -89,6 +89,7 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "tasks", label: "Tasks", icon: 0xe737 },
   { id: "quick", label: "Quick settings", icon: 0xe713 },
   { id: "buttons", label: "Buttons", icon: 0xe7e8 },
+  { id: "launcher", label: "Launcher", icon: 0xe721 },
 ];
 
 /** A placed widget's type: instances are named `<type>#<n>`. */

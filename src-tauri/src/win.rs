@@ -33,7 +33,7 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, EnumWindows, GetWindowTextLengthW, IsIconic, IsWindowVisible, ASFW_ANY,
     WS_EX_TRANSPARENT, WS_THICKFRAME, STYLESTRUCT, WM_STYLECHANGING,
-    GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW, GUITHREADINFO, WM_INPUTLANGCHANGEREQUEST, GetForegroundWindow, GetWindowLongPtrW, GetWindowLongW,
+    GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW, GUITHREADINFO, WM_INPUTLANGCHANGEREQUEST, GetForegroundWindow, SetForegroundWindow, GetWindowLongPtrW, GetWindowLongW,
     GetWindowRect, IsZoomed, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
     GWL_STYLE, HWND_TOPMOST, MONITORINFOF_PRIMARY, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, WS_CAPTION, WS_EX_APPWINDOW,
@@ -164,8 +164,55 @@ fn hwnd(h: isize) -> HWND {
     HWND(h as *mut _)
 }
 
+/// Overlays allowed to take keyboard focus right now (the launcher while it's open).
+static ACTIVATABLE: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+
+fn activatable(h: HWND) -> bool {
+    ACTIVATABLE.lock().unwrap().contains(&(h.0 as isize))
+}
+
+/// Lets an overlay take keyboard focus (`on`), or makes it non-activating again.
+pub fn set_activatable(h: isize, on: bool) {
+    {
+        let mut list = ACTIVATABLE.lock().unwrap();
+        list.retain(|&x| x != h);
+        if on {
+            list.push(h);
+        }
+    }
+    apply_overlay_style(h);
+}
+
+/// Brings an overlay to the foreground (we just got the hotkey or click, so we may).
+pub fn focus(h: isize) {
+    unsafe {
+        let w = hwnd(h);
+        if !SetForegroundWindow(w).as_bool() || GetForegroundWindow() != w {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_MENU};
+            keybd_event(VK_MENU.0 as u8, 0, Default::default(), 0);
+            keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+            let _ = SetForegroundWindow(w);
+        }
+    }
+}
+
+/// The window in front, to give the foreground back to.
+pub fn foreground() -> isize {
+    unsafe { GetForegroundWindow().0 as isize }
+}
+
+/// Gives the foreground back (closing the launcher without launching anything).
+pub fn restore_foreground(h: isize) {
+    if h != 0 {
+        unsafe {
+            let _ = SetForegroundWindow(hwnd(h));
+        }
+    }
+}
+
 /// Forces the overlay's extended style whenever anyone (tao included) changes it:
-/// tool window (no taskbar button, not in Alt+Tab), never activated, never an app window.
+/// tool window (no taskbar button, not in Alt+Tab), never activated (unless it's
+/// the open launcher), never an app window.
 unsafe extern "system" fn style_guard(
     hwnd: HWND,
     msg: u32,
@@ -176,7 +223,11 @@ unsafe extern "system" fn style_guard(
 ) -> LRESULT {
     if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_EXSTYLE.0 {
         let ss = &mut *(lparam.0 as *mut STYLESTRUCT);
-        ss.styleNew = (ss.styleNew | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) & !WS_EX_APPWINDOW.0;
+        let noactivate = if activatable(hwnd) { 0 } else { WS_EX_NOACTIVATE.0 };
+        ss.styleNew = (ss.styleNew | WS_EX_TOOLWINDOW.0 | noactivate) & !WS_EX_APPWINDOW.0;
+        if noactivate == 0 {
+            ss.styleNew &= !WS_EX_NOACTIVATE.0;
+        }
     }
     DefSubclassProc(hwnd, msg, wparam, lparam)
 }
@@ -193,7 +244,10 @@ pub fn guard_overlay_style(h: isize) {
 pub fn apply_overlay_style(h: isize) {
     unsafe {
         let ex = GetWindowLongPtrW(hwnd(h), GWL_EXSTYLE);
-        let want = (ex | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize) & !(WS_EX_APPWINDOW.0 as isize);
+        let mut want = (ex | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize) & !(WS_EX_APPWINDOW.0 as isize);
+        if activatable(hwnd(h)) {
+            want &= !(WS_EX_NOACTIVATE.0 as isize);
+        }
         if want != ex {
             SetWindowLongPtrW(hwnd(h), GWL_EXSTYLE, want);
         }
