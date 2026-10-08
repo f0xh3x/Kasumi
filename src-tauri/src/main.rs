@@ -3,6 +3,7 @@
 mod actions;
 mod autostart;
 mod config;
+mod dropzone;
 mod corners;
 mod config_edit;
 mod engine;

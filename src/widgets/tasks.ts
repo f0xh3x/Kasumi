@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { subscribe, type TaskApp, type TaskWindow, type Tasks } from "../data";
 import { el, type PanelContext, type Widget } from "./index";
 import { iconUrl } from "./tray";
@@ -49,6 +49,8 @@ let icons: Record<string, { w: number; h: number; rgba: string }> = {};
 
 const call = (cmd: string, args: Record<string, unknown>) => invoke(cmd, args).catch((e) => console.error(cmd, e));
 
+const EASE = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+
 /** The pin list as written in the config (app keys / dropped files' paths). */
 const pinEntries = (t: Tasks | null) => (t?.apps ?? []).filter((a) => a.pinned).map((a) => a.pin ?? a.key);
 const savePins = (entries: string[]) => call("config_write", { path: ["widgets", "tasks", "pins"], value: entries });
@@ -71,16 +73,108 @@ export function tasks(opts: Record<string, unknown>): Widget {
   if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
   if (opts.dim_minimized === true) root.classList.add("dim-minimized");
   const buttons = new Map<string, { b: HTMLElement; img: HTMLImageElement; label: HTMLElement; dots: HTMLElement }>();
-  // Dragging an app to a new place (pointer events: the overlay isn't a drop target for itself).
-  let drag: { key: string; x: number; moved: boolean } | null = null;
+  // Dragging an app to a new place: it follows the pointer, the others slide aside.
+  type Drag = {
+    b: HTMLElement;
+    x: number;
+    moved: boolean;
+    /** The buttons and where they were when the drag started. */
+    items: HTMLElement[];
+    homes: DOMRect[];
+    from: number;
+    to: number;
+    /** How far the others slide to make room (the dragged button's width + gap). */
+    room: number;
+  };
+  let drag: Drag | null = null;
   let justDragged = false;
+  /** The order the user dragged apps into, until the next data catches up. */
+  let localOrder: string[] | null = null;
+
+  const startDrag = (d: Drag) => {
+    d.moved = true;
+    d.items = [...root.children] as HTMLElement[];
+    d.homes = d.items.map((c) => c.getBoundingClientRect());
+    d.from = d.to = d.items.indexOf(d.b);
+    const me = d.homes[d.from];
+    const next = d.homes[d.from + 1];
+    const prev = d.homes[d.from - 1];
+    const gap = next ? next.left - me.right : prev ? me.left - prev.right : 0;
+    d.room = me.width + gap;
+    d.b.classList.add("dragging");
+    root.classList.add("reordering");
+    clearTimeout(hover.openTimer);
+  };
+
+  const moveDrag = (d: Drag, dx: number) => {
+    const me = d.homes[d.from];
+    // Stays within the widget, give or take a little: enough to pass the first or
+    // last app's middle, so the ends can be reached.
+    const over = me.width / 2 + 6;
+    dx = Math.max(d.homes[0].left - me.left - over, Math.min(d.homes[d.homes.length - 1].right - me.right + over, dx));
+    d.b.style.transform = `translateX(${dx}px)`;
+    const centre = me.left + me.width / 2 + dx;
+    let to = d.from;
+    d.items.forEach((c, j) => {
+      if (c === d.b) return;
+      const mid = d.homes[j].left + d.homes[j].width / 2;
+      let shift = 0;
+      if (j > d.from && centre > mid) {
+        shift = -d.room;
+        to++;
+      } else if (j < d.from && centre < mid) {
+        shift = d.room;
+        to--;
+      }
+      c.style.transform = shift ? `translateX(${shift}px)` : "";
+    });
+    d.to = to;
+  };
+
+  const endDrag = (d: Drag) => {
+    justDragged = true;
+    window.setTimeout(() => (justDragged = false), 0);
+    // Into its new place in one frame (the others are already there), then the
+    // dragged one glides from where it was let go.
+    const dropped = d.b.getBoundingClientRect().left;
+    root.classList.remove("reordering");
+    for (const c of d.items) c.style.transform = "";
+    const others = d.items.filter((c) => c !== d.b && c.isConnected);
+    root.insertBefore(d.b, others[d.to] ?? null);
+    const dx = dropped - d.b.getBoundingClientRect().left;
+    d.b.animate([{ transform: `translateX(${dx}px)` }, { transform: "none" }], { duration: 200, easing: EASE });
+    d.b.classList.remove("dragging");
+    if (d.to === d.from) return;
+    // New order: what's shown here, then everything else as it was.
+    const shown = ([...root.children] as HTMLElement[]).map((c) => c.dataset.key!);
+    const all = (latest?.apps ?? []).map((x) => x.key);
+    const order = [...shown, ...all.filter((k) => !shown.includes(k))];
+    localOrder = order;
+    call("task_reorder", { keys: order });
+    // Pinned apps keep their new order across restarts.
+    const pins = pinEntries(latest);
+    const byKey = new Map((latest?.apps ?? []).filter((x) => x.pinned).map((x) => [x.key, x.pin ?? x.key]));
+    const reordered = order.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
+    if (showPinned && JSON.stringify(reordered) !== JSON.stringify(pins)) savePins(reordered);
+  };
 
   const draw = () => {
     const t = latest;
     if (!t) return;
     const mine = t.windows.filter((w) => !ownMonitor || !device || w.monitor === device);
-    const apps = t.apps.filter((a) => (showPinned && a.pinned) || mine.some((w) => w.app === a.key));
+    let apps = t.apps.filter((a) => (showPinned && a.pinned) || mine.some((w) => w.app === a.key));
+    if (localOrder) {
+      const o = localOrder;
+      // The new order has arrived from the backend: stop overriding it.
+      const keys = t.apps.map((a) => a.key);
+      if (o.filter((k) => keys.includes(k)).join() === keys.filter((k) => o.includes(k)).join()) localOrder = null;
+      else apps = [...apps].sort((p, q) => (o.indexOf(p.key) + 1 || 1e9) - (o.indexOf(q.key) + 1 || 1e9));
+    }
     root.hidden = apps.length === 0;
+    // Where each button is now, so moves can glide instead of jump (not while dragging).
+    const was = drag?.moved ? null : new Map([...buttons].map(([k, x]) => [k, x.b.getBoundingClientRect().left]));
+    const rootWas = root.getBoundingClientRect().left;
+    const fresh: HTMLElement[] = [];
     for (const [key, x] of buttons) {
       if (!apps.some((a) => a.key === key)) {
         x.b.remove();
@@ -98,48 +192,26 @@ export function tasks(opts: Record<string, unknown>): Widget {
         b.dataset.key = a.key;
         b.addEventListener("pointerdown", (e) => {
           if (e.button !== 0) return;
-          drag = { key: a.key, x: e.clientX, moved: false };
+          drag = { b, x: e.clientX, moved: false, items: [], homes: [], from: 0, to: 0, room: 0 };
           b.setPointerCapture(e.pointerId);
         });
         b.addEventListener("pointermove", (e) => {
-          if (!drag || drag.key !== a.key) return;
-          if (!drag.moved && Math.abs(e.clientX - drag.x) < 6) return;
+          if (drag?.b !== b) return;
+          const dx = e.clientX - drag.x;
           if (!drag.moved) {
-            drag.moved = true;
-            b.classList.add("dragging");
-            clearTimeout(hover.openTimer);
+            if (Math.abs(dx) < 6) return;
+            startDrag(drag);
           }
-          // Live reorder: the app takes the place under the pointer.
-          const others = ([...root.children] as HTMLElement[]).filter((c) => c !== b);
-          let i = others.findIndex((c) => {
-            const r = c.getBoundingClientRect();
-            return e.clientX < r.left + r.width / 2;
-          });
-          if (i < 0) i = others.length;
-          const before = others[i] ?? null;
-          if (b.nextElementSibling !== before) root.insertBefore(b, before);
+          moveDrag(drag, dx);
         });
-        const endDrag = () => {
-          if (!drag || drag.key !== a.key) return;
-          const moved = drag.moved;
+        const release = () => {
+          if (drag?.b !== b) return;
+          const d = drag;
           drag = null;
-          b.classList.remove("dragging");
-          if (!moved) return;
-          justDragged = true;
-          window.setTimeout(() => (justDragged = false), 0);
-          // New order: what's shown here, then everything else as it was.
-          const shown = ([...root.children] as HTMLElement[]).map((c) => c.dataset.key!);
-          const all = (latest?.apps ?? []).map((x) => x.key);
-          const order = [...shown, ...all.filter((k) => !shown.includes(k))];
-          call("task_reorder", { keys: order });
-          // Pinned apps keep their new order across restarts.
-          const pins = pinEntries(latest);
-          const byKey = new Map((latest?.apps ?? []).filter((x) => x.pinned).map((x) => [x.key, x.pin ?? x.key]));
-          const reordered = order.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
-          if (showPinned && JSON.stringify(reordered) !== JSON.stringify(pins)) savePins(reordered);
+          if (d.moved) endDrag(d);
         };
-        b.addEventListener("pointerup", endDrag);
-        b.addEventListener("pointercancel", endDrag);
+        b.addEventListener("pointerup", release);
+        b.addEventListener("pointercancel", release);
         b.addEventListener("click", (e) => {
           e.stopPropagation();
           if (justDragged) return;
@@ -191,6 +263,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
         });
         x = { b, img, label, dots };
         buttons.set(a.key, x);
+        fresh.push(b);
       }
       if (!drag?.moved && root.children[i] !== x.b) root.insertBefore(x.b, root.children[i] ?? null);
       const wins = mine.filter((w) => w.app === a.key);
@@ -211,34 +284,40 @@ export function tasks(opts: Record<string, unknown>): Widget {
       x.label.textContent = labels && active ? active.title : "";
       x.label.hidden = !(labels && active);
       const dots = Math.min(3, wins.length);
-      if (x.dots.childElementCount !== dots) x.dots.replaceChildren(...Array.from({ length: dots }, () => el("task-dot")));
+      x.dots.replaceChildren(...Array.from({ length: dots }, () => el("task-dot")));
     });
+    if (!was) return;
+    // Moved buttons glide to their new place; new ones grow in.
+    const shift = root.getBoundingClientRect().left - rootWas;
+    for (const [key, x] of buttons) {
+      const before = was.get(key);
+      if (before === undefined) continue;
+      const dx = before - shift - x.b.getBoundingClientRect().left;
+      if (Math.abs(dx) > 0.5) x.b.animate([{ transform: `translateX(${dx}px)` }, { transform: "none" }], { duration: 200, easing: EASE });
+    }
+    if (was.size) {
+      for (const b of fresh) b.animate([{ opacity: 0, transform: "scale(0.6)" }, { opacity: 1, transform: "none" }], { duration: 180, easing: EASE });
+    }
   };
 
-  // Drop programs, shortcuts or links onto the widget to pin them.
+  // Drop programs, shortcuts or links anywhere on the bar to pin them (the bar's
+  // first tasks widget takes them; the backend's drop target sends the events).
   let dropOff: (() => void) | null = null;
   if (showPinned) {
-    const inside = (p: { x: number; y: number }) => {
-      const r = root.getBoundingClientRect();
-      const x = p.x / devicePixelRatio;
-      const y = p.y / devicePixelRatio;
-      return x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12;
-    };
-    getCurrentWebview()
-      .onDragDropEvent((e) => {
+    getCurrentWebviewWindow()
+      .listen<{ kind: "enter" | "over" | "leave" | "drop"; x: number; y: number; paths: string[] }>("notch://drop", (e) => {
+        if (document.querySelector(".widget.tasks") !== root) return;
         const p = e.payload;
-        if (p.type === "over" || p.type === "enter") root.classList.toggle("drop-target", inside(p.position));
-        else if (p.type === "leave") root.classList.remove("drop-target");
-        else if (p.type === "drop") {
-          root.classList.remove("drop-target");
-          if (!inside(p.position)) return;
-          const pins = pinEntries(latest);
-          const added = p.paths.filter((path) => !pins.some((x) => x.toLowerCase() === path.toLowerCase()));
-          if (added.length) savePins([...pins, ...added]);
-        }
+        if (p.kind === "enter" || p.kind === "over") root.classList.add("drop-target");
+        else root.classList.remove("drop-target");
+        if (p.kind !== "drop") return;
+        const pins = pinEntries(latest);
+        const added = p.paths.filter((path) => !pins.some((x) => x.toLowerCase() === path.toLowerCase()));
+        invoke("fe_log", { message: `tasks: pinning ${JSON.stringify(added)}` }).catch(() => {});
+        if (added.length) savePins([...pins, ...added]);
       })
       .then((f) => (dropOff = f))
-      .catch((e) => console.error("drag-drop", e));
+      .catch((e) => console.error("drop", e));
   }
 
   const off = [

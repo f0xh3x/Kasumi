@@ -783,7 +783,7 @@ impl Engine {
                 bar
             },
             notches,
-            widgets: self.cfg.widgets.clone(),
+            widgets: frontend_widgets(&self.cfg.widgets),
             osd: self.cfg.osd.clone(),
             theme: self.cfg.theme.clone(),
             launcher: self.cfg.launcher.enabled,
@@ -845,12 +845,16 @@ impl Engine {
                 match sh.overlays.get_mut(&label) {
                     Some(o) => {
                         let moved = o.monitor != m || o.layout.height != layout.height || o.edge != edge;
+                        // An unchanged layout isn't sent again: the bar would rebuild its widgets for nothing.
+                        let same = !moved && serde_json::to_value(&o.layout).ok() == serde_json::to_value(&layout).ok();
                         o.monitor = m.clone();
                         o.edge = edge;
                         o.layout = layout.clone();
                         o.defs = defs;
                         let top = o.window_top();
-                        to_update.push((label, m, layout, moved, o.hwnd, o.expanded, top));
+                        if !same {
+                            to_update.push((label, m, layout, moved, o.hwnd, o.expanded, top));
+                        }
                     }
                     None => {
                         sh.overlays.insert(
@@ -928,6 +932,7 @@ impl Engine {
             let _ = window.set_ignore_cursor_events(true);
             win::guard_overlay_style(hwnd);
             win::place(hwnd, x, y, w, h);
+            crate::dropzone::register(window.app_handle(), window.label(), hwnd);
             // Show through tao so its visibility flag stays in sync; it re-applies
             // that flag whenever window styles change (e.g. click-through toggles).
             let _ = window.show();
@@ -1315,4 +1320,18 @@ mod tests {
         assert_eq!(xs[3], 1000.0 - 150.0 - 120.0);
         assert_eq!(xs[2], xs[3] - spacing - 100.0);
     }
+}
+
+/// Widget settings as the bars get them: without the tasks pin list, which the
+/// widget gets with its data (so pinning or reordering doesn't rebuild the bar).
+fn frontend_widgets(widgets: &toml::Table) -> toml::Table {
+    let mut out = widgets.clone();
+    for (name, opts) in out.iter_mut() {
+        if name == "tasks" || name.starts_with("tasks#") {
+            if let Some(t) = opts.as_table_mut() {
+                t.remove("pins");
+            }
+        }
+    }
+    out
 }

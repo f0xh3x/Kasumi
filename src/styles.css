@@ -538,5 +538,6 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .task.idle .task-dots { display: none; }
 
 /* Tasks: the app being dragged to a new place, and the widget as a drop target. */
-.task.dragging { background: rgba(255, 255, 255, 0.14); cursor: grabbing; }
+.task.dragging { background: rgba(255, 255, 255, 0.14); cursor: grabbing; position: relative; z-index: 1; }
+.widget.tasks.reordering .task:not(.dragging) { transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .widget.tasks.drop-target { outline: 1px dashed rgba(255, 255, 255, 0.5); outline-offset: 3px; border-radius: 10px; }

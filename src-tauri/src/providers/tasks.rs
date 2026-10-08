@@ -224,6 +224,8 @@ struct State {
     icons: serde_json::Map<String, Value>,
     /// The order the user dragged apps into (this session).
     manual: Vec<String>,
+    /// Listed windows that got cloaked, and when (see `scan`).
+    cloaked_since: HashMap<isize, std::time::Instant>,
     /// When each app last had a window: it keeps its place for a moment after.
     last_window: HashMap<String, std::time::Instant>,
 }
@@ -359,8 +361,8 @@ fn monitor_of(h: HWND) -> String {
     }
 }
 
-/// Alt+Tab rules: visible, not cloaked (other desktops, suspended Store apps),
-/// titled, not a tool window, and unowned unless it asks for a taskbar button.
+/// Alt+Tab rules: visible, titled, not a tool window, and unowned unless it asks
+/// for a taskbar button. (Cloaking is checked by the caller: see `scan`.)
 fn is_task(h: HWND, own_pid: u32) -> bool {
     unsafe {
         if !IsWindowVisible(h).as_bool() || GetWindowTextLengthW(h) == 0 {
@@ -374,11 +376,6 @@ fn is_task(h: HWND, own_pid: u32) -> bool {
         if GetWindow(h, GW_OWNER).is_ok_and(|o| !o.is_invalid()) && !app_window {
             return false;
         }
-        let mut cloaked = 0u32;
-        let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4);
-        if cloaked != 0 {
-            return false;
-        }
         let mut pid = 0u32;
         GetWindowThreadProcessId(h, Some(&mut pid));
         if pid == own_pid {
@@ -386,6 +383,16 @@ fn is_task(h: HWND, own_pid: u32) -> bool {
         }
         !matches!(class_of(h).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
     }
+}
+
+/// Hidden by the compositor: on another virtual desktop, a suspended Store app,
+/// or (briefly) a window in its minimize / restore animation.
+fn is_cloaked(h: HWND) -> bool {
+    let mut cloaked = 0u32;
+    unsafe {
+        let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4);
+    }
+    cloaked != 0
 }
 
 fn scan(app: &AppHandle) {
@@ -428,7 +435,34 @@ fn scan(app: &AppHandle) {
         }
     }
     // EnumWindows lists top-level windows front to back: z = 0 is the most recent.
-    for (z, &h) in all.iter().filter(|&&h| is_task(h, own)).enumerate() {
+    // Windows are cloaked for a moment while they minimize or restore: one already
+    // listed stays listed through that (a window on another desktop goes after it).
+    let now = std::time::Instant::now();
+    let mut cloak_wait = false;
+    let listed: Vec<HWND> = all
+        .iter()
+        .copied()
+        .filter(|&h| is_task(h, own))
+        .filter(|&h| {
+            let id = h.0 as isize;
+            if !is_cloaked(h) {
+                st.cloaked_since.remove(&id);
+                return true;
+            }
+            if !st.seen.contains(&id) {
+                return false;
+            }
+            let since = *st.cloaked_since.entry(id).or_insert(now);
+            let keep = since.elapsed() < std::time::Duration::from_millis(1500);
+            cloak_wait |= keep;
+            keep
+        })
+        .collect();
+    st.cloaked_since.retain(|id, _| listed.iter().any(|h| h.0 as isize == *id) || all.iter().any(|h| h.0 as isize == *id));
+    if cloak_wait {
+        DIRTY.store(true, Ordering::Relaxed);
+    }
+    for (z, &h) in listed.iter().enumerate() {
         let (_, exe) = exe_of(h);
         let aumid = aumid_of(h);
         let mut key = aumid.clone().unwrap_or_else(|| exe.to_lowercase());
@@ -593,16 +627,37 @@ fn hwnd(id: isize) -> HWND {
 /// Brings a window to the front. The click on our overlay is the last input, so
 /// we may set the foreground; the Alt tap covers the cases where Windows refuses.
 fn activate(h: HWND) {
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        PeekMessageW, SetWindowPos, HWND_TOP, PM_NOREMOVE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    };
     unsafe {
         if IsIconic(h).as_bool() {
             let _ = ShowWindow(h, SW_RESTORE);
         }
-        if !SetForegroundWindow(h).as_bool() || GetForegroundWindow() != h {
+        // Windows only lets the app in front hand the foreground over: borrow its
+        // input queue for the switch (this thread needs a message queue for that).
+        let mut msg = MSG::default();
+        let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
+        let me = GetCurrentThreadId();
+        let front = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let attached = front != 0 && front != me && AttachThreadInput(me, front, true).as_bool();
+        let _ = BringWindowToTop(h);
+        let _ = SetForegroundWindow(h);
+        if attached {
+            let _ = AttachThreadInput(me, front, false);
+        }
+        if GetForegroundWindow() != h {
+            // Still refused: a tapped Alt counts as fresh input and lifts the lock.
             keybd_event(VK_MENU.0 as u8, 0, Default::default(), 0);
             keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
             let _ = SetForegroundWindow(h);
         }
-        let _ = BringWindowToTop(h);
+        // In front of the other windows even if focus was refused.
+        let _ = SetWindowPos(h, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        if GetForegroundWindow() != h {
+            eprintln!("[statusnotch] tasks: Windows refused to bring a window to the front");
+        }
     }
 }
 
