@@ -182,12 +182,26 @@ function emitRight(P: string[], s: Side) {
  * Both sides of a bump. `w` blends from the notch profile (0) to the rounded
  * popup style (1): a notch morphs into a rounded panel as it opens.
  */
-function bump(P: string[], g: Layout["geometry"], left: number, right: number, top: number, bottom: number, w: number, k = 1) {
+function bump(
+  P: string[],
+  g: Layout["geometry"],
+  left: number,
+  right: number,
+  top: number,
+  bottom: number,
+  w: number,
+  k = 1,
+  flush: { left: boolean; right: boolean } = { left: false, right: false },
+) {
   const nc = Math.min(g.notchCornerRadius * k, Math.max(0, right - left) / 2);
   const cr = g.concaveRadius * k;
   const [pr, pc] = fit(g.panelConcaveRadius, g.panelCornerRadius, bottom - top, right - left);
-  emitLeft(P, mix(profileSide(left, top, bottom, cr, nc, 1), roundedSide(left, top, bottom, pr, pc, 1), w));
-  emitRight(P, mix(profileSide(right, top, bottom, cr, nc, -1), roundedSide(right, top, bottom, pr, pc, -1), w));
+  // A side against the screen edge (a panel pushed into a corner) is straight,
+  // with a square corner: nothing to round against the border.
+  const side = (x: number, dir: 1 | -1, square: boolean) =>
+    square ? roundedSide(x, top, bottom, 0, 0, dir) : mix(profileSide(x, top, bottom, cr, nc, dir), roundedSide(x, top, bottom, pr, pc, dir), w);
+  emitLeft(P, side(left, 1, flush.left));
+  emitRight(P, side(right, -1, flush.right));
 }
 
 /**
@@ -257,7 +271,9 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
         next = j + 1;
       }
     }
-    bump(P, g, left, right, base, depth, style(i), k);
+    // Flush with the screen edge: only popups (a docked notch's own sides are off-screen anyway).
+    const popup = style(i) > 0.001;
+    bump(P, g, left, right, base, depth, style(i), k, { left: popup && left <= 0.5, right: popup && right >= W - 0.5 });
     i = next;
   }
   emitRight(P, roundedSide(hr, 0, base, hr_, hc, -1));

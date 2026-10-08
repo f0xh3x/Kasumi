@@ -517,3 +517,18 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .widget.tray-inline { gap: calc(var(--h, 30px) * 0.06); }
 .widget.tray-inline .tray-icon { width: calc(var(--h, 30px) * 0.8); height: calc(var(--h, 30px) * 0.8); }
 .widget.tray-inline .tray-icon img { width: calc(var(--h, 30px) * 0.55); height: calc(var(--h, 30px) * 0.55); }
+
+/* App icons (tasks, tray): colour, monochrome, or silhouettes in the accent colour. */
+.ico { position: relative; display: inline-flex; }
+.ico img { display: block; }
+.ico-mask { display: none; }
+.icons-mono .ico img { filter: grayscale(1); }
+.icons-accent .ico img { visibility: hidden; }
+.icons-accent .ico-mask {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}

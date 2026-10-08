@@ -338,6 +338,18 @@ export const pages: Page[] = [
           },
           {
             kind: "select",
+            label: "Icons",
+            help: "Monochrome keeps the detail in grey; Accent paints each icon's shape in the accent colour (Appearance).",
+            path: ["widgets", "tasks", "icons"],
+            default: "color",
+            options: [
+              { value: "color", label: "Color" },
+              { value: "mono", label: "Monochrome" },
+              { value: "accent", label: "Accent color" },
+            ],
+          },
+          {
+            kind: "select",
             label: "Labels",
             path: ["widgets", "tasks", "labels"],
             default: "none",
@@ -370,6 +382,18 @@ export const pages: Page[] = [
             options: [
               { value: "collapsed", label: "Collapsed: a button with the icons in a panel" },
               { value: "expanded", label: "Expanded: every icon in the bar" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Icons",
+            help: "Monochrome keeps the detail in grey; Accent paints each icon's shape in the accent colour (Appearance).",
+            path: ["widgets", "tray", "icons"],
+            default: "color",
+            options: [
+              { value: "color", label: "Color" },
+              { value: "mono", label: "Monochrome" },
+              { value: "accent", label: "Accent color" },
             ],
           },
           {

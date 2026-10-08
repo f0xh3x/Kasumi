@@ -9,7 +9,8 @@ import { iconUrl } from "./tray";
  * Right click: the app's windows, a new window, close all (the tasks panel).
  *
  * Options: `monitor` = "own" (windows on this monitor, default) | "all";
- * `labels` = "none" (default) | "active" (title of the window in front).
+ * `labels` = "none" (default) | "active" (title of the window in front);
+ * `icons` = "color" (default) | "mono" | "accent" (silhouettes in the accent colour).
  * Icons size with the surface (`--h`), so they grow as a dock opens.
  */
 
@@ -35,6 +36,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
   const device = typeof opts._device === "string" ? opts._device : "";
   const labels = opts.labels === "active";
   const root = el("widget tasks");
+  if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
   const buttons = new Map<string, { b: HTMLElement; img: HTMLImageElement; label: HTMLElement; dots: HTMLElement }>();
 
   const draw = () => {
@@ -56,7 +58,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
         img.draggable = false;
         const label = el("task-label");
         const dots = el("task-dots");
-        const b = el("task", img, label, dots);
+        const b = el("task", el("ico", img, el("ico-mask")), label, dots);
         b.addEventListener("click", (e) => {
           e.stopPropagation();
           const wins = (latest?.windows ?? []).filter((w) => w.app === a.key && (!ownMonitor || !device || w.monitor === device));
@@ -93,6 +95,8 @@ export function tasks(opts: Record<string, unknown>): Widget {
       if (x.img.src !== url) {
         if (url) x.img.src = url;
         else x.img.removeAttribute("src");
+        // The accent style paints the icon's silhouette through a mask.
+        (x.img.parentElement as HTMLElement).style.setProperty("--icon", url ? `url("${url}")` : "none");
       }
       x.img.classList.toggle("missing", !url);
       x.label.textContent = labels && active ? active.title : "";

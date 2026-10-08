@@ -11,6 +11,7 @@ const CHEVRON_DOWN = String.fromCharCode(0xe70d);
 export function trayButton(opts: Record<string, unknown> = {}): Widget {
   if (opts.mode === "expanded") {
     const root = el("widget tray-inline");
+    if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
     const off = trayCells(root, () => {});
     // Icons are clicked directly: no panel.
     return { el: root, dispose: off, panelTrigger: "event" };
@@ -45,6 +46,7 @@ export function trayPanel(opts: Record<string, unknown>, ctx: PanelContext): Wid
   grid.style.gridTemplateColumns = `repeat(${perRow}, 32px)`;
   const empty = el("tray-empty", "No tray icons");
   const root = el("tray-panel", grid, empty);
+  if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
 
   let lastCount = -1;
   const unsubscribe = trayCells(grid, ctx.close, (count) => {
@@ -81,7 +83,7 @@ function trayCells(container: HTMLElement, afterClick: () => void, onCount?: (n:
         const cell = el("tray-icon");
         const img = document.createElement("img");
         img.draggable = false;
-        cell.append(img);
+        cell.append(el("ico", img, el("ico-mask")));
         cell.addEventListener("click", (e) => {
           e.stopPropagation();
           click(i.id, "left", cell);
@@ -96,7 +98,9 @@ function trayCells(container: HTMLElement, afterClick: () => void, onCount?: (n:
         cells.set(i.id, c);
       }
       if (c.rgba !== i.rgba) {
-        c.img.src = iconUrl(i);
+        const url = iconUrl(i);
+        c.img.src = url;
+        (c.img.parentElement as HTMLElement).style.setProperty("--icon", `url("${url}")`);
         c.rgba = i.rgba;
       }
       c.cell.title = i.tip || i.exe;
