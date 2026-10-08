@@ -350,9 +350,16 @@ export const pages: Page[] = [
           },
           {
             kind: "toggle",
-            label: "Show pinned apps",
-            help: "Your Windows taskbar pins, first and even when they aren't running (pin apps from the Start menu).",
-            path: ["widgets", "tasks", "pinned"],
+            label: "Dim minimized apps",
+            help: "Apps whose windows are all minimized show a faded icon.",
+            path: ["widgets", "tasks", "dim_minimized"],
+            default: false,
+          },
+          {
+            kind: "toggle",
+            label: "Pinned apps",
+            help: "Pinned apps come first, even when they aren't running; right-click an app to pin or unpin it. Starts with your Windows taskbar pins.",
+            path: ["widgets", "tasks", "pinning"],
             default: true,
           },
           {

@@ -59,12 +59,12 @@ struct App {
     lnk: Option<String>,
 }
 
-/// A Windows taskbar pin: the app key it matches, its name and shortcut.
+/// A pinned app: the app key it matches, its name, and (Windows pins) its shortcut.
 #[derive(Clone)]
 struct Pin {
     key: String,
     name: String,
-    lnk: String,
+    lnk: Option<String>,
     /// The program it starts (lower case), so windows that report no
     /// AppUserModelID still join it (e.g. Explorer's folder windows).
     target: String,
@@ -78,10 +78,56 @@ fn pins_dir() -> std::path::PathBuf {
         .join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar")
 }
 
-/// The Windows taskbar's pinned apps, in pin order (oldest first). Each pin's
-/// key is the shortcut's AppUserModelID, else its target exe, so it matches
-/// the app's windows.
-fn pins() -> Vec<Pin> {
+/// The pinned apps: StatusNotch's own list (`[widgets.tasks] pins`, app keys
+/// in order) once the user has pinned or unpinned something, until then the
+/// Windows taskbar's pins. None while `pinning = false`.
+fn pins(app: &AppHandle) -> Vec<Pin> {
+    use tauri::Manager;
+    let (enabled, own) = {
+        let cfg = app.state::<super::SharedConfig>();
+        let cfg = cfg.read().unwrap();
+        let t = cfg.widgets.get("tasks").and_then(|v| v.as_table());
+        let enabled = t.and_then(|t| t.get("pinning")).and_then(|v| v.as_bool()) != Some(false)
+            && t.and_then(|t| t.get("pinned")).and_then(|v| v.as_bool()) != Some(false);
+        let own: Option<Vec<String>> = t
+            .and_then(|t| t.get("pins"))
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect());
+        (enabled, own)
+    };
+    if !enabled {
+        return Vec::new();
+    }
+    match own {
+        Some(keys) => keys
+            .into_iter()
+            .map(|key| {
+                let target = if is_path(&key) { key.to_lowercase() } else { aumid_program(&key) };
+                Pin { name: String::new(), lnk: None, target, key }
+            })
+            .collect(),
+        None => windows_pins(),
+    }
+}
+
+/// App keys are AppUserModelIDs or (apps without one) exe paths.
+fn is_path(key: &str) -> bool {
+    key.contains('\\') || key.contains(':')
+}
+
+/// The program behind a known shell app ID whose windows report no ID.
+fn aumid_program(aumid: &str) -> String {
+    if aumid == "Microsoft.Windows.Explorer" {
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+        return format!(r"{windir}\explorer.exe").to_lowercase();
+    }
+    String::new()
+}
+
+/// The Windows taskbar's pinned shortcuts, in pin order (oldest first). Each
+/// pin's key is the shortcut's AppUserModelID, else its target exe, so it
+/// matches the app's windows.
+fn windows_pins() -> Vec<Pin> {
     let dir = pins_dir();
     let stamp = std::fs::metadata(&dir).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
     if let Some((at, list)) = PINS.lock().unwrap().as_ref() {
@@ -106,13 +152,12 @@ fn pins() -> Vec<Pin> {
             let mut target = shortcut_target(&lnk).map(|t| t.to_lowercase()).unwrap_or_default();
             // File Explorer's pin points at a shell location, not a program, and its
             // folder windows report no AppUserModelID: link them by program.
-            if target.is_empty() && aumid.as_deref() == Some("Microsoft.Windows.Explorer") {
-                let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
-                target = format!(r"{windir}\explorer.exe").to_lowercase();
+            if target.is_empty() {
+                target = aumid.as_deref().map(aumid_program).unwrap_or_default();
             }
             let key = aumid.or_else(|| (!target.is_empty()).then(|| target.clone()))?;
             let name = p.file_stem()?.to_string_lossy().to_string();
-            Some(Pin { key, name, lnk, target })
+            Some(Pin { key, name, lnk: Some(lnk), target })
         })
         .collect();
     // The same app pinned twice (e.g. "Microsoft Edge (2).lnk") shows once.
@@ -317,29 +362,31 @@ fn scan(app: &AppHandle) {
     let own = unsafe { GetCurrentProcessId() };
     let fg = unsafe { GetForegroundWindow() };
 
-    let pinned = pins();
+    let pinned = pins(app);
     let mut st = state().lock().unwrap();
     let mut windows = Vec::new();
     let mut icons_changed = false;
     // Pinned apps are listed (first, in pin order) even without windows.
     for p in &pinned {
-        if !st.icons.contains_key(&p.key) {
-            if let Some((w, hgt, rgba)) = shell_item(&p.lnk).and_then(|i| item_icon(&i)) {
+        if !st.apps.contains_key(&p.key) {
+            // Name and icon: the pin's shortcut, else its Start entry / exe.
+            let (aumid, exe) = if is_path(&p.key) { (None, p.key.clone()) } else { (Some(p.key.clone()), String::new()) };
+            let (name, icon) = match &p.lnk {
+                Some(lnk) => (p.name.clone(), shell_item(lnk).and_then(|i| item_icon(&i))),
+                None => describe(aumid.as_deref(), &exe),
+            };
+            if let Some((w, hgt, rgba)) = icon {
                 st.icons.insert(
                     p.key.clone(),
                     json!({ "w": w, "h": hgt, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) }),
                 );
                 icons_changed = true;
             }
+            st.apps.insert(p.key.clone(), App { key: p.key.clone(), name, exe, aumid, lnk: None });
         }
-        let entry = st.apps.entry(p.key.clone()).or_insert_with(|| App {
-            key: p.key.clone(),
-            name: p.name.clone(),
-            exe: String::new(),
-            aumid: None,
-            lnk: None,
-        });
-        entry.lnk = Some(p.lnk.clone());
+        if let Some(entry) = st.apps.get_mut(&p.key) {
+            entry.lnk = p.lnk.clone();
+        }
     }
     // EnumWindows lists top-level windows front to back: z = 0 is the most recent.
     for (z, &h) in all.iter().filter(|&&h| is_task(h, own)).enumerate() {

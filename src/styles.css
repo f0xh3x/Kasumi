@@ -387,7 +387,8 @@ html.mode-dock .slot > * { pointer-events: auto; }
 .task:hover { background: rgba(255, 255, 255, 0.1); }
 .task img { width: calc(var(--h, 30px) * 0.6); height: calc(var(--h, 30px) * 0.6); object-fit: contain; }
 .task img.missing { background: rgba(255, 255, 255, 0.15); border-radius: 25%; }
-.task.minimized img { opacity: 0.55; }
+/* Optional: minimized apps dimmed ([widgets.tasks] dim_minimized). */
+.widget.tasks.dim-minimized .task.minimized .ico { opacity: 0.55; }
 .task-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Running indicator under the icon: a dot per window (up to 3); a bar for the app in front. */
 .task-dots {

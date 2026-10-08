@@ -11,10 +11,19 @@ import { iconUrl } from "./tray";
  * Options: `monitor` = "own" (windows on this monitor, default) | "all";
  * `labels` = "none" (default) | "active" (title of the window in front);
  * `icons` = "color" (default) | "mono" | "accent" (silhouettes in the accent colour);
- * `pinned` = true (default): Windows taskbar pins show even when not running.
+ * `pinning` = true (default): pinned apps show first, even when not running, and
+ * the right-click menu pins / unpins (`pins` = the pinned app keys; until set,
+ * the Windows taskbar's pins).
  * Hovering an app with several windows pops up its windows to pick from.
  * Icons size with the surface (`--h`), so they grow as a dock opens.
  */
+
+/** The open tasks panel (to tell whether a right click should close it). */
+let panelRoot: HTMLElement | null = null;
+const panelShowing = () => {
+  const panel = panelRoot?.closest<HTMLElement>(".panel");
+  return !!panel && panel.style.visibility !== "hidden" && panel.style.opacity !== "0";
+};
 
 /** The app the tasks panel is about (set on right click / hover). */
 const menuTarget = { key: "", listeners: new Set<() => void>() };
@@ -50,11 +59,12 @@ function nextWindow(wins: TaskWindow[]): { hwnd: number; toggle: boolean } | nul
 
 export function tasks(opts: Record<string, unknown>): Widget {
   const ownMonitor = opts.monitor !== "all";
-  const showPinned = opts.pinned !== false;
+  const showPinned = opts.pinning !== false && opts.pinned !== false;
   const device = typeof opts._device === "string" ? opts._device : "";
   const labels = opts.labels === "active";
   const root = el("widget tasks");
   if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
+  if (opts.dim_minimized === true) root.classList.add("dim-minimized");
   const buttons = new Map<string, { b: HTMLElement; img: HTMLImageElement; label: HTMLElement; dots: HTMLElement }>();
 
   const draw = () => {
@@ -112,8 +122,13 @@ export function tasks(opts: Record<string, unknown>): Widget {
         b.addEventListener("contextmenu", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          // A right click opens it for good (not a hover popup).
           clearTimeout(hover.openTimer);
+          // A second right click on the same app closes its menu.
+          if (menuTarget.key === a.key && !hover.open && panelShowing()) {
+            hover.close?.();
+            return;
+          }
+          // A right click opens it for good (not a hover popup).
           hover.open = false;
           menuTarget.key = a.key;
           menuTarget.listeners.forEach((f) => f());
@@ -175,8 +190,10 @@ function shortTitle(title: string, app: string): string {
 }
 
 /** Right-click (and hover) panel: the app's windows, a new window, close all. */
-export function tasksPanel(_opts: Record<string, unknown>, ctx: PanelContext): Widget {
+export function tasksPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
   const root = el("tasks-panel");
+  panelRoot = root;
+  const pinning = opts.pinning !== false && opts.pinned !== false;
   const draw = () => {
     const t = latest;
     const app: TaskApp | undefined = t?.apps.find((a) => a.key === menuTarget.key);
@@ -217,11 +234,23 @@ export function tasksPanel(_opts: Record<string, unknown>, ctx: PanelContext): W
       });
       return a;
     };
+    // Pin / unpin: StatusNotch's own pin list (starts from the Windows taskbar's).
+    const pins = t.apps.filter((a) => a.pinned).map((a) => a.key);
+    const pinAction = pinning
+      ? [
+          app.pinned
+            ? action("Unpin", 0xe77a, () =>
+                call("config_write", { path: ["widgets", "tasks", "pins"], value: pins.filter((k) => k !== app.key) }),
+              )
+            : action("Pin", 0xe718, () => call("config_write", { path: ["widgets", "tasks", "pins"], value: [...pins, app.key] })),
+        ]
+      : [];
     root.replaceChildren(
       head,
       ...rows,
       el("tasks-sep"),
-      action("New window", 0xe710, () => call("task_launch", { appKey: app.key })),
+      action(wins.length ? "New window" : "Open", 0xe710, () => call("task_launch", { appKey: app.key })),
+      ...pinAction,
       ...(wins.length
         ? [action(wins.length > 1 ? "Close all windows" : "Close window", 0xe711, () => wins.forEach((w) => call("task_close", { hwndId: w.hwnd })))]
         : []),
