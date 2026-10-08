@@ -186,6 +186,42 @@ function monitorLayout(cfg: Cfg, name: string, surface = scope.surface): LayoutC
 const scopedLayout = (cfg: Cfg, surface: string): LayoutCfg =>
   scope.monitor ? monitorLayout(cfg, scope.monitor, surface) : surfaceLayout(cfg, surface);
 
+/** A copy of the config with `id` taken out of every layout (all surfaces, all monitors). */
+function stripped(cfg: Cfg, id: string): Cfg {
+  const out = structuredClone(cfg);
+  const clean = (o: any) => {
+    for (const k of LISTS) if (Array.isArray(o?.[k])) o[k] = o[k].filter((x: string) => x !== id);
+  };
+  for (const sc of Object.values<any>(out.surfaces ?? {})) clean(sc);
+  for (const r of out.monitors ?? []) {
+    for (const o of Object.values<any>(r.surfaces ?? {})) clean(o);
+    clean(r.layout);
+  }
+  return out;
+}
+
+/** Edits turning `cfg`'s layouts into `next`'s (surface lists, then monitor rules). */
+function layoutDiffOps(cfg: Cfg, next: Cfg): Op[] {
+  const ops: Op[] = [];
+  for (const [s, sc] of Object.entries<any>(next.surfaces ?? {})) {
+    for (const k of LISTS) {
+      if (JSON.stringify(sc?.[k]) !== JSON.stringify(cfg.surfaces?.[s]?.[k])) ops.push({ path: ["surfaces", s, k], value: sc[k] ?? [] });
+    }
+  }
+  if (JSON.stringify(next.monitors) !== JSON.stringify(cfg.monitors)) ops.push({ path: ["monitors"], value: next.monitors });
+  return ops;
+}
+
+/**
+ * Switched-off widgets have no spot anywhere (older versions kept it, so turning
+ * one back on resurfaced it in every layout that still listed it).
+ */
+export function migrationOpsDisabledSpots(cfg: Cfg): Op[] {
+  let next = cfg;
+  for (const [id, w] of Object.entries<any>(cfg.widgets ?? {})) if (w?.enabled === false) next = stripped(next, id);
+  return next === cfg ? [] : layoutDiffOps(cfg, next);
+}
+
 /** Rewrites (or creates, before the catch-all) the named monitor's rule. */
 function ruleOps(cfg: Cfg, name: string, update: (r: any) => void): Op[] {
   const rules: any[] = structuredClone(cfg.monitors ?? []);
@@ -414,19 +450,6 @@ const placement: Editor = (ctx) => {
     return L[bucket as Side].filter((id) => enabled(ctx.cfg, id) && known(id));
   };
 
-  /** Layouts with `id` taken out of every surface (and its notch lists). */
-  const without = (id: string) => {
-    const next: Record<string, LayoutCfg> = structuredClone(layouts);
-    for (const s of ids) {
-      for (const side of SIDES) next[s][side] = next[s][side].filter((x) => x !== id);
-      next[s].notch = next[s].notch.filter((x) => x !== id);
-    }
-    return next;
-  };
-  /** Only the surfaces whose layout changed. */
-  const changedOnly = (next: Record<string, LayoutCfg>) =>
-    Object.fromEntries(Object.entries(next).filter(([s, l]) => !sameLayout(l, layouts[s])));
-
   for (const [bucket, title] of columns) {
     const elsewhere = bucket.startsWith("surface:");
     const list = $("div", "bucket-list");
@@ -474,20 +497,25 @@ const placement: Editor = (ctx) => {
       col.classList.remove("over");
       const id = dragging;
       if (!id) return;
-      const ops: Op[] = [];
-      if (bucket === "disabled") {
-        // Out of this surface; switched off only when it's now nowhere at all.
-        const next = structuredClone(layouts);
-        for (const side of SIDES) next[cur][side] = next[cur][side].filter((x) => x !== id);
-        next[cur].notch = next[cur].notch.filter((x) => x !== id);
-        const stillPlaced = ids.some((s) => sideOf(next[s], id));
-        if (!scope.monitor && !stillPlaced && enabled(ctx.cfg, id)) ops.push({ path: ["widgets", id, "enabled"], value: false });
-        ctx.saveMany([...ops, ...layoutsOps(ctx.cfg, changedOnly(next))]);
+      const wasOff = !enabled(ctx.cfg, id);
+      if (bucket === "disabled" && !scope.monitor) {
+        // Off everywhere: out of every bar and every monitor's layout.
+        const base = stripped(ctx.cfg, id);
+        ctx.saveMany([...layoutDiffOps(ctx.cfg, base), { path: ["widgets", id, "enabled"], value: false }]);
         return;
       }
-      const next = without(id);
-      if (elsewhere) {
-        // Sent to another surface: it lands in that surface's center.
+      // Switching a widget back on: it goes only where it's dropped.
+      const base = wasOff ? stripped(ctx.cfg, id) : ctx.cfg;
+      const ls: Record<string, LayoutCfg> = Object.fromEntries(ids.map((s) => [s, scopedLayout(base, s)]));
+      const next: Record<string, LayoutCfg> = structuredClone(ls);
+      for (const s of ids) {
+        for (const side of SIDES) next[s][side] = next[s][side].filter((x) => x !== id);
+        next[s].notch = next[s].notch.filter((x) => x !== id);
+      }
+      if (bucket === "disabled") {
+        // Monitor view: just off this monitor's bar (it was taken out above).
+        for (const s of ids) if (s !== cur) next[s] = ls[s];
+      } else if (elsewhere) {
         next[bucket.slice(8)].center.push(id);
       } else {
         const { i, chips } = indexAt(e.clientY);
@@ -495,8 +523,12 @@ const placement: Editor = (ctx) => {
         const side = next[cur][bucket as Side];
         side.splice(Math.min(index, side.length), 0, id);
       }
-      if (!enabled(ctx.cfg, id)) ops.push({ path: ["widgets", id, "enabled"], value: true });
-      ctx.saveMany([...ops, ...layoutsOps(ctx.cfg, changedOnly(next))]);
+      const changed = Object.fromEntries(Object.entries(next).filter(([s, l]) => !sameLayout(l, ls[s])));
+      ctx.saveMany([
+        ...layoutDiffOps(ctx.cfg, base),
+        ...(wasOff && bucket !== "disabled" ? [{ path: ["widgets", id, "enabled"], value: true }] : []),
+        ...layoutsOps(base, changed),
+      ]);
     });
     root.append(col);
   }
