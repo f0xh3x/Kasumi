@@ -104,9 +104,9 @@ interface WidgetContext {
   (`at_edge` = bottom edge for the dock). Hot corners stay a top-bar feature for now
   (bottom corners could be added the same way later).
 * Window docking / "move aside for windows" and `hide_when_maximized` work per
-  surface. For the dock this answers "a maximized window is under the dock": an
-  option `when_covered = "stay" | "tiny" | "hide"` (default `tiny`, like macOS
-  intellihide — the dock shrinks to its 12 px handle until hovered).
+  surface. For the dock this answers "a maximized window is under the dock":
+  `shrink_when_covered = true` (default) shrinks it to its 12 px handle until
+  hovered, like macOS intellihide; `false` keeps it at its rest size.
 * Fullscreen hiding, DPI, monitor hot-plug: unchanged, applied to every surface.
 * OSD grows the notch holding `osd.notch` on whichever surface it is.
 
@@ -128,7 +128,7 @@ interface WidgetContext {
   the existing Global / per-monitor switch). Drag & drop moves widgets between
   sides *and* surfaces (a widget lives in one place; see open questions).
 * **New "Bars" section** per surface: enabled, edge, mode (Status bar / Dock),
-  rest size, open size, when covered, notch settings (merge, hug, offsets).
+  rest size, open size, shrink when covered, notch settings (merge, hug, offsets).
 * Per-widget sections gain the new widgets' options (below).
 
 ## 7. New widgets
@@ -146,8 +146,9 @@ interface WidgetContext {
   Activation from a no-focus overlay needs the existing `allow_foreground` +
   foreground-lock workaround.
 * **Sizes**: small = 18 px icons, active app marked; medium = 36 px icons with a
-  dot per window, title of the active one optional. Option: this monitor's windows
-  only, or all.
+  dot per window, title of the active one optional.
+* **Which windows**: `monitor = "own"` (default — each surface shows the windows on
+  its monitor) or `"all"`.
 * Later (not in scope now): pinned apps, live thumbnails (DWM thumbnails), flashing
   for attention (shell hook).
 
@@ -162,16 +163,33 @@ interface WidgetContext {
   later — nothing that needs private APIs.
 
 ### Launcher
-* A **separate** app launcher; the Windows Start menu and Win key stay untouched.
+* An **optional feature** (`[launcher] enabled`), separate from the Windows Start
+  menu; the Win key stays untouched. Opened with a **hotkey** (default
+  `Win+Shift+Space`, configurable — `Alt+Space` would clash with PowerToys Run and
+  the window menu) and, optionally, the launcher widget.
 * **Data**: every installed app from the Apps folder (`shell:AppsFolder`, which
   covers desktop shortcuts and Store apps alike), names + icons, cached and
   refreshed when Start menu folders change.
-* **UI**: clicking the launcher widget **morphs the dock notch into the launcher
-  panel** (the same notch→panel morph the geometry already does): search field,
-  results as you type, pinned apps grid. Enter launches the top result; Esc closes.
+* **With the launcher widget** (a search icon, optional): clicking it — or the
+  hotkey on that monitor — **morphs the widget into a text field** and an
+  **attached results window** drops out of the bar/dock below (or above) it.
+* **Without the widget**: the hotkey opens the attached window from the middle of
+  the bar/dock on the monitor under the cursor, with its own search field on top.
+* Results as you type; ↑/↓ to pick, Enter launches, Esc closes. Pinned apps shown
+  while the field is empty.
 * **Keyboard focus**: overlays are deliberately non-activating; while the launcher
   is open its window is allowed to take focus (the style guard gets an exception),
   and returns to non-activating on close.
+
+### Buttons — custom icon buttons (multiple instances)
+* A row of icon buttons, each with the same actions as menu items (`open` a path,
+  app or `shell:` folder, `settings`, `sleep`, `lock`, `restart`, `shutdown`…),
+  a tooltip, and optional `confirm` (second click).
+* **Instances**: `buttons`, `buttons#2`, `buttons#3`… each placed independently with
+  its own `[widgets."buttons#2"]` options — e.g. a power button in the top bar and a
+  settings button in the dock. Settings gets "Add another" / "Remove".
+* Instances are generic in the model (`<type>#<n>` → widget type `<type>`), so any
+  widget can get them later; for now the UI offers it for Buttons.
 
 ## 8. Hiding the Windows taskbar
 
@@ -192,23 +210,25 @@ Each phase ends with a build you install and use; nothing half-done ships.
 
 | # | Phase | Result | Risk |
 |---|---|---|---|
-| 1 | **Surfaces refactor** | Config v4, per-surface windows & engine, bottom edge rendering. Top bar identical to v0.1.0; an optional bottom surface in bar mode works mirrored | High (touches everything) — tested against v0.1.0 side by side |
+| 1 | **Surfaces refactor** | Config v4, widget instances (`type#n`), per-surface windows & engine, bottom edge rendering. Top bar identical to v0.1.0; an optional bottom surface in bar mode works mirrored | High (touches everything) — tested against v0.1.0 side by side |
 | 2 | **Dock mode & sizes** | `mode = dock`, tiny/small/medium morph, widget size context, `when_covered`, settings UI for surfaces | Medium |
 | 3 | **Tasks widget** | Window tracker provider, icons, activate/minimize/close, small & medium looks | Medium (window filtering edge cases, focus rules) |
 | 4 | **Hide Windows taskbar** | Option with crash-safe restore | Medium (Explorer / Windhawk interplay) |
-| 5 | **Quick settings** | Icon auto-select, panel with volume/brightness/battery/network/shortcuts | Low |
-| 6 | **Launcher** | App index, search, pinned, dock→launcher morph, focus handling | Medium (keyboard focus) |
+| 5 | **Quick settings & Buttons** | Icon auto-select, panel with volume/brightness/battery/network/shortcuts; custom button instances | Low |
+| 6 | **Launcher** | Hotkey, app index, search, pinned, widget→text field morph + attached results, focus handling | Medium (keyboard focus) |
 | 7 | Defaults, installer 0.2.0, docs | Default preset with dock, ARCHITECTURE.md updated | Low |
 
 Phases 3–6 are independent of each other after phase 2 and can be reordered.
 
-## 10. Open questions (defaults I'd pick in brackets)
+## 10. Decisions (2026-10-08)
 
-1. **Hide the Windows taskbar by default** when the dock is on? [yes, restored on quit]
-2. **Dock under a maximized window**: stay, shrink to the 12 px handle, or hide? [shrink]
-3. **Same widget in two places** (e.g. a clock in both bars)? [not now — one place per
-   widget; instances like `clock#2` can be added later without breaking configs]
-4. **Launcher opening**: widget click only, or also a hotkey? [click now; optional
-   hotkey later, never the Win key]
-5. **Tasks across monitors**: each dock shows its own monitor's windows, or all? [all,
-   with a per-widget option]
+1. Hide the Windows taskbar by default when the dock is on — **yes**, restored on quit.
+2. Dock under a maximized window — **shrinks to the 12 px handle** by default;
+   setting to keep it at rest size.
+3. Same widget in two places — not for built-in widgets yet; **instances exist in the
+   model** and the Buttons widget uses them.
+4. Launcher — **optional feature with a default hotkey**; the launcher widget is
+   optional (widget → text field + attached results; no widget → hotkey opens the
+   attached window with its own search field).
+5. Tasks — **per monitor by default**, setting for all monitors.
+6. New: **Buttons** widget with multiple instances.
