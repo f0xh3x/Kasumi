@@ -14,7 +14,7 @@ corner_radius = 10        # px
 corners_attached = true   # part of the bars (their tint, opacity, animations) | false: black, fixed
 
 [shell]
-hide_taskbar = false      # hide the Windows taskbar while StatusNotch runs (restored on quit)
+hide_taskbar = true       # hide the Windows taskbar while StatusNotch runs (restored on quit)
 
 # App launcher: opens from the launcher widget, or with the hotkey (from the
 # middle of the dock / bar when no launcher widget is placed).
@@ -89,10 +89,21 @@ hot_right = false
 hot_edge = false           # anywhere along the bar's edge
 hot_corner_size = 12
 hot_edge_size = 2
-left = ["menu", "language"]
+left = ["menu"]
 center = ["clock"]
-right = ["tray", "weather", "media", "temps"]
+right = ["buttons"]
 notch = ["clock"]
+
+# The dock: rests small at the bottom, grows to medium on hover.
+[surfaces.bottom]
+edge = "bottom"
+mode = "dock"
+rest = "small"               # tiny | small | medium | large
+open = "medium"
+left = []
+center = ["tasks", "tray", "quick"]
+right = []
+notch = []
 
 # Notches: widgets listed in [layout] notch show as a notch on their side.
 [notch]
@@ -186,3 +197,11 @@ items = [
 # Keyboard layout indicator (click to switch).
 [widgets.language]
 enabled = false
+
+# Your own buttons in the bar (same actions as the menu).
+[widgets.buttons]
+items = [
+  { label = "Settings", icon = "", action = "settings" },
+  { label = "Restart", icon = "", action = "restart", confirm = true },
+  { label = "Shut down", icon = "", action = "shutdown", confirm = true },
+]

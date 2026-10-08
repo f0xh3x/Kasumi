@@ -218,7 +218,7 @@ Each phase ends with a build you install and use; nothing half-done ships.
 | 4 | **Hide Windows taskbar** | Option with crash-safe restore | Medium (Explorer / Windhawk interplay) |
 | 5 | **Quick settings & Buttons** | Icon auto-select, panel with volume/brightness/battery/network/shortcuts; custom button instances | Low |
 | 6 | **Launcher** | Hotkey, app index, search, pinned, widget→text field morph + attached results, focus handling | Medium (keyboard focus) |
-| 7 | Defaults, installer 0.2.0, docs | Default preset with dock, ARCHITECTURE.md updated | Low |
+| 7 | Defaults, installer 0.2.0, docs | Default preset with dock, ARCHITECTURE.md updated | Low — **done (v0.2.0)** |
 
 Phases 3–6 are independent of each other after phase 2 and can be reordered.
 

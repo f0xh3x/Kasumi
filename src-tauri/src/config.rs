@@ -782,17 +782,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_is_one_top_bar() {
+    fn default_config_is_top_bar_and_dock() {
         let cfg = fallback();
-        assert_eq!(cfg.surface_list().len(), 1);
+        assert_eq!(cfg.surface_list().len(), 2);
+        assert!(cfg.shell.hide_taskbar);
         let (notches, bar) = cfg.resolve_surface(cfg.monitors.first(), "top");
         let ids: Vec<_> = notches.iter().map(|n| (n.id.as_str(), n.widgets.clone())).collect();
         assert_eq!(ids, [("center", vec!["clock".to_string()])]);
         assert!(notches[0].auto_width);
-        // Shipped minimal: only the menu, clock and tray are on; the rest are opt-in.
+        // Shipped minimal (the Default preset): menu, clock and buttons on top,
+        // tasks, tray and quick settings in the dock; the rest are opt-in.
         assert_eq!(bar.left, ["menu"]);
         assert_eq!(bar.center, ["clock"]);
-        assert_eq!(bar.right, ["tray"]);
+        assert_eq!(bar.right, ["buttons"]);
+        let (dock, _) = cfg.resolve_surface(cfg.monitors.first(), "bottom");
+        let widgets: Vec<String> = dock.iter().flat_map(|n| n.widgets.clone()).collect();
+        assert_eq!(widgets, ["tasks", "tray", "quick"]);
         for w in ["temps", "media", "weather", "language"] {
             assert!(!cfg.widget_enabled(w), "{w} ships disabled");
         }

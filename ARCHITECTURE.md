@@ -1,9 +1,11 @@
 # StatusNotch — how it works
 
-A Windows status bar shaped like a notch. A black notch sits at the top of each
-monitor; hovering it (or a hot corner) morphs it into a full-width bar, and widgets
-in the bar can drop down panels. Built with **Tauri v2**: a Rust backend and a plain
-TypeScript + SVG frontend (no UI framework).
+A small Windows shell shaped like notches. By default each monitor gets a **top
+status bar** (a black notch that morphs into a full-width bar on hover or a hot
+corner) and a **bottom dock** (notches that grow in place: tasks, tray, quick
+settings), and the Windows taskbar is hidden while it runs. Widgets can drop down
+panels; an app **launcher** opens with a hotkey. Built with **Tauri v2**: a Rust
+backend and a plain TypeScript + SVG frontend (no UI framework).
 
 Guiding rules: keep it **minimal** (new extras must be optional and off by default),
 **pure black** look, everything **configurable in `config.toml`** and exposed in the
@@ -26,9 +28,13 @@ config.rs   TOML model, defaults, resolve_layout     settings/*   the settings w
 config_edit.rs  comment-preserving config writes ◄── (invoke)
 ```
 
-* **One overlay window per monitor** (`overlay-DISPLAYn`): transparent, always on top,
-  click-through except where the frontend reports interactive regions. Hidden from the
-  taskbar/Alt+Tab (a subclass forces `WS_EX_TOOLWINDOW`; never use `skip_taskbar`).
+* **One overlay window per surface per monitor** (`overlay-DISPLAYn-top`,
+  `overlay-DISPLAYn-bottom`): transparent, always on top, click-through except where the
+  frontend reports interactive regions. A subclass (`win::style_guard`) keeps them
+  `WS_POPUP` + `WS_EX_TOOLWINDOW` without caption / system menu / minimize box: hidden
+  from the taskbar and Alt+Tab, never minimized by Win+D / "show desktop" (a watchdog
+  restores one anyway), and no title bar painted on activation (DWM non-client
+  rendering is off too). Never use `skip_taskbar`.
 * **Rust decides *where*, the frontend decides *how it looks*.** The engine computes
   layouts, notch positions, hover/open state; the overlay animates them with springs.
 * **Config** lives in `%APPDATA%\StatusNotch\config.toml`, hot-reloaded on save.
@@ -42,10 +48,14 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | Path | What it does |
 |---|---|
 | `src-tauri/src/main.rs` | Setup, plugin/command registration (`invoke_handler`), starts engine/providers/OSD/tray |
-| `src-tauri/src/engine.rs` | Engine thread (~60 Hz): cursor polling → hover state machine (`Idle/Dwell/Open/Leave`), hot corners, window docking ("undocked" notches), fullscreen hiding, monitor changes, `build_layout` + `notch_positions`; commands `get_layout`, `set_regions`, `set_notch_widths`, `set_content_height`, `fe_log` |
-| `src-tauri/src/config.rs` | Serde model of `config.toml`, defaults, `resolve_layout()` (layout + per-monitor rule → notches & bar groups), `widget_enabled()`, legacy model support |
+| `src-tauri/src/engine.rs` | Engine thread (~60 Hz): cursor polling → hover state machine (`Idle/Dwell/Open/Leave`) per surface, hot corners/edges, window docking ("undocked" notches), dock shrinking under maximized windows, fullscreen hiding, minimize watchdog, monitor changes, `build_layout` + `notch_positions` (unchanged layouts aren't resent); launcher open/close (`launcher_toggle`, closes when focus leaves); commands `get_layout`, `set_regions`, `set_notch_widths`, `set_content_height`, `fe_log`, `launcher_open/close` |
+| `src-tauri/src/config.rs` | Serde model of `config.toml`, defaults, `surface_list()` / `resolve_surface()` (surface + per-monitor rule → notches & bar groups), `widget_enabled()`, legacy model support |
 | `src-tauri/src/config_edit.rs` | `config_read`, `config_write(path, value)`, `config_write_many(ops)`, `config_reset` — `toml_edit`, keeps comments/CRLF, validates before writing |
-| `src-tauri/src/providers/` | Data providers (see §5): `temps.rs` (LibreHardwareMonitor), `weather.rs` (Open-Meteo), `media.rs` (Windows SMTC), `systray.rs` (tray icon host) |
+| `src-tauri/src/providers/` | Data providers (see §5): `temps.rs` (LibreHardwareMonitor), `weather.rs` (Open-Meteo), `media.rs` (Windows SMTC), `systray.rs` (tray icon host), `tasks.rs` (app windows, pins, icons; activate/close/launch/reorder), `system.rs` (volume, brightness, battery, network for quick settings) |
+| `src-tauri/src/taskbar.rs` | Hides / restores the Windows taskbar (`[shell] hide_taskbar`), reserves screen space for always-shown bars (crash-safe marker) |
+| `src-tauri/src/launcher.rs` | App index (Start menu shortcuts + Store apps), icons, launching, the global hotkey thread |
+| `src-tauri/src/corners.rs` | Rounded screen corners as native layered windows (when not attached to the bars) |
+| `src-tauri/src/dropzone.rs` | Files dropped on a bar (to pin them): WebView2 takes the drop, the page posts the files back (`postMessageWithAdditionalObjects`), this reads their paths |
 | `src-tauri/src/osd/` | `mod.rs` low-level keyboard hook + keyboard-layout watch; `volume.rs` Core Audio; `brightness.rs` WMI |
 | `src-tauri/src/actions.rs` | `run_action(action, target)`: open, settings, sleep, hibernate, lock, restart, shutdown, sign_out, open_config, open_log, open_config_folder |
 | `src-tauri/src/settings.rs` | Opens the settings window; `monitors_list`, `lhm_sensors`, `system_time_format`, `app_version` |
@@ -58,6 +68,7 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src/types.ts` | `Layout`, `NotchLayout`, … (mirror of Rust structs, camelCase) |
 | `src/data.ts` | Data hub: `subscribe(key, cb)`; typed `DataMap` |
 | `src/widgets/index.ts` | Widget + panel registries, `createWidget`, `createPanel`, `panelFor`, `Glyph`, `el()`, `icon()` |
+| `src/widgets/tasks.ts` | Tasks: buttons per app (pinned + running on this monitor), drag to reorder, drop files to pin, hover popup / right-click panel |
 | `src/settings/schema.ts` | Declarative settings pages (one entry per setting) |
 | `src/settings/editors.ts` | Custom editors (placement drag & drop, notch toggles, sensor pickers, menu editor, presets…) + config migrations |
 | `src/settings/main.ts` | Settings window rendering, save/saveMany, migrations on load |
@@ -79,17 +90,30 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 7. Providers `publish(key, value)` → **`notch://data`** → `data.ts` → widget callbacks.
 
 **Events (Rust → overlay):** `notch://layout`, `notch://state`, `notch://positions`,
-`notch://data`, `notch://osd`, `notch://keyboard`.
+`notch://data`, `notch://osd`, `notch://keyboard`, `notch://launcher`, `notch://drop`.
 
-## 4. Layout & notch model
+## 4. Surfaces, layout & notch model
 
 ```toml
-[layout]                       # global; a [[monitors]] rule may override with layout = {...}
-left   = ["menu", "language"]
+[surfaces.top]                 # a [[monitors]] rule may override: surfaces = { top = {...} }
+mode   = "bar"                 # bar | dock | always
+left   = ["menu"]
 center = ["clock"]
-right  = ["tray", "weather", "media", "temps"]
+right  = ["buttons"]
 notch  = ["clock"]             # which of those also show as a notch while the bar is closed
+
+[surfaces.bottom]              # the dock
+edge = "bottom"
+mode = "dock"                  # notches only; on hover they grow in place
+rest = "small"                 # [sizes]: tiny 12 | small 30 | medium 45 | large 60
+open = "medium"
+center = ["tasks", "tray", "quick"]
 ```
+
+* **Surfaces** are drawn the same way; bottom ones are mirrored. `mode = "always"`
+  keeps a bar shown (optionally `reserve_space`). Hot zones (`hot_left/right/edge`,
+  sizes) are per surface. Widget instances (`buttons#2`) let one widget type appear
+  several times.
 
 * **Open bar:** every enabled widget, in side order (notch widgets included).
 * **Closed:** only notch widgets show, inside notches. With `[notch] merge = true`
@@ -105,7 +129,8 @@ notch  = ["clock"]             # which of those also show as a notch while the b
   covers it; a notch left empty retracts into the top edge.
 * `combine_overlapping` draws touching notches as one shape (positions unchanged).
 * **Monitor rules** (`[[monitors]]`, first match wins): `match = "*" | "primary" | "#2" |
-  device | part of friendly name`, `enabled`, optional `layout = { left, center, right, notch }`.
+  device | part of friendly name`, `enabled`, optional
+  `surfaces = { top = { custom_layout = true, left, center, right, notch }, bottom = { enabled = false } }`.
 
 ## 5. Widgets
 
@@ -128,9 +153,11 @@ widget opens (clock → `calendar`, others by same name). Clicking the widget in
 bar drops the panel; panels auto-size.
 
 Existing widgets: `clock` (+ `calendar` panel), `menu` (panel with actions), `tray`
-(hosted tray icons panel), `language` (keyboard layout, click to switch), `media`
-(SMTC, keys + title, panel with art/seek), `weather` (Open-Meteo, hourly panel),
-`temps` (LibreHardwareMonitor CPU/GPU, details panel).
+(hosted tray icons; collapsed panel or expanded in the bar), `language` (keyboard
+layout, click to switch), `media` (SMTC, keys + title, panel with art/seek), `weather`
+(Open-Meteo, hourly panel), `temps` (LibreHardwareMonitor CPU/GPU, details panel),
+`tasks` (app windows + pins), `quick` (volume/brightness/battery/network panel),
+`buttons` (own action buttons, instances), `launcher` (search field + results).
 
 ### Adding a widget — checklist
 1. `src/widgets/<name>.ts`: factory (and optional panel factory); register in
@@ -169,14 +196,17 @@ Hover, OSD, Presets, About. Config format changes need a migration in `editors.t
 | Table | Holds |
 |---|---|
 | `[timing]` | `poll_ms`, `dwell_ms`, `grace_ms`, `edge_px`, `hot_corner` (size), `hot_top_left/right/edge` |
-| `[general]` | `hide_in_fullscreen` |
-| `[theme]` | `background`, `text`, `dim_opacity`, `accent`, `warn`, `font_size` |
+| `[general]` | `hide_in_fullscreen`, `rounded_corners`, `corner_radius`, `corners_attached` |
+| `[shell]` | `hide_taskbar` |
+| `[launcher]` | `enabled`, `hotkey` |
+| `[theme]` | `background`, `opacity`, `text`, `dim_opacity`, `accent`, `warn`, `font_size` |
 | `[geometry]` | `expanded_height`, `notch_height`, `concave_radius`, `notch_corner_radius`, `corner_radius`, panel radii |
 | `[animation]` | spring stiffness/damping per motion, `mass`, `style = "drop" | "spread"` |
 | `[osd]` | `enabled`, `notch`, size, `duration_ms`, `volume_step`, `replace_volume_keys`, `brightness`, `keyboard` |
 | `[bar]` | `padding`, `gap` |
-| `[layout]`, `[notch]`, `[[monitors]]` | see §4 |
-| `[widgets.<name>]` | `enabled` + widget options (e.g. `clock.format`, `media.max_width`/`scroll`, `weather.location/latitude/longitude/units`, `temps.url` + sensor ids, `menu.items`, `tray.hide`) |
+| `[sizes]` | `tiny`, `small`, `medium`, `large` |
+| `[surfaces.<id>]`, `[notch]`, `[[monitors]]` | see §4 (`[layout]` is the pre-0.2 form, migrated) |
+| `[widgets.<name>]` | `enabled` + widget options (e.g. `clock.format`, `media.max_width`/`scroll`, `weather.location/latitude/longitude/units`, `temps.url` + sensor ids, `menu.items`, `tray.mode/hide`, `tasks.pins/pinning/labels/icons/monitor/dim_minimized`, `buttons.items`) |
 
 ## 8. OSD, tray, Windows specifics
 
@@ -192,6 +222,13 @@ Hover, OSD, Presets, About. Config format changes need a migration in `editors.t
 * Fullscreen apps hide the overlay (shell processes excluded, 500 ms debounce).
 * Window rects use `DWMWA_EXTENDED_FRAME_BOUNDS` (maximized windows' invisible borders
   otherwise bleed into neighbour monitors).
+* **Tasks:** windows follow Alt+Tab rules; minimized windows count for the monitor
+  they'll be restored to, and a window stays listed while it's briefly cloaked
+  (minimize / restore animations). Activating borrows the foreground app's input
+  queue (`AttachThreadInput`) so Windows lets the switch happen.
+* **Hidden taskbar:** restored on quit and after a crash (next start). Reserving
+  space for an always-shown bar sets the work area without a broadcast (that would
+  re-show the taskbar).
 
 ## 9. Build & release
 
@@ -204,4 +241,6 @@ npx tauri build                                 # NSIS installer → target/rele
 ```
 
 Installer: per-user NSIS (`tauri.conf.json` → `bundle`), hooks in
-`src-tauri/windows/hooks.nsh`. Bump `version` in `tauri.conf.json` for releases.
+`src-tauri/windows/hooks.nsh`. For a release: bump `version` in `tauri.conf.json`,
+`Cargo.toml` and `package.json`; make `default-config.toml` match the **Default**
+preset (minus its `[[monitors]]` rules) — that's what ships.
