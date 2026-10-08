@@ -301,18 +301,40 @@ export function tasks(opts: Record<string, unknown>): Widget {
   };
 
   // Drop programs, shortcuts or links anywhere on the bar to pin them (the bar's
-  // first tasks widget takes them; the backend's drop target sends the events).
+  // first tasks widget takes them). WebView2 handles the drop; the files go to
+  // the backend, which reads their paths and sends them back as notch://drop.
   let dropOff: (() => void) | null = null;
+  const dropListeners: [string, (e: DragEvent) => void][] = [];
   if (showPinned) {
+    const mine = () => document.querySelector(".widget.tasks") === root;
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+    const over = (e: DragEvent) => {
+      if (!mine() || !hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "link";
+      root.classList.add("drop-target");
+    };
+    dropListeners.push(
+      ["dragenter", over],
+      ["dragover", over],
+      ["dragleave", (e) => {
+        // Left the page (not just moved between elements).
+        if (!e.relatedTarget) root.classList.remove("drop-target");
+      }],
+      ["drop", (e) => {
+        root.classList.remove("drop-target");
+        if (!mine() || !hasFiles(e)) return;
+        e.preventDefault();
+        const webview = (window as unknown as { chrome?: { webview?: { postMessageWithAdditionalObjects?: (m: string, o: FileList) => void } } }).chrome?.webview;
+        webview?.postMessageWithAdditionalObjects?.("statusnotch-drop", e.dataTransfer!.files);
+      }],
+    );
+    for (const [type, f] of dropListeners) document.addEventListener(type, f as EventListener);
     getCurrentWebviewWindow()
-      .listen<{ kind: "enter" | "over" | "leave" | "drop"; x: number; y: number; paths: string[] }>("notch://drop", (e) => {
-        if (document.querySelector(".widget.tasks") !== root) return;
-        const p = e.payload;
-        if (p.kind === "enter" || p.kind === "over") root.classList.add("drop-target");
-        else root.classList.remove("drop-target");
-        if (p.kind !== "drop") return;
+      .listen<{ kind: "drop"; paths: string[] }>("notch://drop", (e) => {
+        if (!mine()) return;
         const pins = pinEntries(latest);
-        const added = p.paths.filter((path) => !pins.some((x) => x.toLowerCase() === path.toLowerCase()));
+        const added = e.payload.paths.filter((path) => !pins.some((x) => x.toLowerCase() === path.toLowerCase()));
         invoke("fe_log", { message: `tasks: pinning ${JSON.stringify(added)}` }).catch(() => {});
         if (added.length) savePins([...pins, ...added]);
       })
@@ -322,6 +344,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
 
   const off = [
     () => dropOff?.(),
+    () => dropListeners.forEach(([type, f]) => document.removeEventListener(type, f as EventListener)),
     subscribe("tasks", (t) => {
       latest = t;
       draw();

@@ -876,6 +876,9 @@ class Overlay {
 
 // Surface frontend errors in the app log (the overlay has no visible devtools).
 const report = (message: string) => invoke("fe_log", { message }).catch(() => {});
+
+// Files dropped on a bar are for the tasks widget (if any): never open them as a page.
+for (const type of ["dragover", "drop"]) document.addEventListener(type, (e) => e.preventDefault());
 window.addEventListener("error", (e) => report(`${e.message} @ ${e.filename}:${e.lineno}`));
 window.addEventListener("unhandledrejection", (e) => report(`unhandled: ${e.reason}`));
 

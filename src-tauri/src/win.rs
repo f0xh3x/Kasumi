@@ -237,6 +237,10 @@ unsafe extern "system" fn style_guard(
             ss.styleNew &= !WS_EX_NOACTIVATE.0;
         }
     }
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE {
+        // Activated (the launcher): don't paint a title bar (lParam -1 = no frame repaint).
+        return DefSubclassProc(hwnd, msg, wparam, LPARAM(-1));
+    }
     DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
@@ -244,6 +248,16 @@ unsafe extern "system" fn style_guard(
 pub fn guard_overlay_style(h: isize) {
     unsafe {
         let _ = SetWindowSubclass(hwnd(h), Some(style_guard), 1, 0);
+        // No frame from the compositor either: themes and mods (accent-colored
+        // title bars, translucency) would draw one over the bar when it's active.
+        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY};
+        let policy = DWMNCRP_DISABLED;
+        let _ = DwmSetWindowAttribute(
+            hwnd(h),
+            DWMWA_NCRENDERING_POLICY,
+            &policy as *const _ as *const _,
+            std::mem::size_of_val(&policy) as u32,
+        );
     }
     apply_overlay_style(h);
 }

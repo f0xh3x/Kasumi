@@ -921,6 +921,8 @@ impl Engine {
             .focused(false)
             .focusable(false)
             .visible(false)
+            // Dropped files are taken by WebView2 itself (see dropzone).
+            .disable_drag_drop_handler()
             .build()?;
         let hwnd = window.hwnd()?.0 as isize;
         eprintln!("[statusnotch] built {label}");
@@ -932,7 +934,7 @@ impl Engine {
             let _ = window.set_ignore_cursor_events(true);
             win::guard_overlay_style(hwnd);
             win::place(hwnd, x, y, w, h);
-            crate::dropzone::register(window.app_handle(), window.label(), hwnd);
+            crate::dropzone::attach(&window);
             // Show through tao so its visibility flag stays in sync; it re-applies
             // that flag whenever window styles change (e.g. click-through toggles).
             let _ = window.show();

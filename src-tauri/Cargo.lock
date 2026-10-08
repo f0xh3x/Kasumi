@@ -3044,8 +3044,10 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.25.15+spec-1.1.0",
  "ureq",
+ "webview2-com",
  "windows 0.61.3",
  "windows-core 0.61.2",
+ "windows-core 0.62.2",
  "wmi",
 ]
 
