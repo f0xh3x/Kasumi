@@ -65,6 +65,8 @@ struct Pin {
     key: String,
     name: String,
     lnk: Option<String>,
+    /// How it's written in the pin list (an app key or a file path).
+    entry: String,
     /// The program it starts (lower case), so windows that report no
     /// AppUserModelID still join it (e.g. Explorer's folder windows).
     target: String,
@@ -99,15 +101,34 @@ fn pins(app: &AppHandle) -> Vec<Pin> {
         return Vec::new();
     }
     match own {
-        Some(keys) => keys
-            .into_iter()
-            .map(|key| {
-                let target = if is_path(&key) { key.to_lowercase() } else { aumid_program(&key) };
-                Pin { name: String::new(), lnk: None, target, key }
-            })
-            .collect(),
+        Some(entries) => entries.into_iter().filter_map(|entry| own_pin(&entry)).collect(),
         None => windows_pins(),
     }
+}
+
+/// One entry of StatusNotch's pin list: an app key (AppUserModelID or exe), or a
+/// file dropped onto the tasks widget (a shortcut, a program, an internet link).
+fn own_pin(entry: &str) -> Option<Pin> {
+    let lower = entry.to_lowercase();
+    if lower.ends_with(".lnk") {
+        // Matched to windows like a Windows pin; started through the shortcut.
+        let aumid = shortcut_aumid(entry);
+        let mut target = shortcut_target(entry).map(|t| t.to_lowercase()).unwrap_or_default();
+        if target.is_empty() {
+            target = aumid.as_deref().map(aumid_program).unwrap_or_default();
+        }
+        let key = aumid.or_else(|| (!target.is_empty()).then(|| target.clone())).unwrap_or_else(|| lower.clone());
+        let name = std::path::Path::new(entry).file_stem()?.to_string_lossy().to_string();
+        return Some(Pin { key, name, lnk: Some(entry.to_string()), target, entry: entry.to_string() });
+    }
+    if is_path(entry) && !lower.ends_with(".exe") {
+        // Other files (.url, documents...): opened through the shell.
+        let name = std::path::Path::new(entry).file_stem()?.to_string_lossy().to_string();
+        return Some(Pin { key: lower, name, lnk: Some(entry.to_string()), target: String::new(), entry: entry.to_string() });
+    }
+    let target = if is_path(entry) { lower.clone() } else { aumid_program(entry) };
+    let key = if is_path(entry) { lower } else { entry.to_string() };
+    Some(Pin { name: String::new(), lnk: None, target, key, entry: entry.to_string() })
 }
 
 /// App keys are AppUserModelIDs or (apps without one) exe paths.
@@ -157,7 +178,7 @@ fn windows_pins() -> Vec<Pin> {
             }
             let key = aumid.or_else(|| (!target.is_empty()).then(|| target.clone()))?;
             let name = p.file_stem()?.to_string_lossy().to_string();
-            Some(Pin { key, name, lnk: Some(lnk), target })
+            Some(Pin { key: key.clone(), name, lnk: Some(lnk), target, entry: key })
         })
         .collect();
     // The same app pinned twice (e.g. "Microsoft Edge (2).lnk") shows once.
@@ -201,6 +222,10 @@ struct State {
     /// Window handles in the order they first appeared.
     seen: Vec<isize>,
     icons: serde_json::Map<String, Value>,
+    /// The order the user dragged apps into (this session).
+    manual: Vec<String>,
+    /// When each app last had a window: it keeps its place for a moment after.
+    last_window: HashMap<String, std::time::Instant>,
 }
 
 fn state() -> &'static Mutex<State> {
@@ -309,8 +334,21 @@ fn aumid_of(h: HWND) -> Option<String> {
 }
 
 fn monitor_of(h: HWND) -> String {
+    use windows::Win32::Graphics::Gdi::MonitorFromRect;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT};
     unsafe {
-        let mon = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+        // Minimized windows are parked far off-screen (-32000, -32000): use the
+        // place they'll be restored to, or they'd jump to another monitor's list.
+        let mon = if IsIconic(h).as_bool() {
+            let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+            if GetWindowPlacement(h, &mut wp).is_ok() {
+                MonitorFromRect(&wp.rcNormalPosition, MONITOR_DEFAULTTONEAREST)
+            } else {
+                MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST)
+            }
+        } else {
+            MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST)
+        };
         let mut info = MONITORINFOEXW::default();
         info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
         if GetMonitorInfoW(mon, &mut info as *mut _ as *mut MONITORINFO).as_bool() {
@@ -375,6 +413,7 @@ fn scan(app: &AppHandle) {
                 Some(lnk) => (p.name.clone(), shell_item(lnk).and_then(|i| item_icon(&i))),
                 None => describe(aumid.as_deref(), &exe),
             };
+            let (aumid, exe) = if p.lnk.is_some() && !p.target.is_empty() { (aumid, p.target.clone()) } else { (aumid, exe) };
             if let Some((w, hgt, rgba)) = icon {
                 st.icons.insert(
                     p.key.clone(),
@@ -422,23 +461,38 @@ fn scan(app: &AppHandle) {
         }
         windows.push((id, title_of(h), key, h == fg, unsafe { IsIconic(h).as_bool() }, monitor_of(h), z));
     }
-    // Forget closed windows and apps without windows (they go to the end when reopened).
+    // Forget closed windows; an app without windows keeps its place for a few
+    // seconds (a window being replaced or re-created), then goes (it comes back
+    // at the end when reopened).
     st.seen.retain(|id| windows.iter().any(|w| w.0 == *id));
-    st.order.retain(|k| windows.iter().any(|w| &w.2 == k));
+    let now = std::time::Instant::now();
+    for w in &windows {
+        st.last_window.insert(w.2.clone(), now);
+    }
+    let recent = st.last_window.clone();
+    st.order.retain(|k| recent.get(k).is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(3)));
+    st.last_window.retain(|_, t| t.elapsed() < std::time::Duration::from_secs(60));
     let seen = st.seen.clone();
     windows.sort_by_key(|w| seen.iter().position(|id| *id == w.0));
 
-    let order: Vec<String> = pinned
+    let mut order: Vec<String> = pinned
         .iter()
         .map(|p| p.key.clone())
         .chain(st.order.iter().filter(|k| !pinned.iter().any(|p| &p.key == *k)).cloned())
         .collect();
+    order.dedup();
+    // The order the user dragged apps into wins; anything new keeps its place after.
+    let manual = st.manual.clone();
+    order.sort_by_key(|k| manual.iter().position(|m| m == k).unwrap_or(usize::MAX));
     let apps: Vec<Value> = order
         .iter()
         .filter_map(|k| st.apps.get(k))
         .map(|a| {
-            let pinned = pinned.iter().any(|p| p.key == a.key);
-            json!({ "key": a.key, "name": a.name, "exe": a.exe, "aumid": a.aumid, "pinned": pinned })
+            let pin = pinned.iter().find(|p| p.key == a.key);
+            json!({
+                "key": a.key, "name": a.name, "exe": a.exe, "aumid": a.aumid,
+                "pinned": pin.is_some(), "pin": pin.map(|p| p.entry.clone()),
+            })
         })
         .collect();
     let list: Vec<Value> = windows
@@ -569,6 +623,14 @@ pub async fn task_activate(hwnd_id: isize, toggle: bool) -> Result<(), String> {
             }
         }
     }
+    DIRTY.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+/// The user dragged an app to a new place: `keys` is the new order.
+#[tauri::command]
+pub async fn task_reorder(keys: Vec<String>) -> Result<(), String> {
+    state().lock().unwrap().manual = keys;
     DIRTY.store(true, Ordering::Relaxed);
     Ok(())
 }

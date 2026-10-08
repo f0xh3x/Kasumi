@@ -536,3 +536,7 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 
 /* A pinned app that isn't running: no window dots. */
 .task.idle .task-dots { display: none; }
+
+/* Tasks: the app being dragged to a new place, and the widget as a drop target. */
+.task.dragging { background: rgba(255, 255, 255, 0.14); cursor: grabbing; }
+.widget.tasks.drop-target { outline: 1px dashed rgba(255, 255, 255, 0.5); outline-offset: 3px; border-radius: 10px; }

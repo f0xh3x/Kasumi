@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { subscribe, type TaskApp, type TaskWindow, type Tasks } from "../data";
 import { el, type PanelContext, type Widget } from "./index";
 import { iconUrl } from "./tray";
@@ -48,6 +49,10 @@ let icons: Record<string, { w: number; h: number; rgba: string }> = {};
 
 const call = (cmd: string, args: Record<string, unknown>) => invoke(cmd, args).catch((e) => console.error(cmd, e));
 
+/** The pin list as written in the config (app keys / dropped files' paths). */
+const pinEntries = (t: Tasks | null) => (t?.apps ?? []).filter((a) => a.pinned).map((a) => a.pin ?? a.key);
+const savePins = (entries: string[]) => call("config_write", { path: ["widgets", "tasks", "pins"], value: entries });
+
 /** The window a click on an app should front: cycle when one of its windows is in front. */
 function nextWindow(wins: TaskWindow[]): { hwnd: number; toggle: boolean } | null {
   if (!wins.length) return null;
@@ -66,6 +71,9 @@ export function tasks(opts: Record<string, unknown>): Widget {
   if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
   if (opts.dim_minimized === true) root.classList.add("dim-minimized");
   const buttons = new Map<string, { b: HTMLElement; img: HTMLImageElement; label: HTMLElement; dots: HTMLElement }>();
+  // Dragging an app to a new place (pointer events: the overlay isn't a drop target for itself).
+  let drag: { key: string; x: number; moved: boolean } | null = null;
+  let justDragged = false;
 
   const draw = () => {
     const t = latest;
@@ -87,8 +95,54 @@ export function tasks(opts: Record<string, unknown>): Widget {
         const label = el("task-label");
         const dots = el("task-dots");
         const b = el("task", el("ico", img, el("ico-mask")), label, dots);
+        b.dataset.key = a.key;
+        b.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          drag = { key: a.key, x: e.clientX, moved: false };
+          b.setPointerCapture(e.pointerId);
+        });
+        b.addEventListener("pointermove", (e) => {
+          if (!drag || drag.key !== a.key) return;
+          if (!drag.moved && Math.abs(e.clientX - drag.x) < 6) return;
+          if (!drag.moved) {
+            drag.moved = true;
+            b.classList.add("dragging");
+            clearTimeout(hover.openTimer);
+          }
+          // Live reorder: the app takes the place under the pointer.
+          const others = ([...root.children] as HTMLElement[]).filter((c) => c !== b);
+          let i = others.findIndex((c) => {
+            const r = c.getBoundingClientRect();
+            return e.clientX < r.left + r.width / 2;
+          });
+          if (i < 0) i = others.length;
+          const before = others[i] ?? null;
+          if (b.nextElementSibling !== before) root.insertBefore(b, before);
+        });
+        const endDrag = () => {
+          if (!drag || drag.key !== a.key) return;
+          const moved = drag.moved;
+          drag = null;
+          b.classList.remove("dragging");
+          if (!moved) return;
+          justDragged = true;
+          window.setTimeout(() => (justDragged = false), 0);
+          // New order: what's shown here, then everything else as it was.
+          const shown = ([...root.children] as HTMLElement[]).map((c) => c.dataset.key!);
+          const all = (latest?.apps ?? []).map((x) => x.key);
+          const order = [...shown, ...all.filter((k) => !shown.includes(k))];
+          call("task_reorder", { keys: order });
+          // Pinned apps keep their new order across restarts.
+          const pins = pinEntries(latest);
+          const byKey = new Map((latest?.apps ?? []).filter((x) => x.pinned).map((x) => [x.key, x.pin ?? x.key]));
+          const reordered = order.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
+          if (showPinned && JSON.stringify(reordered) !== JSON.stringify(pins)) savePins(reordered);
+        };
+        b.addEventListener("pointerup", endDrag);
+        b.addEventListener("pointercancel", endDrag);
         b.addEventListener("click", (e) => {
           e.stopPropagation();
+          if (justDragged) return;
           const wins = (latest?.windows ?? []).filter((w) => w.app === a.key && (!ownMonitor || !device || w.monitor === device));
           const next = nextWindow(wins);
           if (next) call("task_activate", { hwndId: next.hwnd, toggle: next.toggle });
@@ -138,7 +192,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
         x = { b, img, label, dots };
         buttons.set(a.key, x);
       }
-      if (root.children[i] !== x.b) root.insertBefore(x.b, root.children[i] ?? null);
+      if (!drag?.moved && root.children[i] !== x.b) root.insertBefore(x.b, root.children[i] ?? null);
       const wins = mine.filter((w) => w.app === a.key);
       const active = wins.find((w) => w.active);
       x.b.classList.toggle("active", !!active);
@@ -156,11 +210,39 @@ export function tasks(opts: Record<string, unknown>): Widget {
       x.img.classList.toggle("missing", !url);
       x.label.textContent = labels && active ? active.title : "";
       x.label.hidden = !(labels && active);
-      x.dots.replaceChildren(...wins.slice(0, 3).map(() => el("task-dot")));
+      const dots = Math.min(3, wins.length);
+      if (x.dots.childElementCount !== dots) x.dots.replaceChildren(...Array.from({ length: dots }, () => el("task-dot")));
     });
   };
 
+  // Drop programs, shortcuts or links onto the widget to pin them.
+  let dropOff: (() => void) | null = null;
+  if (showPinned) {
+    const inside = (p: { x: number; y: number }) => {
+      const r = root.getBoundingClientRect();
+      const x = p.x / devicePixelRatio;
+      const y = p.y / devicePixelRatio;
+      return x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12;
+    };
+    getCurrentWebview()
+      .onDragDropEvent((e) => {
+        const p = e.payload;
+        if (p.type === "over" || p.type === "enter") root.classList.toggle("drop-target", inside(p.position));
+        else if (p.type === "leave") root.classList.remove("drop-target");
+        else if (p.type === "drop") {
+          root.classList.remove("drop-target");
+          if (!inside(p.position)) return;
+          const pins = pinEntries(latest);
+          const added = p.paths.filter((path) => !pins.some((x) => x.toLowerCase() === path.toLowerCase()));
+          if (added.length) savePins([...pins, ...added]);
+        }
+      })
+      .then((f) => (dropOff = f))
+      .catch((e) => console.error("drag-drop", e));
+  }
+
   const off = [
+    () => dropOff?.(),
     subscribe("tasks", (t) => {
       latest = t;
       draw();
@@ -235,14 +317,13 @@ export function tasksPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
       return a;
     };
     // Pin / unpin: StatusNotch's own pin list (starts from the Windows taskbar's).
-    const pins = t.apps.filter((a) => a.pinned).map((a) => a.key);
+    const pins = pinEntries(t);
+    const mine = app.pin ?? app.key;
     const pinAction = pinning
       ? [
           app.pinned
-            ? action("Unpin", 0xe77a, () =>
-                call("config_write", { path: ["widgets", "tasks", "pins"], value: pins.filter((k) => k !== app.key) }),
-              )
-            : action("Pin", 0xe718, () => call("config_write", { path: ["widgets", "tasks", "pins"], value: [...pins, app.key] })),
+            ? action("Unpin", 0xe77a, () => savePins(pins.filter((k) => k !== mine)))
+            : action("Pin", 0xe718, () => savePins([...pins, app.key])),
         ]
       : [];
     root.replaceChildren(

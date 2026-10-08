@@ -81,8 +81,10 @@ export interface TaskApp {
   name: string;
   exe: string;
   aumid: string | null;
-  /** Pinned to the Windows taskbar (listed even when not running). */
+  /** Pinned (listed even when not running). */
   pinned: boolean;
+  /** Its entry in the pin list (an app key or a dropped file's path). */
+  pin: string | null;
 }
 
 export interface TaskWindow {
