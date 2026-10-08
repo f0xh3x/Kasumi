@@ -76,7 +76,34 @@ export interface Keyboard {
   name: string;
 }
 
+export interface TaskApp {
+  key: string;
+  name: string;
+  exe: string;
+  aumid: string | null;
+}
+
+export interface TaskWindow {
+  hwnd: number;
+  title: string;
+  /** TaskApp key. */
+  app: string;
+  active: boolean;
+  minimized: boolean;
+  /** Monitor device name. */
+  monitor: string;
+  /** Z order: 0 = most recently in front. */
+  z: number;
+}
+
+export interface Tasks {
+  apps: TaskApp[];
+  windows: TaskWindow[];
+}
+
 interface DataMap {
+  tasks: Tasks | null;
+  taskIcons: Record<string, { w: number; h: number; rgba: string }> | null;
   temps: Temps | null;
   media: Media | null;
   weather: Weather | null;

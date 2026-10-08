@@ -18,7 +18,7 @@ fn main() {
     logfile::init();
     instance::claim();
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![engine::get_layout, engine::set_regions, engine::fe_log, engine::set_content_height, engine::set_notch_widths, actions::run_action, providers::get_data, providers::media::media_control, providers::systray::tray_click, osd::switch_keyboard_layout, config_edit::config_read, config_edit::config_write, config_edit::config_reset, autostart::autostart_get, autostart::autostart_set, settings::open_settings, settings::app_version, settings::monitors_list, settings::lhm_sensors, settings::system_time_format, config_edit::config_write_many, presets::presets_list, presets::preset_save, presets::preset_apply, presets::preset_rename, presets::preset_delete])
+        .invoke_handler(tauri::generate_handler![engine::get_layout, engine::set_regions, engine::fe_log, engine::set_content_height, engine::set_notch_widths, actions::run_action, providers::get_data, providers::media::media_control, providers::systray::tray_click, osd::switch_keyboard_layout, config_edit::config_read, config_edit::config_write, config_edit::config_reset, autostart::autostart_get, autostart::autostart_set, settings::open_settings, settings::app_version, settings::monitors_list, settings::lhm_sensors, settings::system_time_format, config_edit::config_write_many, presets::presets_list, presets::preset_save, presets::preset_apply, presets::preset_rename, presets::preset_delete, providers::tasks::task_activate, providers::tasks::task_close, providers::tasks::task_launch])
         .setup(|app| {
             engine::start(app.handle());
             osd::start(app.handle());

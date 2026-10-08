@@ -77,6 +77,8 @@ export type SurfaceMode = "bar" | "dock";
 export type SizeName = "tiny" | "small" | "medium";
 
 export interface Layout {
+  /** Device name of the monitor (`\\.\DISPLAY4`). */
+  device: string;
   /** The surface this overlay draws (`top`, `bottom`, ...). */
   surface: string;
   edge: Edge;

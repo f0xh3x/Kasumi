@@ -40,6 +40,8 @@ impl Rect {
 pub struct Layout {
     pub label: String,
     pub monitor: String,
+    /// Device name (`\\.\DISPLAY4`), as window lists report it.
+    pub device: String,
     /// The surface this overlay draws (`top`, `bottom`, ...), its edge and mode.
     pub surface: String,
     pub edge: Edge,
@@ -621,6 +623,7 @@ impl Engine {
         Layout {
             label: label.to_string(),
             monitor: if m.friendly.is_empty() { m.device.clone() } else { m.friendly.clone() },
+            device: m.device.clone(),
             surface: surface.to_string(),
             edge: s.edge,
             mode: s.mode,

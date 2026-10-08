@@ -277,6 +277,36 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Tasks",
+        scope: "global",
+        collapsible: true,
+        icon: 0xe737,
+        help: "Open apps. Click: switch to it (again: minimize). Middle click: close. Right click: its windows, new window, close all.",
+        fields: [
+          { kind: "custom", editor: "notch:tasks" },
+          {
+            kind: "select",
+            label: "Windows from",
+            path: ["widgets", "tasks", "monitor"],
+            default: "own",
+            options: [
+              { value: "own", label: "This monitor" },
+              { value: "all", label: "All monitors" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Labels",
+            path: ["widgets", "tasks", "labels"],
+            default: "none",
+            options: [
+              { value: "none", label: "Icons only" },
+              { value: "active", label: "Title of the window in front" },
+            ],
+          },
+        ],
+      },
+      {
         title: "Tray",
         scope: "global",
         collapsible: true,

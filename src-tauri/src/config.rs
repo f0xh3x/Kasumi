@@ -510,6 +510,15 @@ impl Config {
         self.widgets.get(name).and_then(|t| t.get("enabled")).and_then(|v| v.as_bool()) != Some(false)
     }
 
+    /// Whether a widget of this type (`type` or `type#n`) is placed on any surface.
+    pub fn widget_placed(&self, ty: &str) -> bool {
+        let is = |w: &String| w.split('#').next() == Some(ty) && self.widget_enabled(w);
+        let surfaces = self.surfaces.iter().flat_map(|m| m.values()).flat_map(|s| [&s.left, &s.center, &s.right]);
+        let layout = self.layout.iter().flat_map(|l| [&l.left, &l.center, &l.right]);
+        let rules = self.monitors.iter().flat_map(|r| r.surfaces.values()).flat_map(|o| [&o.left, &o.center, &o.right]).flatten();
+        surfaces.chain(layout).chain(rules).flatten().any(is)
+    }
+
     /// `widgets.<name>.hide_when_maximized`: the widget leaves its notch while a
     /// window covers the notch's spot, instead of moving aside with it.
     pub fn widget_hides_when_maximized(&self, name: &str) -> bool {

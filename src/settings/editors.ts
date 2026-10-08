@@ -86,6 +86,7 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "tray", label: "Tray", icon: 0xe70d },
   { id: "language", label: "Language", icon: 0xe765 },
   { id: "menu", label: "Menu", icon: 0xe700 },
+  { id: "tasks", label: "Tasks", icon: 0xe737 },
 ];
 
 export interface LayoutCfg {

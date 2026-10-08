@@ -202,9 +202,9 @@ class Overlay {
   }
 
   /** Dock: a notch widget's panel morphs out of its notch (one open at a time). */
-  private toggleDockPanel(drop: Drop, name: string): void {
+  private toggleDockPanel(drop: Drop, name: string, force?: boolean): void {
     if (!this.expanded || !drop.panels) return;
-    const open = !(drop.activePanel === name && drop.spring.target > 0.5);
+    const open = force ?? !(drop.activePanel === name && drop.spring.target > 0.5);
     for (const d of this.drops) if (d !== drop) d.spring.target = 0;
     if (open) {
       for (const [n, el] of drop.panels) if (n !== name) el.style.visibility = "hidden";
@@ -249,7 +249,7 @@ class Overlay {
       return sp;
     };
     const ctx = { close: this.closeAll, resize: () => this.resizeDrops() };
-    const opts = (name: string) => L.widgets[name] ?? {};
+    const opts = (name: string): Record<string, unknown> => ({ ...(L.widgets[name] ?? {}), _device: L.device });
     const mountPanel = (name: string, width?: number, height?: number) => {
       const panel = div(`panel panel-${name}`);
       if (width) panel.style.width = `${width}px`;
@@ -298,8 +298,11 @@ class Overlay {
           panelEl: mountPanel(panelName, Number(opts(name).width) || undefined),
           anchor: w.el,
         };
-        w.el.classList.add("clickable");
-        w.el.addEventListener("click", () => this.toggleDrop(drop));
+        if (w.panelTrigger !== "event") {
+          w.el.classList.add("clickable");
+          w.el.addEventListener("click", () => this.toggleDrop(drop));
+        }
+        w.el.addEventListener("notch:panel", () => this.toggleDrop(drop, true));
         this.drops.push(drop);
       }
     }
@@ -327,8 +330,11 @@ class Overlay {
           const panel = mountPanel(panelName, Number(opts(name).width) || undefined);
           panel.style.visibility = "hidden";
           panels.set(name, panel);
-          w.el.classList.add("clickable");
-          w.el.addEventListener("click", () => this.toggleDockPanel(drop, name));
+          if (w.panelTrigger !== "event") {
+            w.el.classList.add("clickable");
+            w.el.addEventListener("click", () => this.toggleDockPanel(drop, name));
+          }
+          w.el.addEventListener("notch:panel", () => this.toggleDockPanel(drop, name, true));
         }
       }
       this.markHidden(n);

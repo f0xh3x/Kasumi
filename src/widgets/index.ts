@@ -8,11 +8,15 @@ import { mediaPanel } from "./media-panel";
 import { tempsPanel } from "./temps-panel";
 import { invoke } from "@tauri-apps/api/core";
 import { trayButton, trayPanel } from "./tray";
+import { tasks, tasksPanel } from "./tasks";
 import { subscribe } from "../data";
 
 export interface Widget {
   el: HTMLElement;
   dispose?: () => void;
+  /** How its panel opens: a click on the widget (default), or only when the widget
+   * dispatches a bubbling "notch:panel" event (e.g. on right click). */
+  panelTrigger?: "click" | "event";
 }
 
 /** Lets a panel act on its overlay, e.g. close itself after an action. */
@@ -61,6 +65,7 @@ const widgets: Record<string, Factory> = {
   weather,
   menu: () => ({ el: el("widget menu", icon(Glyph.menu)) }),
   tray: trayButton,
+  tasks,
   language: () => {
     // Click to switch the window you're typing in to the next keyboard layout.
     const root = el("widget language clickable");
@@ -72,7 +77,15 @@ const widgets: Record<string, Factory> = {
     return { el: root, dispose: unsubscribe };
   },
 };
-const panels: Record<string, PanelFactory> = { calendar, menu, tray: trayPanel, media: mediaPanel, weather: weatherPanel, temps: tempsPanel };
+const panels: Record<string, PanelFactory> = {
+  calendar,
+  menu,
+  tray: trayPanel,
+  media: mediaPanel,
+  weather: weatherPanel,
+  temps: tempsPanel,
+  tasks: tasksPanel,
+};
 
 /**
  * A placed widget's type: instances are named `<type>#<n>` (e.g. `buttons#2`),

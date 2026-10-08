@@ -367,3 +367,54 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 
 /* Docks: notch widgets are the real (clickable) widgets. */
 html.mode-dock .slot > * { pointer-events: auto; }
+
+/* Tasks: one button per app; icons follow the surface height (docks grow them). */
+.widget.tasks { gap: calc(var(--h, 30px) * 0.12); }
+.task {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 calc(var(--h, 30px) * 0.08);
+  height: calc(var(--h, 30px) * 0.82);
+  border-radius: calc(var(--h, 30px) * 0.2);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.task:hover { background: rgba(255, 255, 255, 0.1); }
+.task img { width: calc(var(--h, 30px) * 0.6); height: calc(var(--h, 30px) * 0.6); object-fit: contain; }
+.task img.missing { background: rgba(255, 255, 255, 0.15); border-radius: 25%; }
+.task.minimized img { opacity: 0.55; }
+.task-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Running indicator under the icon: a dot per window (up to 3); a bar for the app in front. */
+.task-dots {
+  position: absolute;
+  left: 50%;
+  bottom: 1px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+}
+.task-dot { width: 3px; height: 3px; border-radius: 2px; background: var(--fg-dim); }
+.task.active .task-dots { gap: 0; }
+.task.active .task-dot { width: 10px; background: var(--fg); }
+.task.active .task-dot + .task-dot { display: none; }
+
+.tasks-panel { display: flex; flex-direction: column; gap: 2px; min-width: 220px; max-width: 360px; }
+.tasks-head { display: flex; align-items: center; gap: 8px; padding: 2px 6px 8px; font-weight: 600; }
+.tasks-head img { width: 20px; height: 20px; }
+.tasks-row, .tasks-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.tasks-row:hover, .tasks-action:hover { background: rgba(255, 255, 255, 0.1); }
+.tasks-row.active .tasks-title { color: var(--fg); }
+.tasks-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); }
+.tasks-close { font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; font-size: 10px; opacity: 0.6; padding: 4px; border-radius: 6px; }
+.tasks-close:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
+.tasks-sep { height: 1px; margin: 6px 4px; background: rgba(255, 255, 255, 0.1); }
+.tasks-empty { color: var(--fg-dim); padding: 6px 8px; }

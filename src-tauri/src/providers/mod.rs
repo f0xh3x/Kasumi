@@ -4,6 +4,7 @@
 
 pub mod media;
 pub mod systray;
+pub mod tasks;
 mod temps;
 mod weather;
 
@@ -83,4 +84,5 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     spawn("weather", weather::run);
     media::start(app);
     systray::start(app);
+    tasks::start(app);
 }

@@ -15,7 +15,7 @@ export function trayButton(): Widget {
 
 /** RGBA from Rust → PNG data URL, cached per pixel payload. */
 const urls = new Map<string, string>();
-function toUrl(i: TrayIcon): string {
+export function iconUrl(i: Pick<TrayIcon, "w" | "h" | "rgba">): string {
   const cached = urls.get(i.rgba);
   if (cached) return cached;
   const bytes = Uint8ClampedArray.from(atob(i.rgba), (c) => c.charCodeAt(0));
@@ -70,7 +70,7 @@ export function trayPanel(opts: Record<string, unknown>, ctx: PanelContext): Wid
         cells.set(i.id, c);
       }
       if (c.rgba !== i.rgba) {
-        c.img.src = toUrl(i);
+        c.img.src = iconUrl(i);
         c.rgba = i.rgba;
       }
       c.cell.title = i.tip || i.exe;
