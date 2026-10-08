@@ -118,6 +118,13 @@ export const pages: Page[] = [
         fields: [
           { kind: "custom", editor: "surfaceManager" },
           {
+            kind: "toggle",
+            label: "Hide the Windows taskbar",
+            help: "Hidden while StatusNotch runs and restored when it quits. The Win key and Start menu keep working. Turn off Windhawk mods that show the taskbar (e.g. “Taskbar auto-hide when maximized”).",
+            path: ["shell", "hide_taskbar"],
+            default: false,
+          },
+          {
             kind: "select",
             label: "Style",
             path: surfacePath("mode"),

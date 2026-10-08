@@ -14,6 +14,9 @@ hot_top_edge = false # anywhere along the top edge
 [general]
 hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
 
+[shell]
+hide_taskbar = false      # hide the Windows taskbar while StatusNotch runs (restored on quit)
+
 [theme]
 background = "#000000"
 text = "#ffffff"

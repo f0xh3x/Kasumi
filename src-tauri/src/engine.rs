@@ -654,6 +654,7 @@ impl Engine {
 
     /// Creates, updates or destroys overlay windows to match monitors + config.
     fn reconcile(&mut self) {
+        crate::taskbar::want(self.cfg.shell.hide_taskbar);
         let mut desired: Vec<(String, Monitor, String, Edge, Layout, Vec<config::Notch>)> = Vec::new();
         let surfaces = self.cfg.surface_list();
         for (i, m) in self.monitors.iter().enumerate() {

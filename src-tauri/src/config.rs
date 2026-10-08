@@ -40,6 +40,8 @@ pub struct Config {
     #[serde(default)]
     pub general: General,
     #[serde(default)]
+    pub shell: Shell,
+    #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
     pub osd: Osd,
@@ -155,6 +157,14 @@ impl Default for General {
     fn default() -> Self {
         Self { hide_in_fullscreen: true }
     }
+}
+
+/// `[shell]`: StatusNotch standing in for parts of the Windows shell.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Shell {
+    /// Hide the Windows taskbar while StatusNotch runs (restored when it quits).
+    pub hide_taskbar: bool,
 }
 
 /// Colors and text size of the notch, bar and panels.
