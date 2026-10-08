@@ -23,6 +23,7 @@ hotkey = "Win+Alt+Space"
 
 [theme]
 background = "#000000"
+opacity = 100             # percent: bars, notches and panels (text stays solid)
 text = "#ffffff"
 dim_opacity = 0.45        # secondary text
 accent = "#ffffff"

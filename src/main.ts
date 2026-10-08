@@ -11,6 +11,7 @@ import { launcherSetOpen } from "./widgets/launcher";
 
 const svg = document.getElementById("shape") as unknown as SVGSVGElement;
 const fill = document.getElementById("fill") as unknown as SVGPathElement;
+const cornersPath = document.getElementById("corners") as unknown as SVGPathElement;
 const content = document.getElementById("content") as HTMLDivElement;
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -31,6 +32,7 @@ function applyTheme(t: Layout["theme"]): void {
   root.setProperty("--fg-dim", withAlpha(t.text, t.dimOpacity));
   root.setProperty("--accent", t.accent);
   root.setProperty("--warn", t.warn);
+  root.setProperty("--shape-opacity", String(Math.min(1, Math.max(0.05, (t.opacity ?? 100) / 100))));
   document.body.style.fontSize = `${t.fontSize}px`;
 }
 
@@ -732,6 +734,7 @@ class Overlay {
 
     queueMicrotask(() => this.glide());
     fill.setAttribute("d", frame.d);
+    cornersPath.setAttribute("d", frame.corners);
     content.style.clipPath = `path("${frame.d}")`;
 
     this.bar.style.transform = `translateY(${frame.base - H}px)`;

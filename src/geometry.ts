@@ -59,6 +59,8 @@ export interface BumpFrame {
 
 export interface Frame {
   d: string;
+  /** The rounded screen corners, as their own path (drawn solid). */
+  corners: string;
   /** Current depth of the full-width bar. */
   base: number;
   bumps: BumpFrame[];
@@ -265,6 +267,7 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
   // from whatever fills that corner right now (the open bar, a notch hugging the
   // corner, a panel) — part of the same shape, so it moves with every animation.
   const R = L.cornerRadius ?? 0;
+  const C: string[] = [];
   if (R > 0) {
     const depthAt = (left: boolean) => {
       let d = (left ? hl <= 0.5 : hr >= W - 0.5) ? base : 0;
@@ -276,9 +279,9 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
     };
     const dl = depthAt(true);
     const dr = depthAt(false);
-    P.push(`M0 ${f(dl)}L0 ${f(dl + R)}A${f(R)} ${f(R)} 0 0 1 ${f(R)} ${f(dl)}Z`);
-    P.push(`M${f(W)} ${f(dr)}L${f(W - R)} ${f(dr)}A${f(R)} ${f(R)} 0 0 1 ${f(W)} ${f(dr + R)}Z`);
+    C.push(`M0 ${f(dl)}L0 ${f(dl + R)}A${f(R)} ${f(R)} 0 0 1 ${f(R)} ${f(dl)}Z`);
+    C.push(`M${f(W)} ${f(dr)}L${f(W - R)} ${f(dr)}A${f(R)} ${f(R)} 0 0 1 ${f(W)} ${f(dr + R)}Z`);
   }
 
-  return { d: P.join(""), base, bumps: frames };
+  return { d: P.join(""), corners: C.join(""), base, bumps: frames };
 }

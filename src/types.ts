@@ -70,6 +70,8 @@ export interface Theme {
   accent: string;
   warn: string;
   fontSize: number;
+  /** Opacity of the bars, notches and panels (percent). */
+  opacity: number;
 }
 
 export type Edge = "top" | "bottom";

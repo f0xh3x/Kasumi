@@ -32,8 +32,11 @@ body {
   pointer-events: none;
 }
 
+/* Rounded screen corners stay solid (they stand in for the screen's bezel). */
+#corners { fill: #000; }
 #fill {
   fill: var(--bg);
+  fill-opacity: var(--shape-opacity, 1);
   shape-rendering: geometricPrecision;
 }
 

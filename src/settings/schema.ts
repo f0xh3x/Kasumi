@@ -436,7 +436,24 @@ export const pages: Page[] = [
       {
         title: "Colors",
         fields: [
-          { kind: "color", label: "Background", path: ["theme", "background"], default: "#000000" },
+          {
+            kind: "color",
+            label: "Background tint",
+            help: "The colour of the bars, notches and panels; with less than full opacity it tints what's behind them.",
+            path: ["theme", "background"],
+            default: "#000000",
+          },
+          {
+            kind: "slider",
+            label: "Opacity",
+            help: "Of the bars, notches and panels; text and icons stay solid.",
+            path: ["theme", "opacity"],
+            default: 100,
+            min: 20,
+            max: 100,
+            step: 5,
+            unit: "%",
+          },
           { kind: "color", label: "Text", path: ["theme", "text"], default: "#ffffff" },
           { kind: "slider", label: "Secondary text opacity", path: ["theme", "dim_opacity"], default: 0.45, min: 0.2, max: 0.9, step: 0.05 },
           { kind: "color", label: "Accent", help: "Today in the calendar, sliders and bars.", path: ["theme", "accent"], default: "#ffffff" },

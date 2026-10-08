@@ -200,6 +200,8 @@ pub struct Theme {
     /// Hot readings (temps above their warning level).
     pub warn: String,
     pub font_size: f64,
+    /// Opacity of the bars, notches and panels (percent); text stays solid.
+    pub opacity: f64,
 }
 
 impl Default for Theme {
@@ -211,6 +213,7 @@ impl Default for Theme {
             accent: "#ffffff".into(),
             warn: "#ff9f43".into(),
             font_size: 13.0,
+            opacity: 100.0,
         }
     }
 }
