@@ -226,7 +226,8 @@ unsafe extern "system" fn style_guard(
         // desktop" / "minimize all" (and mods like Win+D per monitor) would
         // minimize a window that has them.
         let ss = &mut *(lparam.0 as *mut STYLESTRUCT);
-        ss.styleNew &= !FRAME_BITS;
+        // A popup: without a caption an "overlapped" window gets a title bar anyway.
+        ss.styleNew = (ss.styleNew & !FRAME_BITS) | WS_POPUP.0;
     }
     if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_EXSTYLE.0 {
         let ss = &mut *(lparam.0 as *mut STYLESTRUCT);
@@ -248,6 +249,8 @@ pub fn guard_overlay_style(h: isize) {
 }
 
 /// Window-frame style bits an overlay must not have (see `style_guard`).
+use windows::Win32::UI::WindowsAndMessaging::{SWP_FRAMECHANGED, SWP_NOZORDER, WS_POPUP};
+
 const FRAME_BITS: u32 = WS_CAPTION.0
     | windows::Win32::UI::WindowsAndMessaging::WS_SYSMENU.0
     | windows::Win32::UI::WindowsAndMessaging::WS_MINIMIZEBOX.0
@@ -272,9 +275,19 @@ pub fn unminimize(h: isize) -> bool {
 pub fn apply_overlay_style(h: isize) {
     unsafe {
         let style = GetWindowLongPtrW(hwnd(h), GWL_STYLE);
-        let bare = style & !(FRAME_BITS as isize);
+        let bare = (style & !(FRAME_BITS as isize)) | WS_POPUP.0 as isize;
         if bare != style {
             SetWindowLongPtrW(hwnd(h), GWL_STYLE, bare);
+            // Have Windows recompute the (now absent) frame.
+            let _ = SetWindowPos(
+                hwnd(h),
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
         }
         let ex = GetWindowLongPtrW(hwnd(h), GWL_EXSTYLE);
         let mut want = (ex | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize) & !(WS_EX_APPWINDOW.0 as isize);
