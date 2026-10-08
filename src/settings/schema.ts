@@ -284,6 +284,36 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Quick settings",
+        scope: "global",
+        collapsible: true,
+        icon: 0xe713,
+        help: "Its panel has volume and brightness, battery and network, and shortcuts to Windows settings.",
+        fields: [
+          { kind: "custom", editor: "notch:quick" },
+          {
+            kind: "select",
+            label: "Shows",
+            path: ["widgets", "quick", "icon"],
+            default: "auto",
+            options: [
+              { value: "auto", label: "Battery on laptops, else a settings icon" },
+              { value: "battery", label: "Battery" },
+              { value: "settings", label: "Settings icon" },
+              { value: "volume", label: "Volume" },
+              { value: "network", label: "Network" },
+            ],
+          },
+        ],
+      },
+      {
+        title: "Buttons",
+        scope: "global",
+        collapsible: true,
+        icon: 0xe7e8,
+        fields: [{ kind: "custom", editor: "buttonsWidgets" }],
+      },
+      {
         title: "Tasks",
         scope: "global",
         collapsible: true,

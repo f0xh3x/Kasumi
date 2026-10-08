@@ -393,3 +393,8 @@ body.maximized { border: 0; border-radius: 0; }
 }
 .preset-rename { width: 220px; }
 .preset-empty { color: var(--dim); }
+
+/* Buttons widgets */
+.buttons-card { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.buttons-head { display: flex; align-items: center; justify-content: space-between; }
+.buttons-card + .buttons-card { margin-top: 8px; }

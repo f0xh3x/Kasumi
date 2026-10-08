@@ -23,6 +23,7 @@ toml_edit = "0.25.15"
 version = "0.61"
 features = [
   "Foundation",
+  "Networking_Connectivity",
   "Media_Control",
   "Storage_Streams",
   "Win32_Media_Audio",

@@ -87,7 +87,25 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "language", label: "Language", icon: 0xe765 },
   { id: "menu", label: "Menu", icon: 0xe700 },
   { id: "tasks", label: "Tasks", icon: 0xe737 },
+  { id: "quick", label: "Quick settings", icon: 0xe713 },
+  { id: "buttons", label: "Buttons", icon: 0xe7e8 },
 ];
+
+/** A placed widget's type: instances are named `<type>#<n>`. */
+const typeOf = (id: string) => id.split("#")[0];
+
+/** The built-in widgets plus their extra instances in the config (`buttons#2`, ...). */
+export function catalog(cfg: Cfg): { id: string; label: string; icon: number }[] {
+  const out = [...WIDGETS];
+  const names = new Set<string>(Object.keys(cfg.widgets ?? {}));
+  for (const s of Object.values<any>(cfg.surfaces ?? {})) for (const k of ["left", "center", "right"]) for (const n of s?.[k] ?? []) names.add(n);
+  for (const n of [...names].sort()) {
+    const m = /^(\w+)#(\d+)$/.exec(n);
+    const base = m && WIDGETS.find((w) => w.id === m[1]);
+    if (base && !out.some((w) => w.id === n)) out.push({ id: n, label: `${base.label} ${m![2]}`, icon: base.icon });
+  }
+  return out;
+}
 
 export interface LayoutCfg {
   left: string[];
@@ -371,7 +389,8 @@ const placement: Editor = (ctx) => {
   const ids = surfaceIds(ctx.cfg);
   const layouts: Record<string, LayoutCfg> = Object.fromEntries(ids.map((s) => [s, scopedLayout(ctx.cfg, s)]));
   const L = layouts[cur];
-  const known = (id: string) => WIDGETS.some((w) => w.id === id);
+  const cat = catalog(ctx.cfg);
+  const known = (id: string) => cat.some((w) => w.id === id);
   const placedOn = (id: string) => ids.filter((s) => sideOf(layouts[s], id));
   const isOff = (id: string) => !enabled(ctx.cfg, id) || placedOn(id).length === 0;
   const root = $("div", "sorter");
@@ -386,7 +405,7 @@ const placement: Editor = (ctx) => {
     ["disabled", "Disabled"],
   ];
   const listOf = (bucket: Bucket): string[] => {
-    if (bucket === "disabled") return WIDGETS.map((w) => w.id).filter(isOff);
+    if (bucket === "disabled") return cat.map((w) => w.id).filter(isOff);
     if (bucket.startsWith("surface:")) {
       const l = layouts[bucket.slice(8)];
       return SIDES.flatMap((side) => l[side]).filter((id) => enabled(ctx.cfg, id) && known(id));
@@ -411,7 +430,7 @@ const placement: Editor = (ctx) => {
     const elsewhere = bucket.startsWith("surface:");
     const list = $("div", "bucket-list");
     for (const id of listOf(bucket)) {
-      const w = WIDGETS.find((x) => x.id === id)!;
+      const w = cat.find((x) => x.id === id)!;
       const chip = $("div", "chip", glyph(w.icon), w.label);
       const notchIn = elsewhere ? layouts[bucket.slice(8)] : L;
       if (bucket !== "disabled" && notchIn.notch.includes(id)) chip.append($("span", "chip-badge", "notch"));
@@ -490,7 +509,7 @@ const placement: Editor = (ctx) => {
 const monitorNotches: Editor = (ctx) => {
   const L = currentLayout(ctx.cfg);
   const box = $("div", "stack-tight");
-  for (const w of WIDGETS) {
+  for (const w of catalog(ctx.cfg)) {
     if (!enabled(ctx.cfg, w.id) || !sideOf(L, w.id)) continue;
     box.append(
       row(
@@ -827,9 +846,10 @@ const DEFAULT_ICON: Record<string, number> = {
 };
 const DESTRUCTIVE = new Set(["restart", "shutdown", "sign_out"]);
 
-const menuItems: Editor = (ctx) => {
-  const items: any[] = structuredClone(ctx.cfg.widgets?.menu?.items ?? []);
-  const save = () => ctx.save(["widgets", "menu", "items"], items);
+/** Editor for a widget's `items` (menu entries, buttons). */
+const itemsEditor = (widget: string, separators = true): Editor => (ctx) => {
+  const items: any[] = structuredClone(ctx.cfg.widgets?.[widget]?.items ?? []);
+  const save = () => ctx.save(["widgets", widget, "items"], items);
   const list = $("div", "menu-editor");
 
   const render = () => {
@@ -913,7 +933,77 @@ const menuItems: Editor = (ctx) => {
   bFolder.addEventListener("click", add({ label: "Folder", icon: String.fromCharCode(0xe8b7), action: "open", target: "C:/" }));
   bAction.addEventListener("click", add({ label: "Lock", icon: String.fromCharCode(0xe72e), action: "lock" }));
   bSep.addEventListener("click", add({ separator: true }));
+  bSep.hidden = !separators;
   return $("div", "stack-tight", list, buttons, $("p", "card-help", "Restart, shut down and sign out ask for a second click."));
+};
+
+const menuItems = itemsEditor("menu");
+
+/** Every Buttons widget (`buttons`, `buttons#2`, ...): its buttons, notch, add / remove. */
+const buttonsWidgets: Editor = (ctx) => {
+  const ids = catalog(ctx.cfg)
+    .filter((w) => typeOf(w.id) === "buttons")
+    .map((w) => w.id);
+  const box = $("div", "stack");
+  for (const id of ids) {
+    const label = catalog(ctx.cfg).find((w) => w.id === id)!.label;
+    const head = $("div", "buttons-head", $("div", "row-label", label));
+    if (id !== "buttons") {
+      const remove = $("button", "button", "Remove") as HTMLButtonElement;
+      let armed = false;
+      remove.addEventListener("click", () => {
+        if (!armed) {
+          armed = true;
+          remove.textContent = "Click again to remove";
+          remove.classList.add("danger");
+          return;
+        }
+        // Off every bar (globally and per monitor), then its settings.
+        const ops: Op[] = [];
+        for (const [s, sc] of Object.entries<any>(ctx.cfg.surfaces ?? {})) {
+          for (const k of LISTS) {
+            if ((sc?.[k] ?? []).includes(id)) ops.push({ path: ["surfaces", s, k], value: sc[k].filter((x: string) => x !== id) });
+          }
+        }
+        if (Array.isArray(ctx.cfg.monitors)) {
+          const rules = structuredClone(ctx.cfg.monitors);
+          let changed = false;
+          for (const r of rules) {
+            for (const o of Object.values<any>(r.surfaces ?? {})) {
+              for (const k of LISTS) {
+                if (Array.isArray(o?.[k]) && o[k].includes(id)) {
+                  o[k] = o[k].filter((x: string) => x !== id);
+                  changed = true;
+                }
+              }
+            }
+          }
+          if (changed) ops.push({ path: ["monitors"], value: rules });
+        }
+        ops.push({ path: ["widgets", id], value: null });
+        ctx.saveMany(ops);
+      });
+      head.append(remove);
+    }
+    box.append($("div", "buttons-card", head, widgetNotch(id)(ctx), itemsEditor(id, false)(ctx)));
+  }
+  const add = $("button", "button", "Add another Buttons widget") as HTMLButtonElement;
+  add.addEventListener("click", () => {
+    const n = Math.max(1, ...ids.map((id) => Number(id.split("#")[1] ?? 1))) + 1;
+    ctx.saveMany([
+      {
+        path: ["widgets", `buttons#${n}`, "items"],
+        value: [{ label: "Settings", icon: String.fromCharCode(0xe713), action: "settings" }],
+      },
+    ]);
+  });
+  return $(
+    "div",
+    "stack",
+    box,
+    $("div", "button-row", add),
+    $("p", "card-help", "Each Buttons widget is placed on its own (Placement above): e.g. a power button in the top bar and a settings button in the dock."),
+  );
 };
 
 const widgetNotchEditors = Object.fromEntries(WIDGETS.map((w) => [`notch:${w.id}`, widgetNotch(w.id)]));
@@ -1077,6 +1167,7 @@ function presets(ctx: EditorCtx): HTMLElement {
 export const editors: Record<string, Editor> = {
   presets,
   surfaceManager,
+  buttonsWidgets,
   scopeSelector,
   monitorToggles,
   placement,

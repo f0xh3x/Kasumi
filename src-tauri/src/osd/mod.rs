@@ -8,9 +8,20 @@ use crate::providers::SharedConfig;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
+/// Until when volume changes don't pop the OSD (set while a quick settings
+/// slider is being dragged: the slider shows the level itself).
+static QUIET_VOLUME: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+pub fn quiet_volume(for_: std::time::Duration) {
+    *QUIET_VOLUME.lock().unwrap() = Some(std::time::Instant::now() + for_);
+}
+
 /// Shows the OSD on the overlay under the cursor. `level` is 0..=1.
 pub fn show(app: &AppHandle, kind: &str, level: f32, muted: bool) {
     if !app.state::<SharedConfig>().read().unwrap().osd.enabled {
+        return;
+    }
+    if kind == "volume" && QUIET_VOLUME.lock().unwrap().is_some_and(|t| std::time::Instant::now() < t) {
         return;
     }
     let Some(label) = crate::engine::osd_target(app) else {

@@ -9,6 +9,8 @@ import { tempsPanel } from "./temps-panel";
 import { invoke } from "@tauri-apps/api/core";
 import { trayButton, trayPanel } from "./tray";
 import { tasks, tasksPanel } from "./tasks";
+import { quick, quickPanel } from "./quick";
+import { buttons } from "./buttons";
 import { subscribe } from "../data";
 
 export interface Widget {
@@ -66,6 +68,8 @@ const widgets: Record<string, Factory> = {
   menu: () => ({ el: el("widget menu", icon(Glyph.menu)) }),
   tray: trayButton,
   tasks,
+  quick,
+  buttons,
   language: () => {
     // Click to switch the window you're typing in to the next keyboard layout.
     const root = el("widget language clickable");
@@ -85,6 +89,7 @@ const panels: Record<string, PanelFactory> = {
   weather: weatherPanel,
   temps: tempsPanel,
   tasks: tasksPanel,
+  quick: quickPanel,
 };
 
 /**

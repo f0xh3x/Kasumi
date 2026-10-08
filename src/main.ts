@@ -485,6 +485,14 @@ class Overlay {
           d.panelWidth = d.panelEl.offsetWidth;
           d.panelEl.style.width = `${d.panelWidth}px`;
         }
+        // A dock notch's panel is at least as wide as the open notch, so the
+        // morphed shape never clips the notch's own row; its content is centered.
+        const rowWidth = L.mode === "dock" && d.notch ? d.notch.openWidth : 0;
+        d.panelEl.classList.toggle("widened", d.panelWidth < rowWidth);
+        if (d.panelWidth < rowWidth) {
+          d.panelWidth = rowWidth;
+          d.panelEl.style.width = `${rowWidth}px`;
+        }
         d.panelEl.style.height = "auto";
         d.panelHeight = d.panelEl.offsetHeight;
         d.panelEl.style.height = `${d.panelHeight}px`;

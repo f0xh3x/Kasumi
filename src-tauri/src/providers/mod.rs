@@ -4,6 +4,7 @@
 
 pub mod media;
 pub mod systray;
+pub mod system;
 pub mod tasks;
 mod temps;
 mod weather;
@@ -85,4 +86,5 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     media::start(app);
     systray::start(app);
     tasks::start(app);
+    system::start(app);
 }

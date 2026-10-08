@@ -101,7 +101,17 @@ export interface Tasks {
   windows: TaskWindow[];
 }
 
+export interface SystemStatus {
+  /** Null on PCs without a battery. */
+  battery: { percent: number | null; plugged: boolean; charging: boolean; secondsLeft: number | null; saver: boolean } | null;
+  volume: { level: number; muted: boolean } | null;
+  /** Built-in panel brightness 0..100; null where it can't be controlled. */
+  brightness: number | null;
+  network: { connected: boolean; internet?: boolean; name: string; wifi: boolean } | null;
+}
+
 interface DataMap {
+  system: SystemStatus | null;
   tasks: Tasks | null;
   taskIcons: Record<string, { w: number; h: number; rgba: string }> | null;
   temps: Temps | null;
