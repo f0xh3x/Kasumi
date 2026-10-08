@@ -46,6 +46,12 @@ export interface NotchLayout {
   hiddenWidgets: string[];
   /** Hugs this corner: content keeps the bar's distance from the edge. */
   edge: "left" | "right" | null;
+  /** Dock: position and size while open. */
+  openX: number;
+  openWidth: number;
+  openHeight: number;
+  /** Dock: shrunk to the tiny handle (a window covers it). */
+  shrunk: boolean;
 }
 
 export interface Osd {
@@ -68,12 +74,18 @@ export interface Theme {
 
 export type Edge = "top" | "bottom";
 export type SurfaceMode = "bar" | "dock";
+export type SizeName = "tiny" | "small" | "medium";
 
 export interface Layout {
   /** The surface this overlay draws (`top`, `bottom`, ...). */
   surface: string;
   edge: Edge;
   mode: SurfaceMode;
+  /** Dock sizes at rest and open (bar mode: both the notch height). */
+  rest: SizeName;
+  open: SizeName;
+  restHeight: number;
+  openHeight: number;
   label: string;
   monitor: string;
   width: number;

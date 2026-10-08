@@ -112,8 +112,9 @@ interface WidgetContext {
 
 ## 5. Config & migration
 
-* New: `[sizes]`, `[surfaces.<id>]`. `[notch]` side settings move into the surface
-  (`[surfaces.top.notch.left]`…) with the current values as defaults.
+* New: `[sizes]`, `[surfaces.<id>]`. `[notch]` side settings (merge, hug, offsets)
+  stay global, shared by all surfaces (done this way in phase 1: simpler migration;
+  per-surface overrides can be added later if needed).
 * Per-monitor rules gain per-surface overrides:
   `[[monitors]] match = "ARZOPA"  surfaces = { bottom = { enabled = false } }`.
 * **Migration v3 → v4** (settings window, like previous ones): `[layout]` +

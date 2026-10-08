@@ -7,7 +7,7 @@
 //! bottom one (the frontend draws bottom surfaces flipped), so hover zones,
 //! regions and notch shapes are the same maths for both.
 
-use crate::config::{self, Anchor, Animation, Bar, Config, Edge, Geometry, MonitorRule, SurfaceMode};
+use crate::config::{self, Anchor, Animation, Bar, Config, Edge, Geometry, MonitorRule, SizeName, SurfaceMode};
 use crate::providers::{self, SharedConfig};
 use crate::win::{self, Monitor};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,11 @@ pub struct Layout {
     pub surface: String,
     pub edge: Edge,
     pub mode: SurfaceMode,
+    /// Dock: named sizes and heights at rest and open (bar mode: the notch height).
+    pub rest: SizeName,
+    pub open: SizeName,
+    pub rest_height: f64,
+    pub open_height: f64,
     pub width: f64,
     pub height: f64,
     pub scale: f64,
@@ -79,13 +84,34 @@ pub struct NotchLayout {
     /// "left"/"right" for the notch hugging that corner: its content keeps the
     /// open bar's distance from the edge, so it doesn't shift as the bar opens.
     pub edge: Option<String>,
+    /// Dock: where the notch is and how big while open (bar mode: same as at rest).
+    pub open_x: f64,
+    pub open_width: f64,
+    pub open_height: f64,
+    /// Dock: shrunk to the tiny handle (a window covers it).
+    pub shrunk: bool,
 }
 
-/// A notch's measured content width, and without its hide-under-windows widgets.
+/// A notch's measured content width, and without its hide-under-windows widgets;
+/// for docks also at the open size.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
 pub struct NotchWidth {
     pub full: f64,
     pub compact: f64,
+    #[serde(default)]
+    pub open: f64,
+}
+
+/// The notch geometry scaled for a notch `height` tall, so taller (dock) notches
+/// keep the same silhouette.
+fn scaled(g: &Geometry, height: f64) -> Geometry {
+    let k = height / g.notch_height.max(1.0);
+    Geometry { concave_radius: g.concave_radius * k, notch_corner_radius: g.notch_corner_radius * k, ..g.clone() }
+}
+
+/// Width of a dock notch shrunk to the tiny handle.
+fn handle_width(open: f64) -> f64 {
+    (open * 0.6).max(48.0)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -181,7 +207,9 @@ pub async fn set_notch_widths(
     let mut sh = state.lock().unwrap();
     let label = window.label().to_string();
     let Some(o) = sh.overlays.get_mut(&label) else { return Ok(()) };
-    let near = |a: &NotchWidth, b: &NotchWidth| (a.full - b.full).abs() <= 0.5 && (a.compact - b.compact).abs() <= 0.5;
+    let near = |a: &NotchWidth, b: &NotchWidth| {
+        (a.full - b.full).abs() <= 0.5 && (a.compact - b.compact).abs() <= 0.5 && (a.open - b.open).abs() <= 0.5
+    };
     let changed = widths.iter().any(|(id, w)| o.measured.get(id).is_none_or(|old| !near(old, w)));
     if changed {
         o.measured.extend(widths);
@@ -434,6 +462,10 @@ impl Engine {
         }
     }
 
+    fn shrink_when_covered(&self, surface: &str) -> bool {
+        self.cfg.surface_list().iter().any(|(id, s)| id == surface && s.shrink_when_covered)
+    }
+
     fn rule_for(&self, m: &Monitor, index: usize) -> Option<&MonitorRule> {
         self.cfg.monitors.iter().find(|r| {
             let s = r.matcher.trim();
@@ -461,8 +493,16 @@ impl Engine {
         measured: &HashMap<String, NotchWidth>,
     ) -> Layout {
         let width = m.width() as f64 / m.scale;
-        let g = &self.cfg.geometry;
         let s = self.cfg.surface_list().into_iter().find(|(id, _)| id == surface).map(|(_, s)| s).unwrap_or_default();
+        let dock = s.mode == SurfaceMode::Dock;
+        let sizes = &self.cfg.sizes;
+        let (rest_h, open_h) = if dock {
+            (sizes.px(s.rest), sizes.px(s.open).max(sizes.px(s.rest)))
+        } else {
+            (self.cfg.geometry.notch_height, self.cfg.geometry.notch_height)
+        };
+        let g = &if dock { scaled(&self.cfg.geometry, rest_h) } else { self.cfg.geometry.clone() };
+        let g_open = scaled(&self.cfg.geometry, open_h);
         let (mut defs, bar) = self.cfg.resolve_surface(rule, surface);
         defs.retain(|n| n.widgets.iter().any(|w| self.cfg.widget_enabled(w)));
         for n in defs.iter_mut().filter(|n| n.auto_width) {
@@ -489,10 +529,25 @@ impl Engine {
                 hidden_widgets.insert(n.id.clone(), hide);
             }
         }
-        // Only notches set to avoid windows move aside; retracted ones keep their spot
-        // and don't push their neighbours.
-        let moved: Vec<String> =
-            defs.iter().filter(|n| n.avoid_windows && undocked.contains(&n.id)).map(|n| n.id.clone()).collect();
+        // Docks: covered notches shrink to the tiny handle instead of moving aside.
+        let shrunk: HashSet<String> =
+            if dock && s.shrink_when_covered { undocked.iter().cloned().collect() } else { HashSet::new() };
+        let open_width = |n: &config::Notch| measured.get(&n.id).map_or(n.width, |w| if w.open > 0.0 { w.open } else { w.full });
+        let rest_height = |n: &config::Notch| if shrunk.contains(&n.id) { sizes.tiny } else { rest_h };
+        if dock {
+            for n in defs.iter_mut() {
+                if shrunk.contains(&n.id) || s.rest == SizeName::Tiny {
+                    n.width = handle_width(open_width(n));
+                }
+            }
+        }
+        // Only notches set to avoid windows move aside (not in docks); retracted ones
+        // keep their spot and don't push their neighbours.
+        let moved: Vec<String> = if dock {
+            Vec::new()
+        } else {
+            defs.iter().filter(|n| n.avoid_windows && undocked.contains(&n.id)).map(|n| n.id.clone()).collect()
+        };
         let visible: Vec<config::Notch> = defs.iter().filter(|n| !hidden.contains(&n.id)).cloned().collect();
         let placed: HashMap<String, f64> = visible
             .iter()
@@ -500,6 +555,17 @@ impl Engine {
             .zip(notch_positions(&visible, width, g, self.cfg.notch.gap, &moved))
             .collect();
         let xs: Vec<f64> = defs.iter().map(|n| placed.get(&n.id).copied().unwrap_or_else(|| notch_x(n, width, g, n.dock))).collect();
+        // Where (and how wide) each notch is while a dock is open.
+        let open_defs: Vec<config::Notch> = visible.iter().map(|n| config::Notch { width: open_width(n), ..n.clone() }).collect();
+        let open_placed: HashMap<String, (f64, f64)> = if dock {
+            open_defs
+                .iter()
+                .zip(notch_positions(&open_defs, width, &g_open, self.cfg.notch.gap, &[]))
+                .map(|(n, x)| (n.id.clone(), (x, n.width)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
 
         // The outermost notch of each side, if it hugs the corner.
         let outermost = |side: Anchor| {
@@ -515,13 +581,14 @@ impl Engine {
             .map(|(n, x)| {
                 let visible = n.width + 2.0 * g.concave_radius;
                 let is_hidden = hidden.contains(&n.id);
+                let (open_x, open_w) = open_placed.get(&n.id).copied().unwrap_or((x, n.width));
                 // A retracted notch can't be hovered (the hot corners still work).
                 let tw = if is_hidden { 0.0 } else { n.trigger_width.as_ref().map_or(0.8 * visible, |l| l.resolve(visible)).max(1.0) };
                 NotchLayout {
                     id: n.id.clone(),
                     x,
                     width: n.width,
-                    height: n.height.unwrap_or(g.notch_height),
+                    height: if dock { rest_height(n) } else { n.height.unwrap_or(g.notch_height) },
                     trigger_x: x + (n.width - tw) / 2.0,
                     trigger_width: tw,
                     widgets: n.widgets.iter().filter(|w| self.cfg.widget_enabled(w)).cloned().collect(),
@@ -537,6 +604,10 @@ impl Engine {
                         None
                     },
                     hidden_widgets: hidden_widgets.remove(&n.id).unwrap_or_default(),
+                    open_x,
+                    open_width: open_w,
+                    open_height: if dock { open_h } else { n.height.unwrap_or(g.notch_height) },
+                    shrunk: shrunk.contains(&n.id),
                 }
             })
             .collect();
@@ -544,8 +615,8 @@ impl Engine {
 
         let tallest = notches
             .iter()
-            .map(|n| if n.panel.is_some() { g.expanded_height + n.panel_height } else { n.height })
-            .fold(g.expanded_height, f64::max);
+            .map(|n| if n.panel.is_some() { g.expanded_height + n.panel_height } else { n.open_height })
+            .fold(if dock { open_h } else { g.expanded_height }, f64::max);
 
         Layout {
             label: label.to_string(),
@@ -553,10 +624,14 @@ impl Engine {
             surface: surface.to_string(),
             edge: s.edge,
             mode: s.mode,
+            rest: s.rest,
+            open: s.open,
+            rest_height: rest_h,
+            open_height: open_h,
             width,
             height: (tallest + OVERSHOOT_MARGIN).ceil(),
             scale: m.scale,
-            geometry: g.clone(),
+            geometry: self.cfg.geometry.clone(),
             animation: self.cfg.animation.clone(),
             bar: {
                 let mut bar = bar;
@@ -790,9 +865,10 @@ impl Engine {
             (n.dock && n.avoid_windows && n.anchor != Anchor::Center)
                 || n.widgets.iter().any(|w| cfg.widget_enabled(w) && cfg.widget_hides_when_maximized(w))
         };
+        let shrinks = |o: &Overlay| o.layout.mode == SurfaceMode::Dock && self.shrink_when_covered(&o.surface);
         let any_dockable = {
             let sh = self.shared.lock().unwrap();
-            sh.overlays.values().any(|o| o.defs.iter().any(|n| watched(n)))
+            sh.overlays.values().any(|o| shrinks(o) || o.defs.iter().any(|n| watched(n)))
         };
         if !any_dockable {
             return;
@@ -806,19 +882,21 @@ impl Engine {
                 let m = &o.monitor;
                 let width = m.width() as f64 / m.scale;
                 let mut undocked = Vec::new();
-                let dockable = o.defs.iter().filter(|n| watched(n));
+                let all = shrinks(o);
+                let dockable = o.defs.iter().filter(|n| all || watched(n));
                 // While the bar is open it covers the caption buttons anyway: dock everything.
                 for n in dockable.filter(|_| !o.expanded) {
                     let Some(nl) = o.layout.notches.iter().find(|nl| nl.id == n.id) else { continue };
                     // The area the notch covers in its own spot (side notches: in the
                     // corner), flare included, at its full width.
-                    let full = o.measured.get(&n.id).map_or(nl.width, |w| w.full);
+                    let full = o.measured.get(&n.id).map_or(nl.width, |w| if all && w.open > 0.0 { w.open } else { w.full });
                     let mut sized = (*n).clone();
                     sized.width = full;
-                    let x = if n.anchor == Anchor::Center { nl.x } else { notch_x(&sized, width, g, true) };
+                    // Docks: the notch's open spot; bars: side notches in their corner.
+                    let x = if all { nl.open_x } else if n.anchor == Anchor::Center { nl.x } else { notch_x(&sized, width, g, true) };
                     let (zx0, zx1) = (x - g.concave_radius, x + full + g.concave_radius);
                     let px = |v: f64| m.left + (v.clamp(0.0, width) * m.scale).round() as i32;
-                    let depth = ((nl.height + 4.0) * m.scale).round() as i32;
+                    let depth = ((if all { nl.open_height } else { nl.height } + 4.0) * m.scale).round() as i32;
                     let (zy0, zy1) = match o.edge {
                         Edge::Top => (m.top, m.top + depth),
                         Edge::Bottom => (m.bottom - depth, m.bottom),

@@ -38,6 +38,10 @@ export interface Bump {
   /** Style blend override: 0 = notch profile, 1 = rounded popup. Default: notches
    * morph by panel progress, everything else is rounded. */
   rounded?: number;
+  /** Scale of the notch curves (docks: height / notch height), default 1. */
+  scale?: number;
+  /** Where an open panel starts (default: the bar's bottom edge). */
+  panelTop?: number;
 }
 
 export interface BumpFrame {
@@ -176,11 +180,12 @@ function emitRight(P: string[], s: Side) {
  * Both sides of a bump. `w` blends from the notch profile (0) to the rounded
  * popup style (1): a notch morphs into a rounded panel as it opens.
  */
-function bump(P: string[], g: Layout["geometry"], left: number, right: number, top: number, bottom: number, w: number) {
-  const nc = Math.min(g.notchCornerRadius, Math.max(0, right - left) / 2);
+function bump(P: string[], g: Layout["geometry"], left: number, right: number, top: number, bottom: number, w: number, k = 1) {
+  const nc = Math.min(g.notchCornerRadius * k, Math.max(0, right - left) / 2);
+  const cr = g.concaveRadius * k;
   const [pr, pc] = fit(g.panelConcaveRadius, g.panelCornerRadius, bottom - top, right - left);
-  emitLeft(P, mix(profileSide(left, top, bottom, g.concaveRadius, nc, 1), roundedSide(left, top, bottom, pr, pc, 1), w));
-  emitRight(P, mix(profileSide(right, top, bottom, g.concaveRadius, nc, -1), roundedSide(right, top, bottom, pr, pc, -1), w));
+  emitLeft(P, mix(profileSide(left, top, bottom, cr, nc, 1), roundedSide(left, top, bottom, pr, pc, 1), w));
+  emitRight(P, mix(profileSide(right, top, bottom, cr, nc, -1), roundedSide(right, top, bottom, pr, pc, -1), w));
 }
 
 /**
@@ -199,7 +204,7 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
   const frames: BumpFrame[] = bumps.map((b) => {
     const p = Math.max(0, b.p);
     const rowDepth = lerp(b.height, H, t0);
-    const depth = lerp(rowDepth, H + b.panelHeight, p);
+    const depth = lerp(rowDepth, (b.panelTop ?? H) + b.panelHeight, p);
     // The panel is centered on its notch but kept on screen (flush with the edge
     // if need be). Each side of the bump morphs toward the panel's side, so a
     // notch in a corner grows its panel inward instead of sliding away.
@@ -237,18 +242,20 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
       continue;
     }
     let { left, right, depth } = frames[i];
+    let k = bumps[i].scale ?? 1;
     let next = i + 1;
     if (L.combineNotches && plainNotch(i)) {
       // Notches that would touch or overlap become one shape; their widgets stay put.
       for (let j = i + 1; j < frames.length; j++) {
         if (invisible(j)) continue;
-        if (!plainNotch(j) || frames[j].left - right - 2 * r > MERGE_GAP) break;
+        if (!plainNotch(j) || frames[j].left - right - 2 * r * k > MERGE_GAP) break;
         right = Math.max(right, frames[j].right);
+        k = Math.max(k, bumps[j].scale ?? 1);
         depth = Math.max(depth, frames[j].depth);
         next = j + 1;
       }
     }
-    bump(P, g, left, right, base, depth, style(i));
+    bump(P, g, left, right, base, depth, style(i), k);
     i = next;
   }
   emitRight(P, roundedSide(hr, 0, base, hr_, hc, -1));

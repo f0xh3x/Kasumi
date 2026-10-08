@@ -13,6 +13,7 @@ const fill = document.getElementById("fill") as unknown as SVGPathElement;
 const content = document.getElementById("content") as HTMLDivElement;
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
 /** "#rrggbb" + opacity → "rgba(r, g, b, a)" (other color syntaxes pass through). */
 function withAlpha(color: string, alpha: number): string {
@@ -56,6 +57,11 @@ interface Drop {
   xs: Spring | null;
   /** Notches: 1 shown, 0 retracted into the top edge (hidden under a window). */
   shown?: Spring;
+  /** Notches: their layout (dock morph between rest and open). */
+  notch?: NotchLayout;
+  /** Dock notches: a panel per widget that has one; `panelEl` is the open one. */
+  panels?: Map<string, HTMLDivElement>;
+  activePanel?: string;
   /** Notch content, laid out in the notch's row. */
   slot: HTMLDivElement | null;
   panelEl: HTMLDivElement | null;
@@ -112,7 +118,11 @@ class Overlay {
     const prevX = new Map(this.drops.flatMap((d) => (d.xs ? [[d.key, d.xs] as const] : [])));
     this.layout = layout;
     applyTheme(layout.theme);
-    document.documentElement.classList.toggle("edge-bottom", layout.edge === "bottom");
+    const html = document.documentElement;
+    html.classList.toggle("edge-bottom", layout.edge === "bottom");
+    html.classList.toggle("mode-dock", layout.mode === "dock");
+    html.className = html.className.replace(/\b(rest|open)-\w+/g, "").trim();
+    if (layout.mode === "dock") html.classList.add(`rest-${layout.rest}`, `open-${layout.open}`);
 
     const a = layout.animation;
     this.expand.configure(a.expandStiffness, a.expandDamping, a.mass);
@@ -170,6 +180,7 @@ class Overlay {
         }
       }
       if (d?.shown) d.shown.target = n.hidden ? 0 : 1;
+      if (d) d.notch = n;
       this.markHidden(n);
     }
     this.kick();
@@ -186,6 +197,23 @@ class Overlay {
     const open = force ?? drop.spring.target < 0.5;
     if (open) this.measureBarDrops();
     for (const d of this.drops) d.spring.target = d === drop && open ? 1 : 0;
+    this.kick();
+    this.sendRegions();
+  }
+
+  /** Dock: a notch widget's panel morphs out of its notch (one open at a time). */
+  private toggleDockPanel(drop: Drop, name: string): void {
+    if (!this.expanded || !drop.panels) return;
+    const open = !(drop.activePanel === name && drop.spring.target > 0.5);
+    for (const d of this.drops) if (d !== drop) d.spring.target = 0;
+    if (open) {
+      for (const [n, el] of drop.panels) if (n !== name) el.style.visibility = "hidden";
+      drop.activePanel = name;
+      drop.panelEl = drop.panels.get(name) ?? null;
+      drop.hasPanel = true;
+      this.measureBarDrops();
+    }
+    drop.spring.target = open ? 1 : 0;
     this.kick();
     this.sendRegions();
   }
@@ -233,8 +261,10 @@ class Overlay {
       return panel;
     };
 
-    // Full-width bar row: slides down with the hull.
+    const dock = L.mode === "dock";
+    // Full-width bar row: slides down with the hull (docks have none).
     this.bar = div("bar");
+    if (dock) this.bar.style.display = "none";
     this.bar.style.width = `${L.width}px`;
     this.bar.style.height = `${L.geometry.expandedHeight}px`;
     this.bar.style.padding = `0 ${L.bar.padding}px`;
@@ -283,15 +313,29 @@ class Overlay {
       slot.style.gap = `${L.bar.gap}px`;
       this.padEdge(slot, n);
       slot.dataset.notch = n.id;
+      const panels = new Map<string, HTMLDivElement>();
       for (const name of n.widgets) {
-        const w = createWidget(name, { ...opts(name), inNotch: true });
+        // Bar notches show a compact copy (the bar has the full one); a dock's
+        // notches are the widgets themselves.
+        const w = createWidget(name, dock ? opts(name) : { ...opts(name), inNotch: true });
         this.widgets.push(w);
         slot.append(w.el);
         this.notchEls.push({ slot, name, el: w.el });
+        if (name === "language" && dock) this.langEl = w.el;
+        const panelName = dock ? panelFor(name) : null;
+        if (panelName) {
+          const panel = mountPanel(panelName, Number(opts(name).width) || undefined);
+          panel.style.visibility = "hidden";
+          panels.set(name, panel);
+          w.el.classList.add("clickable");
+          w.el.addEventListener("click", () => this.toggleDockPanel(drop, name));
+        }
       }
       this.markHidden(n);
       content.append(slot);
       const drop: Drop = {
+        notch: n,
+        panels,
         key: `notch:${n.id}`,
         x: n.x,
         width: n.width,
@@ -358,24 +402,40 @@ class Overlay {
   private measureNotches(): void {
     const L = this.layout;
     if (!L) return;
-    const base = 2 * L.geometry.notchCornerRadius + 2 * NOTCH_PAD;
-    const widths: Record<string, { full: number; compact: number }> = {};
+    const dock = L.mode === "dock";
+    const base = (h: number) => 2 * L.geometry.notchCornerRadius * (dock ? h / L.geometry.notchHeight : 1) + 2 * NOTCH_PAD;
+    const widths: Record<string, { full: number; compact: number; open: number }> = {};
+    // Docks: measure the content at the rest and the open size (widgets size with --h).
+    const root = document.documentElement.style;
+    const prevH = root.getPropertyValue("--h");
+    const prevT = root.getPropertyValue("--t");
+    const at = (h: number, t: number, read: () => number[]) => {
+      if (!dock) return read();
+      root.setProperty("--h", `${h}px`);
+      root.setProperty("--t", String(t));
+      const v = read();
+      root.setProperty("--h", prevH);
+      root.setProperty("--t", prevT);
+      return v;
+    };
     const hides = (name: string) => L.widgets[name]?.hide_when_maximized === true;
     for (const n of L.notches) {
-      const pad = base + this.edgeExtra(n);
-      const span = (els: HTMLElement[], gap: number) =>
-        els.length ? Math.ceil(els.reduce((sum, k) => sum + k.offsetWidth, 0) + gap * (els.length - 1) + pad) : 0;
       const slot = this.drops.find((d) => d.key === `notch:${n.id}`)?.slot;
       if (!slot) continue;
-      // Widgets with nothing to show (e.g. media while idle) take no room.
-      const kids = this.notchEls.filter((e) => e.slot === slot && e.el.offsetWidth > 0);
-      if (!kids.length) continue;
       const gap = parseFloat(getComputedStyle(slot).columnGap) || 0;
-      // Full width, and without the widgets that hide under windows.
-      widths[n.id] = {
-        full: span(kids.map((k) => k.el), gap),
-        compact: span(kids.filter((k) => !hides(k.name)).map((k) => k.el), gap),
-      };
+      const measure = (h: number, t: number) =>
+        at(h, t, () => {
+          const pad = base(h) + this.edgeExtra(n);
+          const span = (els: HTMLElement[]) =>
+            els.length ? Math.ceil(els.reduce((sum, k) => sum + k.offsetWidth, 0) + gap * (els.length - 1) + pad) : 0;
+          // Widgets with nothing to show (e.g. media while idle) take no room.
+          const kids = this.notchEls.filter((e) => e.slot === slot && e.el.offsetWidth > 0);
+          // Full width, and without the widgets that hide under windows.
+          return [span(kids.map((k) => k.el)), span(kids.filter((k) => !hides(k.name)).map((k) => k.el))];
+        });
+      const [full, compact] = measure(L.restHeight, 0);
+      const [open] = dock ? measure(L.openHeight, 1) : [full];
+      if (full || open) widths[n.id] = { full, compact, open };
     }
     const sent = JSON.stringify(widths);
     if (sent === "{}" || sent === this.lastWidths) return;
@@ -385,7 +445,8 @@ class Overlay {
 
   /** Extra room on a corner-hugging notch's outer side, up to the bar's edge padding. */
   private edgeExtra(n: NotchLayout): number {
-    return n.edge ? Math.max(0, this.layout!.bar.padding - NOTCH_PAD) : 0;
+    // Only bars: there the corner notch's content lines up with the open bar's.
+    return n.edge && this.layout!.mode === "bar" ? Math.max(0, this.layout!.bar.padding - NOTCH_PAD) : 0;
   }
 
   /** Content of a corner notch sits as far from the screen edge as in the open bar. */
@@ -441,7 +502,7 @@ class Overlay {
       tallest = Math.max(tallest, d.panelHeight);
     }
     // Rust sizes the window for notch panels only; ask for room for dropdowns too.
-    const needed = L.geometry.expandedHeight + tallest;
+    const needed = (L.mode === "dock" ? L.openHeight : L.geometry.expandedHeight) + tallest;
     if (needed > this.requestedHeight) {
       this.requestedHeight = needed;
       invoke("set_content_height", { height: needed }).catch((e) => report(`set_content_height: ${e}`));
@@ -537,6 +598,18 @@ class Overlay {
       let x = d.xs ? (useTarget ? d.xs.target : d.xs.value) : d.x;
       let width = d.width;
       let height = d.height;
+      let scale: number | undefined;
+      let panelTop: number | undefined;
+      if (L.mode === "dock" && d.notch) {
+        // Grow from the rest size to the open size in place.
+        const e = Math.max(0, useTarget ? this.expand.target : this.expand.value);
+        const n = d.notch;
+        x = lerp(x, n.openX, e);
+        width = lerp(n.width, n.openWidth, e);
+        height = lerp(n.height, n.openHeight, e);
+        scale = height / L.geometry.notchHeight;
+        panelTop = height;
+      }
       if (d.shown) {
         // Retracting (hidden under a window): shrink into the top edge around the center.
         const s = clamp01(useTarget ? d.shown.target : d.shown.value);
@@ -552,13 +625,15 @@ class Overlay {
         x = cx - width / 2;
       }
       return {
-      x,
-      width,
-      height,
-      panelWidth: d.panelWidth,
-      panelHeight: d.panelHeight,
-      p: d.hasPanel ? (useTarget ? d.spring.target : d.spring.value) : 0,
-      inHull: d.inHull,
+        x,
+        width,
+        height,
+        panelWidth: d.panelWidth,
+        panelHeight: d.panelHeight,
+        p: d.hasPanel ? (useTarget ? d.spring.target : d.spring.value) : 0,
+        inHull: d.inHull,
+        scale,
+        panelTop,
       };
     });
   }
@@ -568,7 +643,16 @@ class Overlay {
     if (!L) return;
     const H = L.geometry.expandedHeight;
     const drops = this.ordered();
-    const frame = computeFrame(L, this.expand.value, this.spread.value, this.bumps(drops, false));
+    const dock = L.mode === "dock";
+    const bumps = this.bumps(drops, false);
+    const frame = computeFrame(L, dock ? 0 : this.expand.value, dock ? 0 : this.spread.value, bumps);
+    if (dock) {
+      // Widgets can size themselves with these (e.g. task icons grow as the dock opens).
+      const t = clamp01(this.expand.value);
+      const root = document.documentElement.style;
+      root.setProperty("--t", t.toFixed(3));
+      root.setProperty("--h", `${lerp(L.restHeight, L.openHeight, t).toFixed(2)}px`);
+    }
 
     queueMicrotask(() => this.glide());
     fill.setAttribute("d", frame.d);
@@ -582,11 +666,15 @@ class Overlay {
     drops.forEach((d, i) => {
       const bf = frame.bumps[i];
       if (d.slot) {
+        // Docks: the slot follows the notch's current (morphing) width.
+        const w = dock ? bumps[i].width : d.width;
         d.slot.style.height = `${bf.rowDepth}px`;
-        d.slot.style.transform = `translateX(${bf.anchorCx - d.width / 2}px)`;
-        // Cross-fade the notch's own content with the OSD.
+        d.slot.style.transform = `translateX(${bf.anchorCx - w / 2}px)`;
+        if (dock) d.slot.style.width = `${w}px`;
+        // Cross-fade the notch's own content with the OSD; a tiny dock handle hides it.
         const shown = d.shown ? clamp01(d.shown.value * 1.5 - 0.5) : 1;
-        d.slot.style.opacity = String(shown * (d === od ? 1 - clamp01(o * 1.8) : 1));
+        const fits = dock ? clamp01((bf.rowDepth - 16) / 10) : 1;
+        d.slot.style.opacity = String(shown * fits * (d === od ? 1 - clamp01(o * 1.8) : 1));
       }
       if (d === this.peekDrop) {
         const k = clamp01(this.peek.value);
@@ -678,7 +766,17 @@ class Overlay {
     const L = this.layout;
     if (!L) return;
     const regions: Rect[] = [];
-    if (this.expanded) {
+    if (this.expanded && L.mode === "dock") {
+      const drops = this.ordered();
+      const bumps = this.bumps(drops, true);
+      const final = computeFrame(L, 0, 0, bumps);
+      drops.forEach((d, i) => {
+        if (!d.inHull) return;
+        const bf = final.bumps[i];
+        const r = L.geometry.concaveRadius * (bumps[i].scale ?? 1);
+        regions.push({ x: bf.left - r, y: 0, width: bf.right - bf.left + 2 * r, height: bf.depth });
+      });
+    } else if (this.expanded) {
       const H = L.geometry.expandedHeight;
       const r = L.geometry.panelConcaveRadius;
       regions.push({ x: 0, y: 0, width: L.width, height: H });

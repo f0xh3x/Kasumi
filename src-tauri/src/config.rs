@@ -32,6 +32,9 @@ pub struct Config {
     /// laid out by `[layout]` (or the legacy model).
     #[serde(default)]
     pub surfaces: Option<BTreeMap<String, SurfaceCfg>>,
+    /// Heights of the named surface sizes.
+    #[serde(default)]
+    pub sizes: Sizes,
     #[serde(default)]
     pub monitors: Vec<MonitorRule>,
     #[serde(default)]
@@ -328,6 +331,31 @@ pub enum SizeName {
     Medium,
 }
 
+/// `[sizes]`: logical px heights of the named sizes.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Sizes {
+    pub tiny: f64,
+    pub small: f64,
+    pub medium: f64,
+}
+
+impl Default for Sizes {
+    fn default() -> Self {
+        Self { tiny: 12.0, small: 30.0, medium: 60.0 }
+    }
+}
+
+impl Sizes {
+    pub fn px(&self, size: SizeName) -> f64 {
+        match size {
+            SizeName::Tiny => self.tiny,
+            SizeName::Small => self.small,
+            SizeName::Medium => self.medium,
+        }
+    }
+}
+
 /// `[surfaces.<id>]`: a bar or dock on every monitor (rules can override it).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -522,7 +550,17 @@ impl Config {
             return (Vec::new(), Bar { left: vec![], center: vec![], right: vec![], ..self.bar.clone() });
         };
         let own = rule.and_then(|r| r.surfaces.get(id)).and_then(|o| o.layout());
-        self.notches_and_bar(&own.unwrap_or_else(|| s.layout()))
+        let mut layout = own.unwrap_or_else(|| s.layout());
+        if s.mode == SurfaceMode::Dock {
+            // A dock has no bar: every widget lives in a notch.
+            layout.notch = [&layout.left, &layout.center, &layout.right].into_iter().flatten().cloned().collect();
+            let (notches, mut bar) = self.notches_and_bar(&layout);
+            bar.left.clear();
+            bar.center.clear();
+            bar.right.clear();
+            return (notches, bar);
+        }
+        self.notches_and_bar(&layout)
     }
 
     fn notches_and_bar(&self, layout: &LayoutCfg) -> (Vec<Notch>, Bar) {
@@ -719,7 +757,7 @@ mod tests {
 
         let (notches, bar) = cfg.resolve_surface(None, "bottom");
         assert_eq!(notches[0].widgets, ["tasks", "buttons#2"]);
-        assert_eq!(bar.center, ["tasks", "buttons#2"]);
+        assert!(bar.center.is_empty(), "a dock has no bar");
 
         // ARZOPA: no dock, and its own top layout.
         let rule = cfg.monitors.first();
@@ -727,6 +765,26 @@ mod tests {
         let (notches, bar) = cfg.resolve_surface(rule, "top");
         assert!(notches.is_empty());
         assert_eq!((bar.left.len(), bar.right.clone()), (0, vec!["temps".to_string()]));
+    }
+
+    #[test]
+    fn docks_show_every_widget_as_a_notch() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [surfaces.bottom]
+            edge = "bottom"
+            mode = "dock"
+            left = ["menu"]
+            center = ["clock", "tray"]
+            notch = []
+            "#,
+        )
+        .unwrap();
+        let (notches, bar) = cfg.resolve_surface(None, "bottom");
+        let ids: Vec<_> = notches.iter().map(|n| (n.id.as_str(), n.widgets.len())).collect();
+        assert_eq!(ids, [("left", 1), ("center", 2)]);
+        assert!(bar.left.is_empty() && bar.center.is_empty() && bar.right.is_empty());
+        assert_eq!(cfg.sizes.px(SizeName::Medium), 60.0);
     }
 
     #[test]

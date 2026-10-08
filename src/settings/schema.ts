@@ -2,6 +2,8 @@
 // listed once, with where it lives in config.toml, its control and default.
 // Adding a feature's settings = adding entries here.
 
+import { scope } from "./editors";
+
 export type Path = (string | number)[];
 export type Cfg = Record<string, any>;
 /** A fixed path, or one computed from the config (null hides the field). */
@@ -26,6 +28,15 @@ export type Field =
   | { kind: "action"; label: string; help?: string; button: string; run: string; confirm?: string }
   /** A structured editor from editors.ts. */
   | { kind: "custom"; editor: string };
+
+/** A setting of the surface selected on the Widgets page; `dockOnly` hides it for bars. */
+const surfacePath =
+  (key: string, dockOnly = false): PathSpec =>
+  (cfg) => {
+    const s = cfg.surfaces?.[scope.surface];
+    if (!s || (dockOnly && s.mode !== "dock")) return null;
+    return ["surfaces", scope.surface, key];
+  };
 
 /** Only for widgets that have their own notch (in the global layout). */
 const hideWhenMaximized =
@@ -100,6 +111,63 @@ export const pages: Page[] = [
     icon: 0xe71d,
     sections: [
       { title: "Layout for", fields: [{ kind: "custom", editor: "scopeSelector" }] },
+      {
+        title: "Bar & dock",
+        scope: "global",
+        help: "A bar opens into a full-width bar; a dock's notches grow in place.",
+        fields: [
+          { kind: "custom", editor: "surfaceManager" },
+          {
+            kind: "select",
+            label: "Style",
+            path: surfacePath("mode"),
+            default: "bar",
+            options: [
+              { value: "bar", label: "Status bar" },
+              { value: "dock", label: "Dock" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Edge",
+            path: surfacePath("edge"),
+            default: "top",
+            options: [
+              { value: "top", label: "Top" },
+              { value: "bottom", label: "Bottom" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Size at rest",
+            help: "Tiny is a thin handle that opens on hover.",
+            path: surfacePath("rest", true),
+            default: "small",
+            options: [
+              { value: "tiny", label: "Tiny" },
+              { value: "small", label: "Small" },
+              { value: "medium", label: "Medium" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Size when open",
+            path: surfacePath("open", true),
+            default: "small",
+            options: [
+              { value: "small", label: "Small" },
+              { value: "medium", label: "Medium" },
+            ],
+          },
+          {
+            kind: "toggle",
+            label: "Shrink when a window covers it",
+            help: "Shrinks to the tiny handle while a maximized window is under it.",
+            path: surfacePath("shrink_when_covered", true),
+            default: true,
+          },
+        ],
+      },
       { title: "This monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorToggles" }] },
       { title: "Placement", fields: [{ kind: "custom", editor: "placement" }] },
       { title: "Own notches on this monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorNotches" }] },

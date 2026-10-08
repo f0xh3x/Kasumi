@@ -246,6 +246,55 @@ const scopeSelector: Editor = (ctx) => {
   return $("div", "stack-tight", surfaces, bar, $("p", "card-help", help));
 };
 
+/** Adds a dock (or another bar), or removes the selected one. */
+const surfaceManager: Editor = (ctx) => {
+  const ids = surfaceIds(ctx.cfg);
+  const box = $("div", "stack-tight");
+  const cur = scope.surface;
+  const s = ctx.cfg.surfaces?.[cur] ?? {};
+  box.append(
+    row(
+      `Show the ${surfaceName(cur, s).toLowerCase()}`,
+      undefined,
+      sw(s.enabled !== false, (on) => ctx.saveMany([{ path: ["surfaces", cur, "enabled"], value: on }])),
+    ),
+  );
+  const actions = $("div", "preset-actions");
+  if (!ids.includes("bottom")) {
+    const add = $("button", "button", "Add a dock") as HTMLButtonElement;
+    add.addEventListener("click", async () => {
+      await ctx.saveMany([
+        { path: ["surfaces", "bottom", "edge"], value: "bottom" },
+        { path: ["surfaces", "bottom", "mode"], value: "dock" },
+        { path: ["surfaces", "bottom", "rest"], value: "small" },
+        { path: ["surfaces", "bottom", "open"], value: "medium" },
+        ...LISTS.map((k) => ({ path: ["surfaces", "bottom", k], value: [] as string[] })),
+      ]);
+      scope.surface = "bottom";
+      ctx.rerender();
+    });
+    actions.append(add);
+  }
+  if (cur !== "top" && ids.length > 1) {
+    const remove = $("button", "button", "Remove") as HTMLButtonElement;
+    let armed = false;
+    remove.addEventListener("click", async () => {
+      if (!armed) {
+        armed = true;
+        remove.textContent = "Click again to remove";
+        remove.classList.add("danger");
+        return;
+      }
+      await ctx.saveMany([{ path: ["surfaces", cur], value: null }]);
+      scope.surface = "top";
+      ctx.rerender();
+    });
+    actions.append(remove);
+  }
+  if (actions.children.length) box.append(row("Bars and docks", "A dock sits at the bottom by default; drag widgets into it below.", actions));
+  return box;
+};
+
 /** "Top bar", "Dock", ... for a surface. */
 export function surfaceName(id: string, s: any): string {
   const edge = s?.edge ?? (id === "bottom" ? "bottom" : "top");
@@ -268,6 +317,15 @@ const monitorToggles: Editor = (ctx) => {
   const box = $("div", "stack-tight");
   box.append(
     row("StatusNotch on this monitor", undefined, sw(effective?.enabled !== false, (on) => set((x) => (x.enabled = on)))),
+    ...(surfaceIds(ctx.cfg).length > 1
+      ? [
+          row(
+            `Show the ${surfaceName(scope.surface, ctx.cfg.surfaces?.[scope.surface]).toLowerCase()} here`,
+            undefined,
+            sw(own?.enabled !== false, (on) => setOwn((o) => (on ? delete o.enabled : (o.enabled = false)))),
+          ),
+        ]
+      : []),
     row(
       "Custom layout",
       "Off: this monitor follows the global layout.",
@@ -968,6 +1026,7 @@ function presets(ctx: EditorCtx): HTMLElement {
 
 export const editors: Record<string, Editor> = {
   presets,
+  surfaceManager,
   scopeSelector,
   monitorToggles,
   placement,
