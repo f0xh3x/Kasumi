@@ -943,6 +943,18 @@ impl Engine {
         };
         let fs = win::fullscreen_monitor(&ours);
         self.update_docking(&ours);
+        // Nothing should minimize an overlay (Win+D and friends); if it happens anyway, undo it.
+        {
+            let sh = self.shared.lock().unwrap();
+            for (label, o) in sh.overlays.iter().filter(|(_, o)| !o.hidden) {
+                if let Some(h) = o.hwnd {
+                    if win::unminimize(h) {
+                        eprintln!("[statusnotch] {label} was minimized; restored");
+                        win::raise_topmost(h);
+                    }
+                }
+            }
+        }
         let mut changes = Vec::new();
         {
             let mut sh = self.shared.lock().unwrap();

@@ -69,12 +69,18 @@ function slider(onInput: (v: number) => void, onIcon?: () => void) {
   input.addEventListener("input", () => {
     dragging = true;
     val.textContent = input.value;
+    // The filled part of the track follows the thumb right away.
+    input.style.setProperty("--fill", `${input.value}%`);
     clearTimeout(timer);
     timer = window.setTimeout(() => onInput(Number(input.value)), 40);
   });
+  let release = 0;
   input.addEventListener("change", () => {
+    clearTimeout(timer);
     onInput(Number(input.value));
-    window.setTimeout(() => (dragging = false), 800);
+    // Let the change land before taking readings again.
+    clearTimeout(release);
+    release = window.setTimeout(() => (dragging = false), 400);
   });
   if (onIcon) {
     ico.classList.add("clickable");

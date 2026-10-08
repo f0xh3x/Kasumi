@@ -25,34 +25,57 @@ fn wanted(app: &AppHandle) -> bool {
     app.state::<super::SharedConfig>().read().unwrap().widget_placed("quick")
 }
 
+/// Brightness the panel just set (WMI reads lag behind; don't snap back to them).
+static BRIGHTNESS_SET: std::sync::Mutex<Option<(u8, Instant)>> = std::sync::Mutex::new(None);
+
 fn run(app: AppHandle) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
     let mut brightness: Option<u8> = None;
     let mut last_brightness = Instant::now() - Duration::from_secs(60);
+    let mut slow = Instant::now() - Duration::from_secs(60);
+    let (mut battery_v, mut network_v) = (Value::Null, Value::Null);
+    // The output device, re-bound every few seconds (headphones plugged in, etc.).
+    let mut endpoint: Option<(IAudioEndpointVolume, Instant)> = None;
     loop {
         if !wanted(&app) {
+            endpoint = None;
             std::thread::sleep(Duration::from_secs(3));
             continue;
         }
-        // WMI is slow; brightness only changes by hand, so read it less often.
-        if last_brightness.elapsed() >= Duration::from_secs(5) {
+        if slow.elapsed() >= Duration::from_secs(1) {
+            slow = Instant::now();
+            battery_v = battery();
+            network_v = network();
+        }
+        // WMI is slow; brightness only changes by hand, so read it less often,
+        // and trust a value the panel just set over a (possibly older) reading.
+        let just_set = BRIGHTNESS_SET.lock().unwrap().filter(|(_, at)| at.elapsed() < Duration::from_secs(6));
+        if let Some((level, _)) = just_set {
+            brightness = Some(level);
+        } else if last_brightness.elapsed() >= Duration::from_secs(5) {
             last_brightness = Instant::now();
             brightness = read_brightness();
         }
-        let v = volume().and_then(|vol| unsafe { Ok((vol.GetMasterVolumeLevelScalar()?, vol.GetMute()?.as_bool())) }).ok();
+        if endpoint.as_ref().is_none_or(|(_, at)| at.elapsed() >= Duration::from_secs(5)) {
+            endpoint = volume().ok().map(|v| (v, Instant::now()));
+        }
+        let v = endpoint
+            .as_ref()
+            .and_then(|(vol, _)| unsafe { Some((vol.GetMasterVolumeLevelScalar().ok()?, vol.GetMute().ok()?.as_bool())) });
+        // Published only when something changed (publish de-duplicates).
         publish(
             &app,
             "system",
             json!({
-                "battery": battery(),
-                "volume": v.map(|(level, muted)| json!({ "level": level, "muted": muted })),
+                "battery": battery_v,
+                "volume": v.map(|(level, muted)| json!({ "level": (level * 100.0).round() / 100.0, "muted": muted })),
                 "brightness": brightness,
-                "network": network(),
+                "network": network_v,
             }),
         );
-        std::thread::sleep(Duration::from_millis(1000));
+        std::thread::sleep(Duration::from_millis(150));
     }
 }
 
@@ -148,5 +171,6 @@ pub async fn brightness_set(level: u8) -> Result<(), String> {
     params.put_property("Timeout", 0u32).map_err(|e| e.to_string())?;
     params.put_property("Brightness", level.min(100)).map_err(|e| e.to_string())?;
     con.exec_method(&target.path, "WmiSetBrightness", Some(&params)).map_err(|e| e.to_string())?;
+    *BRIGHTNESS_SET.lock().unwrap() = Some((level.min(100), Instant::now()));
     Ok(())
 }
