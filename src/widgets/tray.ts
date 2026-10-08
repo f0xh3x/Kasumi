@@ -4,8 +4,17 @@ import { el, icon, type PanelContext, type Widget } from "./index";
 
 const CHEVRON_DOWN = String.fromCharCode(0xe70d);
 
-/** Bar button that drops the tray panel (YASB's label_collapsed glyph). */
-export function trayButton(): Widget {
+/**
+ * The tray: a chevron that drops the tray panel (`mode` = "collapsed", default),
+ * or every tray icon right in the bar ("expanded").
+ */
+export function trayButton(opts: Record<string, unknown> = {}): Widget {
+  if (opts.mode === "expanded") {
+    const root = el("widget tray-inline");
+    const off = trayCells(root, () => {});
+    // Icons are clicked directly: no panel.
+    return { el: root, dispose: off, panelTrigger: "event" };
+  }
   const root = el("widget tray-button", icon(CHEVRON_DOWN));
   const unsubscribe = subscribe("tray", (icons) => {
     root.title = icons?.length ? `${icons.length} tray icons` : "No tray icons";
@@ -37,19 +46,32 @@ export function trayPanel(opts: Record<string, unknown>, ctx: PanelContext): Wid
   const empty = el("tray-empty", "No tray icons");
   const root = el("tray-panel", grid, empty);
 
+  let lastCount = -1;
+  const unsubscribe = trayCells(grid, ctx.close, (count) => {
+    empty.hidden = count > 0;
+    if (count !== lastCount) {
+      lastCount = count;
+      ctx.resize();
+    }
+  });
+  return { el: root, dispose: unsubscribe };
+}
+
+/**
+ * Keeps one clickable cell per hosted tray icon in `container` (clicks go to the
+ * owning app). Cells are patched in place, so animated icons and changing
+ * tooltips don't rebuild or flicker. Returns the unsubscribe function.
+ */
+function trayCells(container: HTMLElement, afterClick: () => void, onCount?: (n: number) => void): () => void {
   const click = (id: string, button: "left" | "right" | "double", target: HTMLElement) => {
     const r = target.getBoundingClientRect();
     invoke("tray_click", { id, button, x: r.left + r.width / 2, y: r.top + r.height / 2 }).catch((e) =>
       console.error("tray_click", e),
     );
-    if (button !== "double") ctx.close();
+    if (button !== "double") afterClick();
   };
-
-  // Cells are kept per icon id and patched in place, so updates (animated icons,
-  // changing tooltips) don't rebuild the grid or flicker.
   const cells = new Map<string, { cell: HTMLElement; img: HTMLImageElement; rgba: string }>();
-  let lastCount = -1;
-  const unsubscribe = subscribe("tray", (icons) => {
+  return subscribe("tray", (icons) => {
     const list = icons ?? [];
     const seen = new Set<string>();
     for (const i of list) {
@@ -60,10 +82,14 @@ export function trayPanel(opts: Record<string, unknown>, ctx: PanelContext): Wid
         const img = document.createElement("img");
         img.draggable = false;
         cell.append(img);
-        cell.addEventListener("click", () => click(i.id, "left", cell));
+        cell.addEventListener("click", (e) => {
+          e.stopPropagation();
+          click(i.id, "left", cell);
+        });
         cell.addEventListener("dblclick", () => click(i.id, "double", cell));
         cell.addEventListener("contextmenu", (e) => {
           e.preventDefault();
+          e.stopPropagation();
           click(i.id, "right", cell);
         });
         c = { cell, img, rgba: "" };
@@ -74,7 +100,7 @@ export function trayPanel(opts: Record<string, unknown>, ctx: PanelContext): Wid
         c.rgba = i.rgba;
       }
       c.cell.title = i.tip || i.exe;
-      grid.append(c.cell); // keeps order; moving an existing node is cheap
+      container.append(c.cell); // keeps order; moving an existing node is cheap
     }
     for (const [id, c] of cells) {
       if (!seen.has(id)) {
@@ -82,11 +108,6 @@ export function trayPanel(opts: Record<string, unknown>, ctx: PanelContext): Wid
         cells.delete(id);
       }
     }
-    empty.hidden = list.length > 0;
-    if (list.length !== lastCount) {
-      lastCount = list.length;
-      ctx.resize();
-    }
+    onCount?.(list.length);
   });
-  return { el: root, dispose: unsubscribe };
 }

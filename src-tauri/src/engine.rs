@@ -752,7 +752,11 @@ impl Engine {
             rest_height: rest_h,
             open_height: open_h,
             hot: self.cfg.hot(surface, &s),
-            corner_radius: if self.cfg.general.rounded_corners { self.cfg.general.corner_radius } else { 0.0 },
+            corner_radius: if self.cfg.general.rounded_corners && self.cfg.general.corners_attached {
+                self.cfg.general.corner_radius
+            } else {
+                0.0
+            },
             reserve: if !s.reserve_space {
                 0.0
             } else {
@@ -764,7 +768,10 @@ impl Engine {
             },
             width,
             // Room for the rounded screen corners hanging below the shape, too.
-            height: (tallest + OVERSHOOT_MARGIN + if self.cfg.general.rounded_corners { self.cfg.general.corner_radius } else { 0.0 }).ceil(),
+            height: (tallest
+                + OVERSHOOT_MARGIN
+                + if self.cfg.general.rounded_corners && self.cfg.general.corners_attached { self.cfg.general.corner_radius } else { 0.0 })
+            .ceil(),
             scale: m.scale,
             geometry: self.cfg.geometry.clone(),
             animation: self.cfg.animation.clone(),
@@ -1004,8 +1011,9 @@ impl Engine {
                     .fold(0.0, f64::max)
             };
             let r = (g.corner_radius * m.scale).round().max(1.0) as i32;
-            let off = |top: bool, side: &str| (filled(top, side) * m.scale).round() as i32;
-            let has_bar = |top: bool| here.iter().any(|o| (o.edge == Edge::Top) == top);
+            // Detached corners stay in the screen corners whatever the bars do.
+            let off = |top: bool, side: &str| if g.corners_attached { (filled(top, side) * m.scale).round() as i32 } else { 0 };
+            let has_bar = |top: bool| g.corners_attached && here.iter().any(|o| (o.edge == Edge::Top) == top);
             use crate::corners::{Corner, Which};
             if !has_bar(true) {
                 list.push(Corner { x: m.left, y: m.top + off(true, "left"), size: r, which: Which::TopLeft });

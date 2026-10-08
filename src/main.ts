@@ -32,7 +32,7 @@ function applyTheme(t: Layout["theme"]): void {
   root.setProperty("--fg-dim", withAlpha(t.text, t.dimOpacity));
   root.setProperty("--accent", t.accent);
   root.setProperty("--warn", t.warn);
-  root.setProperty("--shape-opacity", String(Math.min(1, Math.max(0.05, (t.opacity ?? 100) / 100))));
+  root.setProperty("--shape-opacity", String(Math.min(1, Math.max(0, (t.opacity ?? 100) / 100))));
   document.body.style.fontSize = `${t.fontSize}px`;
 }
 

@@ -11,6 +11,7 @@ edge_px = 8        # cursor must be within this distance of the edge (notch hove
 hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
 rounded_corners = false   # round the monitors' corners
 corner_radius = 10        # px
+corners_attached = true   # part of the bars (their tint, opacity, animations) | false: black, fixed
 
 [shell]
 hide_taskbar = false      # hide the Windows taskbar while StatusNotch runs (restored on quit)
@@ -159,6 +160,7 @@ hours = 8                                    # hours shown in the weather panel
 
 # Notification-area icons, hosted from apps' Shell_NotifyIcon calls (Explorer's tray keeps working).
 [widgets.tray]
+mode = "collapsed"                           # collapsed: a button + panel | expanded: every icon in the bar
 icons_per_row = 5
 hide = ["explorer.exe"]                      # process names whose icons are left out
 

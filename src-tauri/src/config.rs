@@ -157,11 +157,14 @@ pub struct General {
     pub rounded_corners: bool,
     /// Their radius (logical px).
     pub corner_radius: f64,
+    /// Part of the bars (following their animations, tint and opacity), or
+    /// detached: pure black, fixed in the screen corners.
+    pub corners_attached: bool,
 }
 
 impl Default for General {
     fn default() -> Self {
-        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0 }
+        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0, corners_attached: true }
     }
 }
 

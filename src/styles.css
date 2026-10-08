@@ -32,8 +32,8 @@ body {
   pointer-events: none;
 }
 
-/* Rounded screen corners stay solid (they stand in for the screen's bezel). */
-#corners { fill: #000; }
+/* Rounded screen corners attached to a bar take its tint and opacity. */
+#corners { fill: var(--bg); fill-opacity: var(--shape-opacity, 1); }
 #fill {
   fill: var(--bg);
   fill-opacity: var(--shape-opacity, 1);
@@ -512,3 +512,8 @@ html.mode-dock .slot > * { pointer-events: auto; }
 /* Bottom docks: the field sits by the dock and the best match next to it. */
 html.edge-bottom .launcher-panel, html.edge-bottom .launcher-list { flex-direction: column-reverse; }
 html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(255, 255, 255, 0.08); margin: 4px 0 0; padding: 8px 8px 4px; }
+
+/* Tray, expanded: every icon in the bar, sized with it (docks grow them). */
+.widget.tray-inline { gap: calc(var(--h, 30px) * 0.06); }
+.widget.tray-inline .tray-icon { width: calc(var(--h, 30px) * 0.8); height: calc(var(--h, 30px) * 0.8); }
+.widget.tray-inline .tray-icon img { width: calc(var(--h, 30px) * 0.55); height: calc(var(--h, 30px) * 0.55); }
