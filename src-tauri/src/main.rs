@@ -16,6 +16,7 @@ mod providers;
 mod settings;
 mod taskbar;
 mod tray;
+mod webmem;
 mod win;
 
 fn main() {

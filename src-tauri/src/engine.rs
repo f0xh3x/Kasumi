@@ -355,6 +355,9 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             o.expanded = true;
             o.hover = Hover::Open;
             let _ = app.emit_to(EventTarget::WebviewWindow { label: label.clone() }, "notch://state", StatePayload { expanded: true });
+            if let Some(w) = app.get_webview_window(&label) {
+                crate::webmem::set_low(&w, false);
+            }
         }
         (label, o.hwnd, opening)
     };
@@ -931,6 +934,7 @@ impl Engine {
             .visible(false)
             // Dropped files are taken by WebView2 itself (see dropzone).
             .disable_drag_drop_handler()
+            .additional_browser_args(win::BROWSER_ARGS)
             .build()?;
         let hwnd = window.hwnd()?.0 as isize;
         eprintln!("[statusnotch] built {label}");
@@ -943,6 +947,7 @@ impl Engine {
             win::guard_overlay_style(hwnd);
             win::place(hwnd, x, y, w, h);
             crate::dropzone::attach(&window);
+            crate::webmem::set_low(&window, true);
             // Show through tao so its visibility flag stays in sync; it re-applies
             // that flag whenever window styles change (e.g. click-through toggles).
             let _ = window.show();
@@ -1286,6 +1291,10 @@ impl Engine {
         }
         let toggled = !emits.is_empty();
         for (label, expanded) in emits {
+            // Closed bars keep their memory low (see webmem).
+            if let Some(w) = self.app.get_webview_window(&label) {
+                crate::webmem::set_low(&w, !expanded);
+            }
             let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://state", StatePayload { expanded });
         }
         for (label, hwnd, ignore) in click_through {

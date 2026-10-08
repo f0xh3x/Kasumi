@@ -298,6 +298,11 @@ pub fn unminimize(h: isize) -> bool {
     false
 }
 
+/// WebView2 flags for every StatusNotch window (they share one browser process, so
+/// they must match). wry's defaults, plus: all pages are one site, so they share one
+/// renderer process instead of one each (the bars are tiny; a renderer is ~70 MB).
+pub const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --process-per-site";
+
 /// No activation on click, no taskbar / alt-tab entry, no frame (unminimizable).
 pub fn apply_overlay_style(h: isize) {
     unsafe {

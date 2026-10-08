@@ -26,6 +26,7 @@ pub fn open(app: &AppHandle) {
             .shadow(true)
             // Tauri's file-drop handler blocks HTML drag-and-drop (the widget sorter).
             .disable_drag_drop_handler()
+            .additional_browser_args(crate::win::BROWSER_ARGS)
             .theme(Some(tauri::Theme::Dark))
             .center()
             .build();
