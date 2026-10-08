@@ -349,6 +349,13 @@ export const pages: Page[] = [
             ],
           },
           {
+            kind: "toggle",
+            label: "Show pinned apps",
+            help: "Your Windows taskbar pins, first and even when they aren't running (pin apps from the Start menu).",
+            path: ["widgets", "tasks", "pinned"],
+            default: true,
+          },
+          {
             kind: "select",
             label: "Labels",
             path: ["widgets", "tasks", "labels"],

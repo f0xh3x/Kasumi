@@ -55,6 +55,97 @@ struct App {
     name: String,
     exe: String,
     aumid: Option<String>,
+    /// Pinned to the Windows taskbar: its shortcut (launched when not running).
+    lnk: Option<String>,
+}
+
+/// A Windows taskbar pin: the app key it matches, its name and shortcut.
+#[derive(Clone)]
+struct Pin {
+    key: String,
+    name: String,
+    lnk: String,
+    /// The program it starts (lower case), so windows that report no
+    /// AppUserModelID still join it (e.g. Explorer's folder windows).
+    target: String,
+}
+
+/// Pins, re-read when the pins folder changes.
+static PINS: Mutex<Option<(std::time::SystemTime, Vec<Pin>)>> = Mutex::new(None);
+
+fn pins_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
+        .join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar")
+}
+
+/// The Windows taskbar's pinned apps, in pin order (oldest first). Each pin's
+/// key is the shortcut's AppUserModelID, else its target exe, so it matches
+/// the app's windows.
+fn pins() -> Vec<Pin> {
+    let dir = pins_dir();
+    let stamp = std::fs::metadata(&dir).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+    if let Some((at, list)) = PINS.lock().unwrap().as_ref() {
+        if *at == stamp {
+            return list.clone();
+        }
+    }
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")))
+        .map(|p| (std::fs::metadata(&p).and_then(|m| m.created()).unwrap_or(std::time::UNIX_EPOCH), p))
+        .collect();
+    files.sort();
+    let list: Vec<Pin> = files
+        .into_iter()
+        .filter_map(|(_, p)| {
+            let lnk = p.to_string_lossy().to_string();
+            let aumid = shortcut_aumid(&lnk);
+            let mut target = shortcut_target(&lnk).map(|t| t.to_lowercase()).unwrap_or_default();
+            // File Explorer's pin points at a shell location, not a program, and its
+            // folder windows report no AppUserModelID: link them by program.
+            if target.is_empty() && aumid.as_deref() == Some("Microsoft.Windows.Explorer") {
+                let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+                target = format!(r"{windir}\explorer.exe").to_lowercase();
+            }
+            let key = aumid.or_else(|| (!target.is_empty()).then(|| target.clone()))?;
+            let name = p.file_stem()?.to_string_lossy().to_string();
+            Some(Pin { key, name, lnk, target })
+        })
+        .collect();
+    // The same app pinned twice (e.g. "Microsoft Edge (2).lnk") shows once.
+    let mut list = list;
+    let mut keys = std::collections::HashSet::new();
+    list.retain(|p| keys.insert(p.key.clone()));
+    *PINS.lock().unwrap() = Some((stamp, list.clone()));
+    list
+}
+
+/// A shortcut's System.AppUserModel.ID, if it has one.
+fn shortcut_aumid(lnk: &str) -> Option<String> {
+    use windows::Win32::UI::Shell::PropertiesSystem::{SHGetPropertyStoreFromParsingName, GPS_DEFAULT};
+    unsafe {
+        let store: IPropertyStore = SHGetPropertyStoreFromParsingName(&HSTRING::from(lnk), None, GPS_DEFAULT).ok()?;
+        let v = store.GetValue(&PKEY_APP_USER_MODEL_ID).ok()?;
+        let s = v.to_string();
+        (!s.is_empty()).then_some(s)
+    }
+}
+
+/// The program a shortcut starts.
+fn shortcut_target(lnk: &str) -> Option<String> {
+    use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        link.cast::<IPersistFile>().ok()?.Load(&HSTRING::from(lnk), STGM_READ).ok()?;
+        let mut buf = [0u16; 1024];
+        link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+        let s = text(&buf);
+        (!s.is_empty()).then_some(s)
+    }
 }
 
 #[derive(Default)]
@@ -226,16 +317,43 @@ fn scan(app: &AppHandle) {
     let own = unsafe { GetCurrentProcessId() };
     let fg = unsafe { GetForegroundWindow() };
 
+    let pinned = pins();
     let mut st = state().lock().unwrap();
     let mut windows = Vec::new();
     let mut icons_changed = false;
+    // Pinned apps are listed (first, in pin order) even without windows.
+    for p in &pinned {
+        if !st.icons.contains_key(&p.key) {
+            if let Some((w, hgt, rgba)) = shell_item(&p.lnk).and_then(|i| item_icon(&i)) {
+                st.icons.insert(
+                    p.key.clone(),
+                    json!({ "w": w, "h": hgt, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) }),
+                );
+                icons_changed = true;
+            }
+        }
+        let entry = st.apps.entry(p.key.clone()).or_insert_with(|| App {
+            key: p.key.clone(),
+            name: p.name.clone(),
+            exe: String::new(),
+            aumid: None,
+            lnk: None,
+        });
+        entry.lnk = Some(p.lnk.clone());
+    }
     // EnumWindows lists top-level windows front to back: z = 0 is the most recent.
     for (z, &h) in all.iter().filter(|&&h| is_task(h, own)).enumerate() {
         let (_, exe) = exe_of(h);
         let aumid = aumid_of(h);
-        let key = aumid.clone().unwrap_or_else(|| exe.to_lowercase());
+        let mut key = aumid.clone().unwrap_or_else(|| exe.to_lowercase());
         if key.is_empty() {
             continue;
+        }
+        // Windows of a pinned program join its pin.
+        if aumid.is_none() {
+            if let Some(p) = pinned.iter().find(|p| !p.target.is_empty() && p.target == exe.to_lowercase()) {
+                key = p.key.clone();
+            }
         }
         if !st.apps.contains_key(&key) {
             let (name, icon) = describe(aumid.as_deref(), &exe);
@@ -246,7 +364,7 @@ fn scan(app: &AppHandle) {
                 );
                 icons_changed = true;
             }
-            st.apps.insert(key.clone(), App { key: key.clone(), name, exe: exe.clone(), aumid: aumid.clone() });
+            st.apps.insert(key.clone(), App { key: key.clone(), name, exe: exe.clone(), aumid: aumid.clone(), lnk: None });
         }
         if !st.order.contains(&key) {
             st.order.push(key.clone());
@@ -263,11 +381,18 @@ fn scan(app: &AppHandle) {
     let seen = st.seen.clone();
     windows.sort_by_key(|w| seen.iter().position(|id| *id == w.0));
 
-    let apps: Vec<Value> = st
-        .order
+    let order: Vec<String> = pinned
+        .iter()
+        .map(|p| p.key.clone())
+        .chain(st.order.iter().filter(|k| !pinned.iter().any(|p| &p.key == *k)).cloned())
+        .collect();
+    let apps: Vec<Value> = order
         .iter()
         .filter_map(|k| st.apps.get(k))
-        .map(|a| json!({ "key": a.key, "name": a.name, "exe": a.exe, "aumid": a.aumid }))
+        .map(|a| {
+            let pinned = pinned.iter().any(|p| p.key == a.key);
+            json!({ "key": a.key, "name": a.name, "exe": a.exe, "aumid": a.aumid, "pinned": pinned })
+        })
         .collect();
     let list: Vec<Value> = windows
         .iter()
@@ -412,9 +537,11 @@ pub async fn task_close(hwnd_id: isize) -> Result<(), String> {
 pub async fn task_launch(app_key: String) -> Result<(), String> {
     let a = state().lock().unwrap().apps.get(&app_key).cloned().ok_or("unknown app")?;
     crate::win::allow_foreground();
-    let target = match &a.aumid {
-        Some(id) => format!("shell:AppsFolder\\{id}"),
-        None => a.exe.clone(),
+    // A pinned app starts like its pin; others through their Start entry or exe.
+    let target = match (&a.lnk, &a.aumid) {
+        (Some(lnk), _) => lnk.clone(),
+        (None, Some(id)) => format!("shell:AppsFolder\\{id}"),
+        (None, None) => a.exe.clone(),
     };
     std::process::Command::new("explorer.exe").arg(target).spawn().map(|_| ()).map_err(|e| e.to_string())
 }

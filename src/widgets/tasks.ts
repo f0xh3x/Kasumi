@@ -10,12 +10,29 @@ import { iconUrl } from "./tray";
  *
  * Options: `monitor` = "own" (windows on this monitor, default) | "all";
  * `labels` = "none" (default) | "active" (title of the window in front);
- * `icons` = "color" (default) | "mono" | "accent" (silhouettes in the accent colour).
+ * `icons` = "color" (default) | "mono" | "accent" (silhouettes in the accent colour);
+ * `pinned` = true (default): Windows taskbar pins show even when not running.
+ * Hovering an app with several windows pops up its windows to pick from.
  * Icons size with the surface (`--h`), so they grow as a dock opens.
  */
 
-/** The app the tasks panel is about (set on right click). */
+/** The app the tasks panel is about (set on right click / hover). */
 const menuTarget = { key: "", listeners: new Set<() => void>() };
+
+// Hover popup: opened over an app with several windows, closed shortly after the
+// cursor leaves both the app and the popup.
+const hover = { openTimer: 0, closeTimer: 0, open: false, close: null as null | (() => void) };
+const HOVER_OPEN_MS = 450;
+const HOVER_CLOSE_MS = 350;
+function scheduleHoverClose(): void {
+  clearTimeout(hover.closeTimer);
+  hover.closeTimer = window.setTimeout(() => {
+    if (hover.open) {
+      hover.open = false;
+      hover.close?.();
+    }
+  }, HOVER_CLOSE_MS);
+}
 
 let latest: Tasks | null = null;
 let icons: Record<string, { w: number; h: number; rgba: string }> = {};
@@ -33,6 +50,7 @@ function nextWindow(wins: TaskWindow[]): { hwnd: number; toggle: boolean } | nul
 
 export function tasks(opts: Record<string, unknown>): Widget {
   const ownMonitor = opts.monitor !== "all";
+  const showPinned = opts.pinned !== false;
   const device = typeof opts._device === "string" ? opts._device : "";
   const labels = opts.labels === "active";
   const root = el("widget tasks");
@@ -43,7 +61,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
     const t = latest;
     if (!t) return;
     const mine = t.windows.filter((w) => !ownMonitor || !device || w.monitor === device);
-    const apps = t.apps.filter((a) => mine.some((w) => w.app === a.key));
+    const apps = t.apps.filter((a) => (showPinned && a.pinned) || mine.some((w) => w.app === a.key));
     root.hidden = apps.length === 0;
     for (const [key, x] of buttons) {
       if (!apps.some((a) => a.key === key)) {
@@ -64,6 +82,24 @@ export function tasks(opts: Record<string, unknown>): Widget {
           const wins = (latest?.windows ?? []).filter((w) => w.app === a.key && (!ownMonitor || !device || w.monitor === device));
           const next = nextWindow(wins);
           if (next) call("task_activate", { hwndId: next.hwnd, toggle: next.toggle });
+          // A pinned app that isn't running: start it.
+          else call("task_launch", { appKey: a.key });
+        });
+        b.addEventListener("mouseenter", () => {
+          clearTimeout(hover.closeTimer);
+          clearTimeout(hover.openTimer);
+          hover.openTimer = window.setTimeout(() => {
+            const wins = (latest?.windows ?? []).filter((w) => w.app === a.key && (!ownMonitor || !device || w.monitor === device));
+            if (wins.length < 2) return;
+            menuTarget.key = a.key;
+            menuTarget.listeners.forEach((f) => f());
+            hover.open = true;
+            root.dispatchEvent(new CustomEvent("notch:panel", { bubbles: true }));
+          }, HOVER_OPEN_MS);
+        });
+        b.addEventListener("mouseleave", () => {
+          clearTimeout(hover.openTimer);
+          scheduleHoverClose();
         });
         b.addEventListener("auxclick", (e) => {
           if (e.button !== 1) return;
@@ -76,6 +112,9 @@ export function tasks(opts: Record<string, unknown>): Widget {
         b.addEventListener("contextmenu", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          // A right click opens it for good (not a hover popup).
+          clearTimeout(hover.openTimer);
+          hover.open = false;
           menuTarget.key = a.key;
           menuTarget.listeners.forEach((f) => f());
           // Ask the overlay to open this widget's panel (the tasks panel).
@@ -88,8 +127,9 @@ export function tasks(opts: Record<string, unknown>): Widget {
       const wins = mine.filter((w) => w.app === a.key);
       const active = wins.find((w) => w.active);
       x.b.classList.toggle("active", !!active);
-      x.b.classList.toggle("minimized", wins.every((w) => w.minimized));
-      x.b.title = wins.map((w) => w.title).join("\n");
+      x.b.classList.toggle("idle", wins.length === 0);
+      x.b.classList.toggle("minimized", wins.length > 0 && wins.every((w) => w.minimized));
+      x.b.title = wins.length > 1 ? "" : wins.length ? wins[0].title : a.name;
       const icon = icons[a.key];
       const url = icon ? iconUrl(icon) : "";
       if (x.img.src !== url) {
@@ -118,7 +158,23 @@ export function tasks(opts: Record<string, unknown>): Widget {
   return { el: root, dispose: () => off.forEach((f) => f()), panelTrigger: "event" };
 }
 
-/** Right-click panel: the app's windows, a new window, close all. */
+/**
+ * A window title without the app's name at its end ("Docs - File Explorer" ->
+ * "Docs"); a folder path shows just the folder ("C:\work\Stand Up" -> "Stand Up").
+ */
+function shortTitle(title: string, app: string): string {
+  let t = title;
+  for (const sep of [" - ", " — ", " – "]) {
+    if (t.toLowerCase().endsWith(`${sep}${app}`.toLowerCase())) t = t.slice(0, t.length - sep.length - app.length);
+  }
+  if (/^[a-z]:\\/i.test(t) || t.startsWith("\\\\")) {
+    const parts = t.split("\\").filter(Boolean);
+    t = parts[parts.length - 1] ?? t;
+  }
+  return t.trim() || title;
+}
+
+/** Right-click (and hover) panel: the app's windows, a new window, close all. */
 export function tasksPanel(_opts: Record<string, unknown>, ctx: PanelContext): Widget {
   const root = el("tasks-panel");
   const draw = () => {
@@ -144,7 +200,9 @@ export function tasksPanel(_opts: Record<string, unknown>, ctx: PanelContext): W
         e.stopPropagation();
         call("task_close", { hwndId: w.hwnd });
       });
-      const row = el(`tasks-row${w.active ? " active" : ""}`, el("tasks-title", w.title), close);
+      const title = el("tasks-title", shortTitle(w.title, app.name));
+      title.title = w.title;
+      const row = el(`tasks-row${w.active ? " active" : ""}`, title, close);
       row.addEventListener("click", () => {
         call("task_activate", { hwndId: w.hwnd, toggle: false });
         ctx.close();
@@ -172,6 +230,11 @@ export function tasksPanel(_opts: Record<string, unknown>, ctx: PanelContext): W
   };
   menuTarget.listeners.add(draw);
   const off = subscribe("tasks", () => draw());
+  hover.close = ctx.close;
+  root.addEventListener("mouseenter", () => clearTimeout(hover.closeTimer));
+  root.addEventListener("mouseleave", () => {
+    if (hover.open) scheduleHoverClose();
+  });
   draw();
   return {
     el: root,

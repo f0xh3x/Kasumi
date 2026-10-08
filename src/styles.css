@@ -532,3 +532,6 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
   -webkit-mask: var(--icon) center / contain no-repeat;
   mask: var(--icon) center / contain no-repeat;
 }
+
+/* A pinned app that isn't running: no window dots. */
+.task.idle .task-dots { display: none; }
