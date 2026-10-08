@@ -567,6 +567,8 @@ impl Engine {
                 self.update_fullscreen();
             }
 
+            self.update_corners();
+
             if self.tick_hover(now) {
                 // The bar opened or closed: re-dock right away instead of on the next tick.
                 let ours: Vec<isize> = self.shared.lock().unwrap().overlays.values().filter_map(|o| o.hwnd).collect();
@@ -689,7 +691,7 @@ impl Engine {
         let outermost = |side: Anchor| {
             let mut side_notches = visible.iter().filter(|n| n.anchor == side && n.auto_width);
             let outer = if side == Anchor::Left { side_notches.next() } else { side_notches.last() };
-            outer.filter(|n| n.dock).map(|n| n.id.clone())
+            outer.filter(|n| n.dock && !moved.contains(&n.id)).map(|n| n.id.clone())
         };
         let (left_edge, right_edge) = (outermost(Anchor::Left), outermost(Anchor::Right));
 
@@ -963,6 +965,50 @@ impl Engine {
         }
     }
 
+    /// Rounded screen corners: one mask per monitor corner, moved off a corner that
+    /// a notch (hugging it) or an always-on bar fills; none on fullscreen monitors.
+    fn update_corners(&self) {
+        let g = &self.cfg.general;
+        if !g.rounded_corners {
+            crate::corners::set(Vec::new());
+            return;
+        }
+        let sh = self.shared.lock().unwrap();
+        let mut list = Vec::new();
+        for m in &self.monitors {
+            let here: Vec<&Overlay> = sh.overlays.values().filter(|o| &o.monitor == m).collect();
+            if here.iter().any(|o| o.hidden) {
+                continue;
+            }
+            // Logical depth of what fills a corner: an always-on bar, or the notch hugging it.
+            let filled = |top: bool, side: &str| {
+                here.iter()
+                    .filter(|o| (o.edge == Edge::Top) == top)
+                    .map(|o| {
+                        if o.layout.mode == SurfaceMode::Always {
+                            o.layout.geometry.expanded_height
+                        } else {
+                            o.layout
+                                .notches
+                                .iter()
+                                .filter(|n| !n.hidden && n.edge.as_deref() == Some(side))
+                                .map(|n| n.height)
+                                .fold(0.0, f64::max)
+                        }
+                    })
+                    .fold(0.0, f64::max)
+            };
+            let r = (g.corner_radius * m.scale).round().max(1.0) as i32;
+            let off = |top: bool, side: &str| (filled(top, side) * m.scale).round() as i32;
+            use crate::corners::{Corner, Which};
+            list.push(Corner { x: m.left, y: m.top + off(true, "left"), size: r, which: Which::TopLeft });
+            list.push(Corner { x: m.right - r, y: m.top + off(true, "right"), size: r, which: Which::TopRight });
+            list.push(Corner { x: m.left, y: m.bottom - r - off(false, "left"), size: r, which: Which::BottomLeft });
+            list.push(Corner { x: m.right - r, y: m.bottom - r - off(false, "right"), size: r, which: Which::BottomRight });
+        }
+        crate::corners::set(list);
+    }
+
     /// Surfaces with `reserve_space` reserve their strip of the screen (AppBar).
     fn update_reservations(&self) {
         let sh = self.shared.lock().unwrap();
@@ -977,7 +1023,15 @@ impl Engine {
                     Edge::Top => (m.top, m.top + h),
                     Edge::Bottom => (m.bottom - h, m.bottom),
                 };
-                Some(crate::taskbar::Reservation { hwnd: o.hwnd?, bottom_edge: o.edge == Edge::Bottom, left: m.left, top, right: m.right, bottom })
+                Some(crate::taskbar::Reservation {
+                    hwnd: o.hwnd?,
+                    bottom_edge: o.edge == Edge::Bottom,
+                    left: m.left,
+                    top,
+                    right: m.right,
+                    bottom,
+                    monitor: (m.left, m.top, m.right, m.bottom),
+                })
             })
             .collect();
         crate::taskbar::reserve(wanted);

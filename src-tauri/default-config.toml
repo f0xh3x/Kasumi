@@ -9,6 +9,8 @@ edge_px = 8        # cursor must be within this distance of the edge (notch hove
 
 [general]
 hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
+rounded_corners = false   # round the monitors' corners
+corner_radius = 10        # px
 
 [shell]
 hide_taskbar = false      # hide the Windows taskbar while StatusNotch runs (restored on quit)

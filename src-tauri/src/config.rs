@@ -153,11 +153,15 @@ impl Default for Bar {
 pub struct General {
     /// Hide the overlay while a fullscreen app (game, video) is in front.
     pub hide_in_fullscreen: bool,
+    /// Round the monitors' corners with small black masks.
+    pub rounded_corners: bool,
+    /// Their radius (logical px).
+    pub corner_radius: f64,
 }
 
 impl Default for General {
     fn default() -> Self {
-        Self { hide_in_fullscreen: true }
+        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0 }
     }
 }
 

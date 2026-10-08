@@ -102,6 +102,23 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Screen corners",
+        help: "Rounds the corners of your monitors. Where a notch or an always-on bar fills a corner, the rounding sits just past it.",
+        fields: [
+          { kind: "toggle", label: "Rounded screen corners", path: ["general", "rounded_corners"], default: false },
+          {
+            kind: "slider",
+            label: "Roundness",
+            path: (cfg) => (cfg.general?.rounded_corners ? ["general", "corner_radius"] : null),
+            default: 10,
+            min: 2,
+            max: 40,
+            step: 1,
+            unit: "px",
+          },
+        ],
+      },
+      {
         title: "Launcher",
         help: "Search and start apps. With the Launcher widget placed it opens from there; without it the hotkey opens it from the middle of the bottom (or top) bar.",
         fields: [

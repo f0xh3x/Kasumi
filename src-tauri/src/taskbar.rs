@@ -38,6 +38,8 @@ pub struct Reservation {
     pub top: i32,
     pub right: i32,
     pub bottom: i32,
+    /// The monitor's rect (left, top, right, bottom).
+    pub monitor: (i32, i32, i32, i32),
 }
 
 /// Reservations the engine wants, and the ones registered with the shell.
@@ -58,13 +60,112 @@ fn appbar_for(r: &Reservation) -> APPBARDATA {
     d
 }
 
+/// Reservations Explorer refused (an empty AppBar rect): kept by setting the
+/// monitor's work area ourselves, and the work areas they replaced.
+static FALLBACK: std::sync::Mutex<Vec<Reservation>> = std::sync::Mutex::new(Vec::new());
+/// When the AppBar reservations were last (re)registered, to check they took effect.
+static REGISTERED_AT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+static WORK_ORIGINAL: std::sync::Mutex<Vec<(RECT, RECT)>> = std::sync::Mutex::new(Vec::new());
+
+fn work_marker() -> PathBuf {
+    crate::config::dir().join("workarea-reserved")
+}
+
+fn save_work_marker(list: &[(RECT, RECT)]) {
+    if list.is_empty() {
+        let _ = std::fs::remove_file(work_marker());
+        return;
+    }
+    let text: Vec<String> = list
+        .iter()
+        .map(|(m, w)| format!("{} {} {} {} {} {} {} {}", m.left, m.top, m.right, m.bottom, w.left, w.top, w.right, w.bottom))
+        .collect();
+    let _ = std::fs::write(work_marker(), text.join("\n"));
+}
+
+fn work_area(monitor: &RECT) -> Option<RECT> {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    unsafe {
+        let h = MonitorFromRect(monitor, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        GetMonitorInfoW(h, &mut info).as_bool().then_some(info.rcWork)
+    }
+}
+
+fn set_work_area(r: &RECT) {
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPIF_SENDCHANGE, SPI_SETWORKAREA};
+    let mut r = *r;
+    unsafe {
+        let _ = SystemParametersInfoW(SPI_SETWORKAREA, 0, Some(&mut r as *mut _ as *mut _), SPIF_SENDCHANGE);
+    }
+}
+
+/// Keeps the work area of monitors with refused reservations shrunk by our strips
+/// (re-applied if something resets it), and gives the original back otherwise.
+fn apply_work_areas() {
+    let fallback = FALLBACK.lock().unwrap().clone();
+    let mut original = WORK_ORIGINAL.lock().unwrap();
+    let mut monitors: Vec<(i32, i32, i32, i32)> = fallback.iter().map(|r| r.monitor).collect();
+    monitors.dedup();
+    for &(l, t, r, b) in &monitors {
+        let mon = RECT { left: l, top: t, right: r, bottom: b };
+        let orig = match original.iter().find(|(m, _)| *m == mon) {
+            Some((_, w)) => *w,
+            None => {
+                let Some(w) = work_area(&mon) else { continue };
+                original.push((mon, w));
+                save_work_marker(&original);
+                w
+            }
+        };
+        let strip = |bottom: bool| {
+            fallback.iter().filter(|x| x.monitor == (l, t, r, b) && x.bottom_edge == bottom).map(|x| x.bottom - x.top).max().unwrap_or(0)
+        };
+        let want = RECT { left: orig.left, right: orig.right, top: orig.top.max(t + strip(false)), bottom: orig.bottom.min(b - strip(true)) };
+        if work_area(&mon) != Some(want) {
+            set_work_area(&want);
+            eprintln!("[statusnotch] work area of ({l},{t})-({r},{b}) set to keep reserved strips");
+        }
+    }
+    let before = original.len();
+    original.retain(|(m, w)| {
+        let keep = monitors.contains(&(m.left, m.top, m.right, m.bottom));
+        if !keep {
+            set_work_area(w);
+        }
+        keep
+    });
+    if original.len() != before {
+        save_work_marker(&original);
+    }
+}
+
+/// After a crash: put back work areas a previous run changed.
+fn restore_work_marker() {
+    let Ok(text) = std::fs::read_to_string(work_marker()) else { return };
+    for line in text.lines() {
+        let v: Vec<i32> = line.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        if v.len() == 8 {
+            set_work_area(&RECT { left: v[4], top: v[5], right: v[6], bottom: v[7] });
+        }
+    }
+    let _ = std::fs::remove_file(work_marker());
+}
+
 /// Registers / moves / drops AppBar reservations to match what's wanted.
 fn sync_reservations() {
+    sync_appbars();
+    check_reservations();
+    apply_work_areas();
+}
+
+fn sync_appbars() {
     let want = RESERVE_WANT.lock().unwrap().clone();
     let mut have = RESERVED.lock().unwrap();
     if *have == want {
         return;
     }
+    let mut refused = Vec::new();
     for r in have.iter().filter(|r| !want.iter().any(|w| w.hwnd == r.hwnd)) {
         let mut d = appbar_for(r);
         unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
@@ -76,6 +177,11 @@ fn sync_reservations() {
                 SHAppBarMessage(ABM_NEW, &mut d);
             }
             SHAppBarMessage(ABM_QUERYPOS, &mut d);
+            if d.rc.right <= d.rc.left || d.rc.bottom <= d.rc.top {
+                // Explorer won't place it (seen with heavily modded taskbars).
+                refused.push(r.clone());
+                continue;
+            }
             // Keep our own height whatever the query moved.
             if r.bottom_edge {
                 d.rc.top = d.rc.bottom - (r.bottom - r.top);
@@ -85,8 +191,39 @@ fn sync_reservations() {
             SHAppBarMessage(ABM_SETPOS, &mut d);
         }
     }
-    eprintln!("[statusnotch] reserved screen space: {} strip(s)", want.len());
+    eprintln!("[statusnotch] reserved screen space: {} strip(s), {} through the work area", want.len(), refused.len());
+    *FALLBACK.lock().unwrap() = refused;
+    *REGISTERED_AT.lock().unwrap() = Some(std::time::Instant::now());
     *have = want;
+}
+
+/// Explorer can accept a reservation without honouring it (seen with modded
+/// taskbars): a second after registering, any strip the work area still covers
+/// is kept through the work area instead.
+fn check_reservations() {
+    let due = REGISTERED_AT.lock().unwrap().is_some_and(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+    if !due {
+        return;
+    }
+    *REGISTERED_AT.lock().unwrap() = None;
+    let have = RESERVED.lock().unwrap().clone();
+    let mut fallback = FALLBACK.lock().unwrap();
+    for r in have {
+        if fallback.iter().any(|f| f.hwnd == r.hwnd) {
+            continue;
+        }
+        let (l, t, rt, b) = r.monitor;
+        // Our own work-area change for this monitor doesn't count as Explorer honouring it.
+        if WORK_ORIGINAL.lock().unwrap().iter().any(|(m, _)| (m.left, m.top, m.right, m.bottom) == r.monitor) {
+            continue;
+        }
+        let Some(work) = work_area(&RECT { left: l, top: t, right: rt, bottom: b }) else { continue };
+        let kept = if r.bottom_edge { work.bottom <= r.top } else { work.top >= r.bottom };
+        if !kept {
+            eprintln!("[statusnotch] reservation on ({l},{t})-({rt},{b}) not honoured by Explorer; using the work area");
+            fallback.push(r);
+        }
+    }
 }
 
 /// Gives all reserved space back (quit / panic).
@@ -97,6 +234,13 @@ fn release_reservations() {
         unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
     }
     have.clear();
+    FALLBACK.lock().unwrap().clear();
+    let mut original = WORK_ORIGINAL.lock().unwrap();
+    for (_, w) in original.iter() {
+        set_work_area(w);
+    }
+    original.clear();
+    let _ = std::fs::remove_file(work_marker());
 }
 /// Whether we are hiding the taskbar right now.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -208,6 +352,7 @@ unsafe extern "system" fn on_show(_: HWINEVENTHOOK, _: u32, h: HWND, object: i32
 }
 
 fn run() {
+    restore_work_marker();
     unsafe {
         SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(on_show), 0, 0, WINEVENT_OUTOFCONTEXT);
         // Follow the config, and catch anything the hook missed (new monitors,
