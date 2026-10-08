@@ -92,11 +92,38 @@ fn work_area(monitor: &RECT) -> Option<RECT> {
     }
 }
 
+/// Sets a monitor's work area without broadcasting the change: the broadcast
+/// makes Explorer re-show its (hidden) taskbar and reset the work area. Windows
+/// maximized afterwards respect it; ones already maximized adjust when re-maximized.
 fn set_work_area(r: &RECT) {
-    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPIF_SENDCHANGE, SPI_SETWORKAREA};
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
     let mut r = *r;
     unsafe {
-        let _ = SystemParametersInfoW(SPI_SETWORKAREA, 0, Some(&mut r as *mut _ as *mut _), SPIF_SENDCHANGE);
+        let _ = SystemParametersInfoW(SPI_SETWORKAREA, 0, Some(&mut r as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+    }
+}
+
+/// Tells maximized windows on a monitor that its work area changed, so they
+/// re-fit (Explorer itself isn't told: that would re-show its taskbar).
+fn refit_maximized(monitor: &RECT) {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::UI::WindowsAndMessaging::{IsZoomed, PostMessageW, SPI_SETWORKAREA, WM_SETTINGCHANGE};
+    unsafe extern "system" fn collect(h: HWND, data: LPARAM) -> BOOL {
+        (*(data.0 as *mut Vec<HWND>)).push(h);
+        BOOL(1)
+    }
+    let mut all: Vec<HWND> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(collect), LPARAM(&mut all as *mut _ as isize));
+        for h in all {
+            if !IsWindowVisible(h).as_bool() || !IsZoomed(h).as_bool() || is_taskbar_class(h) {
+                continue;
+            }
+            let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() && info.rcMonitor == *monitor {
+                let _ = PostMessageW(Some(h), WM_SETTINGCHANGE, windows::Win32::Foundation::WPARAM(SPI_SETWORKAREA.0 as usize), LPARAM(0));
+            }
+        }
     }
 }
 
@@ -124,6 +151,7 @@ fn apply_work_areas() {
         let want = RECT { left: orig.left, right: orig.right, top: orig.top.max(t + strip(false)), bottom: orig.bottom.min(b - strip(true)) };
         if work_area(&mon) != Some(want) {
             set_work_area(&want);
+            refit_maximized(&mon);
             eprintln!("[statusnotch] work area of ({l},{t})-({r},{b}) set to keep reserved strips");
         }
     }
@@ -132,6 +160,7 @@ fn apply_work_areas() {
         let keep = monitors.contains(&(m.left, m.top, m.right, m.bottom));
         if !keep {
             set_work_area(w);
+            refit_maximized(m);
         }
         keep
     });
@@ -236,8 +265,9 @@ fn release_reservations() {
     have.clear();
     FALLBACK.lock().unwrap().clear();
     let mut original = WORK_ORIGINAL.lock().unwrap();
-    for (_, w) in original.iter() {
+    for (m, w) in original.iter() {
         set_work_area(w);
+        refit_maximized(m);
     }
     original.clear();
     let _ = std::fs::remove_file(work_marker());

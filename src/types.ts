@@ -102,6 +102,8 @@ export interface Layout {
   theme: Theme;
   /** The app launcher is switched on. */
   launcher: boolean;
+  /** Rounded screen corners drawn with the shape (0: off). */
+  cornerRadius: number;
   combineNotches: boolean;
   expanded: boolean;
 }

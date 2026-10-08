@@ -261,5 +261,24 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
   emitRight(P, roundedSide(hr, 0, base, hr_, hc, -1));
   P.push(`L${f(W + OFF)} 0L${f(W + OFF)} ${-OFF}L${-OFF} ${-OFF}Z`);
 
+  // Rounded screen corners: a quarter-circle fillet at each screen edge, hanging
+  // from whatever fills that corner right now (the open bar, a notch hugging the
+  // corner, a panel) — part of the same shape, so it moves with every animation.
+  const R = L.cornerRadius ?? 0;
+  if (R > 0) {
+    const depthAt = (left: boolean) => {
+      let d = (left ? hl <= 0.5 : hr >= W - 0.5) ? base : 0;
+      frames.forEach((fr) => {
+        if (fr.right - fr.left < 1) return;
+        if (left ? fr.left <= 1 : fr.right >= W - 1) d = Math.max(d, fr.depth);
+      });
+      return d;
+    };
+    const dl = depthAt(true);
+    const dr = depthAt(false);
+    P.push(`M0 ${f(dl)}L0 ${f(dl + R)}A${f(R)} ${f(R)} 0 0 1 ${f(R)} ${f(dl)}Z`);
+    P.push(`M${f(W)} ${f(dr)}L${f(W - R)} ${f(dr)}A${f(R)} ${f(R)} 0 0 1 ${f(W)} ${f(dr + R)}Z`);
+  }
+
   return { d: P.join(""), base, bumps: frames };
 }

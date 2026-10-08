@@ -55,6 +55,8 @@ pub struct Layout {
     pub hot: Hot,
     /// Height reserved on screen for it (0: none).
     pub reserve: f64,
+    /// Rounded screen corners drawn with this surface's shape (0: off).
+    pub corner_radius: f64,
     pub width: f64,
     pub height: f64,
     pub scale: f64,
@@ -750,6 +752,7 @@ impl Engine {
             rest_height: rest_h,
             open_height: open_h,
             hot: self.cfg.hot(surface, &s),
+            corner_radius: if self.cfg.general.rounded_corners { self.cfg.general.corner_radius } else { 0.0 },
             reserve: if !s.reserve_space {
                 0.0
             } else {
@@ -760,7 +763,8 @@ impl Engine {
                 }
             },
             width,
-            height: (tallest + OVERSHOOT_MARGIN).ceil(),
+            // Room for the rounded screen corners hanging below the shape, too.
+            height: (tallest + OVERSHOOT_MARGIN + if self.cfg.general.rounded_corners { self.cfg.general.corner_radius } else { 0.0 }).ceil(),
             scale: m.scale,
             geometry: self.cfg.geometry.clone(),
             animation: self.cfg.animation.clone(),
@@ -965,8 +969,9 @@ impl Engine {
         }
     }
 
-    /// Rounded screen corners: one mask per monitor corner, moved off a corner that
-    /// a notch (hugging it) or an always-on bar fills; none on fullscreen monitors.
+    /// Rounded screen corners on edges without a bar: one small mask window per
+    /// corner (a bar draws its edge's corners in its own shape, so they move with
+    /// it); none on fullscreen monitors.
     fn update_corners(&self) {
         let g = &self.cfg.general;
         if !g.rounded_corners {
@@ -1000,11 +1005,16 @@ impl Engine {
             };
             let r = (g.corner_radius * m.scale).round().max(1.0) as i32;
             let off = |top: bool, side: &str| (filled(top, side) * m.scale).round() as i32;
+            let has_bar = |top: bool| here.iter().any(|o| (o.edge == Edge::Top) == top);
             use crate::corners::{Corner, Which};
-            list.push(Corner { x: m.left, y: m.top + off(true, "left"), size: r, which: Which::TopLeft });
-            list.push(Corner { x: m.right - r, y: m.top + off(true, "right"), size: r, which: Which::TopRight });
-            list.push(Corner { x: m.left, y: m.bottom - r - off(false, "left"), size: r, which: Which::BottomLeft });
-            list.push(Corner { x: m.right - r, y: m.bottom - r - off(false, "right"), size: r, which: Which::BottomRight });
+            if !has_bar(true) {
+                list.push(Corner { x: m.left, y: m.top + off(true, "left"), size: r, which: Which::TopLeft });
+                list.push(Corner { x: m.right - r, y: m.top + off(true, "right"), size: r, which: Which::TopRight });
+            }
+            if !has_bar(false) {
+                list.push(Corner { x: m.left, y: m.bottom - r - off(false, "left"), size: r, which: Which::BottomLeft });
+                list.push(Corner { x: m.right - r, y: m.bottom - r - off(false, "right"), size: r, which: Which::BottomRight });
+            }
         }
         crate::corners::set(list);
     }
