@@ -351,6 +351,54 @@ const surfaceManager: Editor = (ctx) => {
   );
 };
 
+/** Style of the selected bar; picking "Always on" also reserves its space. */
+const surfaceStyle: Editor = (ctx) => {
+  const cur = scope.surface;
+  const s = ctx.cfg.surfaces?.[cur];
+  if (!s || s.enabled === false) return $("div");
+  const sel = select(
+    [
+      ["bar", "Status bar"],
+      ["dock", "Dock"],
+      ["always", "Always on"],
+    ],
+    s.mode ?? "bar",
+  );
+  sel.addEventListener("change", () => {
+    const ops: Op[] = [{ path: ["surfaces", cur, "mode"], value: sel.value }];
+    if (sel.value === "always") ops.push({ path: ["surfaces", cur, "reserve_space"], value: true });
+    ctx.saveMany(ops);
+  });
+  return row(
+    "Style",
+    "Status bar: notches that open into a full-width bar. Dock: notches that grow in place. Always on: the full bar, always shown (reserves its space).",
+    sel,
+  );
+};
+
+/**
+ * v4 -> v5: hot corners belong to each bar; the old [timing] switches (top bar
+ * only) move into [surfaces.top].
+ */
+export function migrationOpsV5(cfg: Cfg): Op[] {
+  const t = cfg.timing ?? {};
+  const keys = ["hot_top_left", "hot_top_right", "hot_top_edge", "hot_corner", "hot_corner_enabled", "hot_corner_position"];
+  if (!cfg.surfaces || !keys.some((k) => t[k] !== undefined)) return [];
+  const on = t.hot_corner_enabled !== false;
+  const pos = t.hot_corner_position ?? "top_left";
+  const top = cfg.surfaces.top ?? {};
+  const ops: Op[] = [];
+  const set = (key: string, value: unknown) => {
+    if (top[key] === undefined) ops.push({ path: ["surfaces", "top", key], value });
+  };
+  set("hot_left", on && (t.hot_top_left ?? pos === "top_left"));
+  set("hot_right", on && (t.hot_top_right ?? pos === "top_right"));
+  set("hot_edge", on && (t.hot_top_edge ?? pos === "top_edge"));
+  set("hot_corner_size", t.hot_corner ?? 12);
+  for (const k of keys) if (t[k] !== undefined) ops.push({ path: ["timing", k], value: null });
+  return ops;
+}
+
 /** "Top bar", "Bottom bar" (any other surface: its id). */
 export function surfaceName(id: string, _s?: any): string {
   return id === "top" ? "Top bar" : id === "bottom" ? "Bottom bar" : id;
@@ -1210,6 +1258,7 @@ function presets(ctx: EditorCtx): HTMLElement {
 export const editors: Record<string, Editor> = {
   presets,
   surfaceManager,
+  surfaceStyle,
   buttonsWidgets,
   scopeSelector,
   monitorToggles,

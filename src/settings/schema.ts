@@ -29,12 +29,17 @@ export type Field =
   /** A structured editor from editors.ts. */
   | { kind: "custom"; editor: string };
 
-/** A setting of the surface selected on the Widgets page; `dockOnly` hides it for bars. */
+/**
+ * A setting of the surface selected on the Bars page: hidden when the surface is
+ * off, and (`only`) for styles it doesn't apply to.
+ */
 const surfacePath =
-  (key: string, dockOnly = false): PathSpec =>
+  (key: string, only?: "dock" | "notched"): PathSpec =>
   (cfg) => {
     const s = cfg.surfaces?.[scope.surface];
-    if (!s || s.enabled === false || (dockOnly && s.mode !== "dock")) return null;
+    if (!s || s.enabled === false) return null;
+    if (only === "dock" && s.mode !== "dock") return null;
+    if (only === "notched" && s.mode === "always") return null;
     return ["surfaces", scope.surface, key];
   };
 
@@ -111,27 +116,11 @@ export const pages: Page[] = [
           },
         ],
       },
-      {
-        title: "Hot corners",
-        help: "Besides hovering a notch, the bar also opens when the cursor rests in any of these.",
-        fields: [
-          { kind: "toggle", label: "Top-left corner", path: ["timing", "hot_top_left"], default: true },
-          { kind: "toggle", label: "Top-right corner", path: ["timing", "hot_top_right"], default: false },
-          {
-            kind: "toggle",
-            label: "Anywhere along the top",
-            help: "Pushing the cursor against the top of the screen opens the bar, wherever it is.",
-            path: ["timing", "hot_top_edge"],
-            default: false,
-          },
-          { kind: "slider", label: "Corner size", path: ["timing", "hot_corner"], default: 12, min: 4, max: 40, step: 1, unit: "px" },
-        ],
-      },
     ],
   },
   {
     id: "widgets",
-    label: "Widgets",
+    label: "Bars",
     icon: 0xe71d,
     sections: [
       { title: "Layout for", fields: [{ kind: "custom", editor: "scopeSelector" }] },
@@ -147,22 +136,12 @@ export const pages: Page[] = [
         attach: true,
         icon: 0xe713,
         fields: [
-          {
-            kind: "select",
-            label: "Style",
-            help: "A status bar opens into a full-width bar; a dock's notches grow in place.",
-            path: surfacePath("mode"),
-            default: "bar",
-            options: [
-              { value: "bar", label: "Status bar" },
-              { value: "dock", label: "Dock" },
-            ],
-          },
+          { kind: "custom", editor: "surfaceStyle" },
           {
             kind: "select",
             label: "Size at rest",
             help: "Tiny is a thin handle that opens on hover.",
-            path: surfacePath("rest", true),
+            path: surfacePath("rest", "dock"),
             default: "small",
             options: [
               { value: "tiny", label: "Tiny" },
@@ -174,7 +153,7 @@ export const pages: Page[] = [
           {
             kind: "select",
             label: "Size when open",
-            path: surfacePath("open", true),
+            path: surfacePath("open", "dock"),
             default: "small",
             options: [
               { value: "small", label: "Small" },
@@ -186,9 +165,27 @@ export const pages: Page[] = [
             kind: "toggle",
             label: "Shrink when a window covers it",
             help: "Shrinks to the tiny handle while a maximized window is under it.",
-            path: surfacePath("shrink_when_covered", true),
+            path: surfacePath("shrink_when_covered", "dock"),
             default: true,
           },
+          {
+            kind: "toggle",
+            label: "Reserve space",
+            help: "Keep the bar's strip of the screen like the taskbar does: maximized windows stop at it instead of going under it.",
+            path: surfacePath("reserve_space"),
+            default: false,
+          },
+          { kind: "toggle", label: "Hot corner: left", help: "Resting the cursor in the corner opens the bar.", path: surfacePath("hot_left", "notched"), default: false },
+          { kind: "toggle", label: "Hot corner: right", path: surfacePath("hot_right", "notched"), default: false },
+          {
+            kind: "toggle",
+            label: "Anywhere along the edge",
+            help: "Pushing the cursor against the bar's screen edge opens it, wherever it is.",
+            path: surfacePath("hot_edge", "notched"),
+            default: false,
+          },
+          { kind: "slider", label: "Hot corner size", path: surfacePath("hot_corner_size", "notched"), default: 12, min: 4, max: 40, step: 1, unit: "px" },
+          { kind: "slider", label: "Edge zone size", help: "How close to the edge counts.", path: surfacePath("hot_edge_size", "notched"), default: 2, min: 1, max: 30, step: 1, unit: "px" },
         ],
       },
       { title: "This monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorToggles" }] },

@@ -73,7 +73,7 @@ export interface Theme {
 }
 
 export type Edge = "top" | "bottom";
-export type SurfaceMode = "bar" | "dock";
+export type SurfaceMode = "bar" | "dock" | "always";
 export type SizeName = "tiny" | "small" | "medium" | "large";
 
 export interface Layout {

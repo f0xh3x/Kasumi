@@ -7,7 +7,7 @@
 //! bottom one (the frontend draws bottom surfaces flipped), so hover zones,
 //! regions and notch shapes are the same maths for both.
 
-use crate::config::{self, Anchor, Animation, Bar, Config, Edge, Geometry, MonitorRule, SizeName, SurfaceMode};
+use crate::config::{self, Anchor, Animation, Bar, Config, Edge, Geometry, Hot, MonitorRule, SizeName, SurfaceMode};
 use crate::providers::{self, SharedConfig};
 use crate::win::{self, Monitor};
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,10 @@ pub struct Layout {
     pub open: SizeName,
     pub rest_height: f64,
     pub open_height: f64,
+    /// Hot zones that open this surface.
+    pub hot: Hot,
+    /// Height reserved on screen for it (0: none).
+    pub reserve: f64,
     pub width: f64,
     pub height: f64,
     pub scale: f64,
@@ -743,6 +747,16 @@ impl Engine {
             open: s.open,
             rest_height: rest_h,
             open_height: open_h,
+            hot: self.cfg.hot(surface, &s),
+            reserve: if !s.reserve_space {
+                0.0
+            } else {
+                match s.mode {
+                    SurfaceMode::Always => self.cfg.geometry.expanded_height,
+                    SurfaceMode::Dock => rest_h,
+                    SurfaceMode::Bar => self.cfg.geometry.notch_height,
+                }
+            },
             width,
             height: (tallest + OVERSHOOT_MARGIN).ceil(),
             scale: m.scale,
@@ -871,6 +885,7 @@ impl Engine {
                 self.shared.lock().unwrap().overlays.remove(&label);
             }
         }
+        self.update_reservations();
     }
 
     fn create_window(&self, label: &str, m: &Monitor, layout: &Layout) -> tauri::Result<()> {
@@ -946,6 +961,26 @@ impl Engine {
                 }
             });
         }
+    }
+
+    /// Surfaces with `reserve_space` reserve their strip of the screen (AppBar).
+    fn update_reservations(&self) {
+        let sh = self.shared.lock().unwrap();
+        let wanted: Vec<crate::taskbar::Reservation> = sh
+            .overlays
+            .values()
+            .filter(|o| o.layout.reserve > 0.0)
+            .filter_map(|o| {
+                let m = &o.monitor;
+                let h = (o.layout.reserve * m.scale).round() as i32;
+                let (top, bottom) = match o.edge {
+                    Edge::Top => (m.top, m.top + h),
+                    Edge::Bottom => (m.bottom - h, m.bottom),
+                };
+                Some(crate::taskbar::Reservation { hwnd: o.hwnd?, bottom_edge: o.edge == Edge::Bottom, left: m.left, top, right: m.right, bottom })
+            })
+            .collect();
+        crate::taskbar::reserve(wanted);
     }
 
     /// Repositions notches of overlays whose measured widths changed.
@@ -1075,20 +1110,15 @@ impl Engine {
                 let ly = from_edge as f64 / m.scale;
                 let edge = (t.edge_px * m.scale).max(1.0);
                 let at_edge = on_monitor && (from_edge as f64) < edge;
-                // Anywhere on a notch's body (or the top edge above it) within its trigger
-                // zone, or the top-left hot corner.
-                let size = t.hot_corner;
-                let pos = t.hot_corner_position.as_str();
-                let tl = t.hot_top_left.unwrap_or(pos == "top_left");
-                let tr = t.hot_top_right.unwrap_or(pos == "top_right");
-                let edge = t.hot_top_edge.unwrap_or(pos == "top_edge");
-                // Hot corners belong to top surfaces.
-                let in_hot_corner = t.hot_corner_enabled
-                    && o.edge == Edge::Top
-                    && ly >= 0.0
-                    && ((tl && ly < size && lx >= 0.0 && lx < size)
-                        || (tr && ly < size && lx >= o.layout.width - size && lx <= o.layout.width)
-                        || (edge && at_edge));
+                // Anywhere on a notch's body (or the edge beside it) within its trigger
+                // zone, or one of this surface's hot zones (corners / its whole edge).
+                let h = &o.layout.hot;
+                let size = h.corner;
+                let edge_zone = on_monitor && (from_edge as f64) < (h.edge_size * m.scale).max(1.0);
+                let in_hot_corner = ly >= 0.0
+                    && ((h.left && ly < size && lx >= 0.0 && lx < size)
+                        || (h.right && ly < size && lx >= o.layout.width - size && lx <= o.layout.width)
+                        || (h.edge && edge_zone));
                 let in_trigger = !o.hidden
                     && on_monitor
                     && (in_hot_corner
@@ -1099,7 +1129,8 @@ impl Engine {
                         }));
                 let in_bar = !o.hidden && on_monitor && o.expanded && o.hit(lx, ly);
 
-                let next = if o.pinned { Hover::Open } else { match o.hover {
+                let always = o.layout.mode == SurfaceMode::Always;
+                let next = if o.pinned || always { Hover::Open } else { match o.hover {
                     Hover::Idle if in_trigger => Hover::Dwell(now),
                     Hover::Idle => Hover::Idle,
                     Hover::Dwell(_) if !in_trigger => Hover::Idle,

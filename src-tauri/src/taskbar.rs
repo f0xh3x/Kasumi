@@ -18,7 +18,9 @@ use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
-use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, ABS_AUTOHIDE, APPBARDATA};
+use windows::Win32::UI::Shell::{
+    SHAppBarMessage, ABM_GETSTATE, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, ABM_SETSTATE, ABS_AUTOHIDE, APPBARDATA,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EnumWindows, FindWindowW, GetClassNameW, GetMessageW, GetWindowThreadProcessId, IsWindowVisible,
     SetTimer, ShowWindowAsync, EVENT_OBJECT_SHOW, MSG, OBJID_WINDOW, SW_HIDE, SW_SHOWNA, WINEVENT_OUTOFCONTEXT, WM_TIMER,
@@ -26,6 +28,76 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// What the config asks for.
 static WANT: AtomicBool = AtomicBool::new(false);
+
+/// A strip of a monitor a surface keeps for itself (physical px), like the taskbar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reservation {
+    pub hwnd: isize,
+    pub bottom_edge: bool,
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+/// Reservations the engine wants, and the ones registered with the shell.
+static RESERVE_WANT: std::sync::Mutex<Vec<Reservation>> = std::sync::Mutex::new(Vec::new());
+static RESERVED: std::sync::Mutex<Vec<Reservation>> = std::sync::Mutex::new(Vec::new());
+
+/// Sets the strips StatusNotch surfaces reserve (applied on this module's thread).
+pub fn reserve(list: Vec<Reservation>) {
+    *RESERVE_WANT.lock().unwrap() = list;
+}
+
+fn appbar_for(r: &Reservation) -> APPBARDATA {
+    let mut d = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, ..Default::default() };
+    d.hWnd = HWND(r.hwnd as *mut _);
+    d.uCallbackMessage = 0x8000 + 0x51; // WM_APP + n; we don't act on the notifications
+    d.uEdge = if r.bottom_edge { 3 } else { 1 }; // ABE_BOTTOM / ABE_TOP
+    d.rc = RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    d
+}
+
+/// Registers / moves / drops AppBar reservations to match what's wanted.
+fn sync_reservations() {
+    let want = RESERVE_WANT.lock().unwrap().clone();
+    let mut have = RESERVED.lock().unwrap();
+    if *have == want {
+        return;
+    }
+    for r in have.iter().filter(|r| !want.iter().any(|w| w.hwnd == r.hwnd)) {
+        let mut d = appbar_for(r);
+        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+    }
+    for r in &want {
+        let mut d = appbar_for(r);
+        unsafe {
+            if !have.iter().any(|h| h.hwnd == r.hwnd) {
+                SHAppBarMessage(ABM_NEW, &mut d);
+            }
+            SHAppBarMessage(ABM_QUERYPOS, &mut d);
+            // Keep our own height whatever the query moved.
+            if r.bottom_edge {
+                d.rc.top = d.rc.bottom - (r.bottom - r.top);
+            } else {
+                d.rc.bottom = d.rc.top + (r.bottom - r.top);
+            }
+            SHAppBarMessage(ABM_SETPOS, &mut d);
+        }
+    }
+    eprintln!("[statusnotch] reserved screen space: {} strip(s)", want.len());
+    *have = want;
+}
+
+/// Gives all reserved space back (quit / panic).
+fn release_reservations() {
+    let mut have = RESERVED.lock().unwrap();
+    for r in have.iter() {
+        let mut d = appbar_for(r);
+        unsafe { SHAppBarMessage(ABM_REMOVE, &mut d) };
+    }
+    have.clear();
+}
 /// Whether we are hiding the taskbar right now.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -109,8 +181,9 @@ fn enable() {
     eprintln!("[statusnotch] taskbar hidden");
 }
 
-/// Shows the taskbar again and puts auto-hide back the way it was.
+/// Shows the taskbar again and puts auto-hide back the way it was; frees reserved space.
 pub fn restore() {
+    release_reservations();
     let Ok(original) = std::fs::read_to_string(marker()) else {
         ACTIVE.store(false, Ordering::Relaxed);
         return;
@@ -143,6 +216,7 @@ fn run() {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             if msg.hwnd.is_invalid() && msg.message == WM_TIMER {
+                sync_reservations();
                 match (WANT.load(Ordering::Relaxed), ACTIVE.load(Ordering::Relaxed)) {
                     (true, false) => enable(),
                     (true, true) => hide_all(),

@@ -3,7 +3,17 @@ import "@fontsource/inter/600.css";
 import "./settings.css";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { collapsible, editors, migrationOps, migrationOpsDisabledSpots, migrationOpsV3, migrationOpsV4, scope, type Op } from "./editors";
+import {
+  collapsible,
+  editors,
+  migrationOps,
+  migrationOpsDisabledSpots,
+  migrationOpsV3,
+  migrationOpsV4,
+  migrationOpsV5,
+  scope,
+  type Op,
+} from "./editors";
 import { pages, type Cfg, type Field, type Page, type Path } from "./schema";
 
 let cfg: Cfg = {};
@@ -291,7 +301,7 @@ async function load(): Promise<void> {
     // Older configs move to the current format once: [bar] lists + [[notches]]
     // -> [layout], then per-widget notch tables -> [notch] side settings.
     let migrated = false;
-    for (const step of [migrationOps, migrationOpsV3, migrationOpsV4, migrationOpsDisabledSpots]) {
+    for (const step of [migrationOps, migrationOpsV3, migrationOpsV4, migrationOpsV5, migrationOpsDisabledSpots]) {
       const ops = step(cfg);
       if (!ops.length) continue;
       await invoke("config_write_many", { ops });

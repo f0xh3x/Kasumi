@@ -5,11 +5,7 @@
 poll_ms = 16       # cursor poll interval
 dwell_ms = 10      # how long the cursor must rest on a trigger zone before opening
 grace_ms = 300     # how long the cursor may be outside the bar before closing
-edge_px = 8        # cursor must be within this distance of the top edge
-hot_corner = 12     # size of the hot corners (px square)
-hot_top_left = true  # resting the cursor here opens the bar
-hot_top_right = false
-hot_top_edge = false # anywhere along the top edge
+edge_px = 8        # cursor must be within this distance of the edge (notch hover)
 
 [general]
 hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
@@ -82,8 +78,13 @@ large = 60
 # every shown widget, and which of them show as their own notch on that side.
 # A widget listed in no side isn't shown.
 [surfaces.top]
-edge = "top"
-mode = "bar"
+mode = "bar"               # bar | dock | always (always shown, no notches)
+reserve_space = false      # keep the bar's strip of the screen (maximized windows stop at it)
+hot_left = true            # hot corners: resting the cursor there opens the bar
+hot_right = false
+hot_edge = false           # anywhere along the bar's edge
+hot_corner_size = 12
+hot_edge_size = 2
 left = ["menu", "language"]
 center = ["clock"]
 right = ["tray", "weather", "media", "temps"]

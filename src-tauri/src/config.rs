@@ -342,13 +342,29 @@ pub enum Edge {
     Bottom,
 }
 
-/// `bar`: notches open into the full-width bar. `dock`: notches only; they grow in place.
+/// `bar`: notches open into the full-width bar. `dock`: notches only; they grow in
+/// place. `always`: the full-width bar, always shown (no notches).
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SurfaceMode {
     #[default]
     Bar,
     Dock,
+    Always,
+}
+
+/// A surface's hot zones: resting the cursor there opens it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Hot {
+    pub left: bool,
+    pub right: bool,
+    /// Anywhere along the surface's edge.
+    pub edge: bool,
+    /// Corner square size (logical px).
+    pub corner: f64,
+    /// Depth of the edge zone (logical px).
+    pub edge_size: f64,
 }
 
 /// Named surface heights (`[sizes]`): tiny is a bare hover handle.
@@ -401,6 +417,14 @@ pub struct SurfaceCfg {
     pub open: SizeName,
     /// Dock: shrink to the tiny handle while a window covers it.
     pub shrink_when_covered: bool,
+    /// Reserve the bar's space on screen (like the taskbar): maximized windows stop at it.
+    pub reserve_space: bool,
+    /// Hot zones (absent: the top bar falls back to the old [timing] switches).
+    pub hot_left: Option<bool>,
+    pub hot_right: Option<bool>,
+    pub hot_edge: Option<bool>,
+    pub hot_corner_size: Option<f64>,
+    pub hot_edge_size: Option<f64>,
     pub left: Vec<String>,
     pub center: Vec<String>,
     pub right: Vec<String>,
@@ -416,6 +440,12 @@ impl Default for SurfaceCfg {
             rest: SizeName::Small,
             open: SizeName::Small,
             shrink_when_covered: true,
+            reserve_space: false,
+            hot_left: None,
+            hot_right: None,
+            hot_edge: None,
+            hot_corner_size: None,
+            hot_edge_size: None,
             left: vec![],
             center: vec![],
             right: vec![],
@@ -592,6 +622,19 @@ impl Config {
         }
     }
 
+    /// A surface's hot zones; the top bar falls back to the old `[timing]` switches.
+    pub fn hot(&self, id: &str, s: &SurfaceCfg) -> Hot {
+        let t = &self.timing;
+        let legacy = |flag: Option<bool>, pos: &str| id == "top" && t.hot_corner_enabled && flag.unwrap_or(t.hot_corner_position == pos);
+        Hot {
+            left: s.hot_left.unwrap_or_else(|| legacy(t.hot_top_left, "top_left")),
+            right: s.hot_right.unwrap_or_else(|| legacy(t.hot_top_right, "top_right")),
+            edge: s.hot_edge.unwrap_or_else(|| legacy(t.hot_top_edge, "top_edge")),
+            corner: s.hot_corner_size.unwrap_or(t.hot_corner),
+            edge_size: s.hot_edge_size.unwrap_or(t.edge_px),
+        }
+    }
+
     /// Whether surface `id` shows on a monitor with this rule.
     pub fn surface_on(&self, rule: Option<&MonitorRule>, id: &str, s: &SurfaceCfg) -> bool {
         s.enabled && rule.and_then(|r| r.surfaces.get(id)).and_then(|o| o.enabled) != Some(false)
@@ -605,6 +648,12 @@ impl Config {
         };
         let own = rule.and_then(|r| r.surfaces.get(id)).and_then(|o| o.layout());
         let mut layout = own.unwrap_or_else(|| s.layout());
+        if s.mode == SurfaceMode::Always {
+            // Always shown in full: nothing to collapse into notches.
+            layout.notch.clear();
+            let (_, bar) = self.notches_and_bar(&layout);
+            return (Vec::new(), bar);
+        }
         if s.mode == SurfaceMode::Dock {
             // A dock has no bar: every widget lives in a notch.
             layout.notch = [&layout.left, &layout.center, &layout.right].into_iter().flatten().cloned().collect();
@@ -839,6 +888,42 @@ mod tests {
         assert_eq!(ids, [("left", 1), ("center", 2)]);
         assert!(bar.left.is_empty() && bar.center.is_empty() && bar.right.is_empty());
         assert_eq!((cfg.sizes.px(SizeName::Medium), cfg.sizes.px(SizeName::Large)), (45.0, 60.0));
+    }
+
+    #[test]
+    fn always_on_bars_have_no_notches_and_hot_zones_are_per_bar() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [timing]
+            hot_top_left = false
+            hot_top_right = true
+
+            [surfaces.top]
+            center = ["clock"]
+            notch = ["clock"]
+
+            [surfaces.bottom]
+            mode = "always"
+            reserve_space = true
+            hot_edge = true
+            hot_edge_size = 6
+            center = ["tasks"]
+            "#,
+        )
+        .unwrap();
+        let (notches, bar) = cfg.resolve_surface(None, "bottom");
+        assert!(notches.is_empty());
+        assert_eq!(bar.center, ["tasks"]);
+        let list = cfg.surface_list();
+        let (_, bottom) = list.iter().find(|(id, _)| id == "bottom").unwrap();
+        let (_, top) = list.iter().find(|(id, _)| id == "top").unwrap();
+        assert_eq!(bottom.edge, Edge::Bottom, "the bottom bar hangs from the bottom edge");
+        assert!(bottom.reserve_space);
+        // The top bar without its own switches falls back to [timing]; others don't.
+        let h = cfg.hot("top", top);
+        assert_eq!((h.left, h.right, h.edge), (false, true, false));
+        let h = cfg.hot("bottom", bottom);
+        assert_eq!((h.left, h.right, h.edge, h.edge_size), (false, false, true, 6.0));
     }
 
     #[test]
