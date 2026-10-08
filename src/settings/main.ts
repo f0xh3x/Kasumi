@@ -55,11 +55,23 @@ function toast(text: string, error = false): void {
   toastTimer = window.setTimeout(() => t.classList.remove("show"), error ? 4000 : 1200);
 }
 
+/** Where the current page's computed fields resolve (null = hidden): fields that
+ *  appear only with another setting (e.g. corner roundness) depend on it. */
+function shownFields(): string {
+  const page = pages.find((p) => p.id === current);
+  if (!page) return "";
+  return JSON.stringify(page.sections.flatMap((s) => s.fields.map((f) => ("path" in f && typeof f.path === "function" ? f.path(cfg) : 0))));
+}
+
 async function save(path: Path, value: unknown): Promise<void> {
   try {
     await invoke("config_write", { path, value: value === undefined ? null : value });
+    const before = shownFields();
     setIn(cfg, path, value);
     toast("Saved");
+    // A setting that shows or hides others: redraw (not on every save: a slider
+    // being dragged would lose its grip).
+    if (shownFields() !== before) render();
   } catch (e) {
     toast(String(e), true);
     render(); // show the stored value again
