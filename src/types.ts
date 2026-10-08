@@ -66,7 +66,14 @@ export interface Theme {
   fontSize: number;
 }
 
+export type Edge = "top" | "bottom";
+export type SurfaceMode = "bar" | "dock";
+
 export interface Layout {
+  /** The surface this overlay draws (`top`, `bottom`, ...). */
+  surface: string;
+  edge: Edge;
+  mode: SurfaceMode;
   label: string;
   monitor: string;
   width: number;

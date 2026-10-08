@@ -31,7 +31,9 @@ export type Field =
 const hideWhenMaximized =
   (widget: string): PathSpec =>
   (cfg) =>
-    (cfg.layout?.notch ?? []).includes(widget) ? ["widgets", widget, "hide_when_maximized"] : null;
+    [cfg.layout, ...Object.values<any>(cfg.surfaces ?? {})].some((l) => (l?.notch ?? []).includes(widget))
+      ? ["widgets", widget, "hide_when_maximized"]
+      : null;
 
 export interface Section {
   title: string;

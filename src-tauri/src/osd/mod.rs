@@ -50,7 +50,8 @@ impl KeyboardWatch {
             cfg.osd.enabled && cfg.osd.keyboard
         };
         if same_window && enabled {
-            if let Some(label) = crate::engine::osd_target(app) {
+            // The peek pops at the language widget, on whichever surface shows it.
+            if let Some(label) = crate::engine::overlay_for(app, "language") {
                 let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://keyboard", json!({ "code": code, "name": name }));
             }
         }

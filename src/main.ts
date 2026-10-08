@@ -112,6 +112,7 @@ class Overlay {
     const prevX = new Map(this.drops.flatMap((d) => (d.xs ? [[d.key, d.xs] as const] : [])));
     this.layout = layout;
     applyTheme(layout.theme);
+    document.documentElement.classList.toggle("edge-bottom", layout.edge === "bottom");
 
     const a = layout.animation;
     this.expand.configure(a.expandStiffness, a.expandDamping, a.mass);
@@ -615,6 +616,8 @@ class Overlay {
    * takes over; while it's closing the notch copy is shown again and glides back.
    */
   private glide(): void {
+    const L = this.layout;
+    if (!L) return;
     const handedOver = this.expanded && this.expand.value >= 0.97;
     const k = clamp01(this.expand.value);
     for (const { slot, name, el } of this.notchEls) {
@@ -636,7 +639,9 @@ class Overlay {
       // Where the twin's part sits in the fully open bar (the bar is at 0,0 when open).
       const tx = dst.offsetLeft + dst.offsetWidth / 2;
       const ty = twin.offsetTop + twin.offsetHeight / 2;
-      el.style.transform = `translate(${(tx - nx) * k}px, ${(ty - ny) * k}px)`;
+      // Bottom surfaces are drawn flipped (see styles.css): rows mirror around their centers.
+      const dy = (L.edge === "bottom" ? ny - ty : ty - ny) * k;
+      el.style.transform = `translate(${(tx - nx) * k}px, ${dy}px)`;
     }
   }
 

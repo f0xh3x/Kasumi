@@ -42,6 +42,16 @@ body {
   inset: 0;
 }
 
+/* Bottom surfaces (docks) are the top-edge drawing flipped upside down; their
+   content is flipped back so it reads normally. The stage is the whole window,
+   so y in the page is the distance from the surface's edge either way. */
+#stage {
+  position: fixed;
+  inset: 0;
+}
+html.edge-bottom #stage { transform: scaleY(-1); }
+html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 -1; }
+
 /* Icons reuse the YASB glyphs. Segoe Fluent Icons ships with Windows 11 and
    may not be redistributed, so it is referenced by name rather than bundled. */
 .icon {

@@ -72,9 +72,11 @@ function row(label: string, help: string | undefined, control: HTMLElement): HTM
 
 // --- Widgets & layout model ------------------------------------------------------
 //
-// Config model: [layout] has left / center / right lists (a side for every shown
-// widget) and `notch` (which of them show as their own notch). [[monitors]] rules
-// may carry their own `layout`; `custom_layout` / `follow_unchanged` are UI flags.
+// Config model: each surface ([surfaces.top], [surfaces.bottom], ...) has left /
+// center / right lists (a side for every shown widget) and `notch` (which of them
+// show as their own notch). [[monitors]] rules may carry their own lists per
+// surface (`surfaces = { top = { ... } }`); `custom_layout` / `follow_unchanged`
+// there are UI flags. Older configs had a single [layout] (the top bar).
 
 export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "clock", label: "Clock", icon: 0xe823 },
@@ -97,16 +99,31 @@ const SIDES: Side[] = ["left", "center", "right"];
 
 const enabled = (cfg: Cfg, id: string) => cfg.widgets?.[id]?.enabled !== false;
 const emptyLayout = (): LayoutCfg => ({ left: [], center: [], right: [], notch: [] });
-const normalize = (l: Partial<LayoutCfg> | undefined): LayoutCfg => ({ ...emptyLayout(), ...structuredClone(l ?? {}) });
+/** Just the four lists of a layout-like table (a surface also has edge, mode, ...). */
+const normalize = (l: Partial<LayoutCfg> | undefined): LayoutCfg => ({
+  left: [...(l?.left ?? [])],
+  center: [...(l?.center ?? [])],
+  right: [...(l?.right ?? [])],
+  notch: [...(l?.notch ?? [])],
+});
+const LISTS = ["left", "center", "right", "notch"] as const;
+const hasLists = (o: any) => !!o && LISTS.some((k) => Array.isArray(o[k]));
 const sameLayout = (a: LayoutCfg, b: LayoutCfg) =>
   SIDES.every((s) => JSON.stringify(a[s]) === JSON.stringify(b[s])) &&
   JSON.stringify([...a.notch].sort()) === JSON.stringify([...b.notch].sort());
 const sideOf = (l: LayoutCfg, id: string): Side | null => SIDES.find((s) => l[s].includes(id)) ?? null;
 
-export const globalLayout = (cfg: Cfg): LayoutCfg => normalize(cfg.layout);
+/** The surface ids in the config (configs from before surfaces: just the top bar). */
+export const surfaceIds = (cfg: Cfg): string[] => (cfg.surfaces ? Object.keys(cfg.surfaces) : ["top"]);
 
-/** Which part of the Widgets page is being edited. */
-export const scope: { monitor: string | null } = { monitor: null };
+/** A surface's global layout. */
+export const surfaceLayout = (cfg: Cfg, id: string): LayoutCfg =>
+  cfg.surfaces ? normalize(cfg.surfaces[id]) : id === "top" ? normalize(cfg.layout) : emptyLayout();
+
+/** Which part of the Widgets page is being edited: a surface, globally or for one monitor. */
+export const scope: { monitor: string | null; surface: string } = { monitor: null, surface: "top" };
+
+export const globalLayout = (cfg: Cfg): LayoutCfg => surfaceLayout(cfg, scope.surface);
 let monitorsCache: MonitorInfo[] | null = null;
 
 interface MonitorInfo {
@@ -140,7 +157,9 @@ function ruleFor(cfg: Cfg, m: MonitorInfo): any | undefined {
 function monitorLayout(cfg: Cfg, name: string): LayoutCfg {
   const m = monitorsCache?.find((x) => x.name === name);
   const r = m ? ruleFor(cfg, m) : ownRule(cfg, name)?.[1];
-  return r?.layout ? normalize(r.layout) : globalLayout(cfg);
+  const own = r?.surfaces?.[scope.surface];
+  if (hasLists(own)) return normalize(own);
+  return globalLayout(cfg);
 }
 
 /** Rewrites (or creates, before the catch-all) the named monitor's rule. */
@@ -152,7 +171,7 @@ function ruleOps(cfg: Cfg, name: string, update: (r: any) => void): Op[] {
     // Start from whatever currently applies to this monitor, so nothing changes by itself.
     const current = m ? ruleFor(cfg, m) : undefined;
     const fresh: any = { match: name, enabled: current?.enabled !== false };
-    if (current?.layout) fresh.layout = structuredClone(current.layout);
+    if (current?.surfaces) fresh.surfaces = structuredClone(current.surfaces);
     const star = rules.findIndex((r) => String(r.match ?? "*").trim() === "*");
     i = star < 0 ? rules.length : star;
     rules.splice(i, 0, fresh);
@@ -161,19 +180,25 @@ function ruleOps(cfg: Cfg, name: string, update: (r: any) => void): Op[] {
   for (const r of rules) {
     delete r.notches; // legacy fields
     delete r.bar;
+    delete r.layout;
   }
   return [{ path: ["monitors"], value: rules }];
 }
 
 /** Edits that store `next` as the layout of the current scope. */
 function layoutOps(cfg: Cfg, next: LayoutCfg): Op[] {
-  if (!scope.monitor) return [{ path: ["layout"], value: next }];
+  const s = scope.surface;
+  if (!scope.monitor) return LISTS.map((k) => ({ path: ["surfaces", s, k], value: next[k] }));
   const global = globalLayout(cfg);
   return ruleOps(cfg, scope.monitor, (r) => {
-    r.custom_layout = true;
+    const own = ((r.surfaces ??= {})[s] ??= {});
+    own.custom_layout = true;
     // "Follow global while unchanged": a layout equal to the global one isn't stored.
-    if (r.follow_unchanged !== false && sameLayout(next, global)) delete r.layout;
-    else r.layout = next;
+    const follow = own.follow_unchanged !== false && sameLayout(next, global);
+    for (const k of LISTS) {
+      if (follow) delete own[k];
+      else own[k] = next[k];
+    }
   });
 }
 
@@ -204,8 +229,31 @@ const scopeSelector: Editor = (ctx) => {
   const help = scope.monitor
     ? `Layout for ${scope.monitor}. Widget settings below are shared by all monitors.`
     : "The layout every monitor uses unless it has its own.";
-  return $("div", "", bar, $("p", "card-help", help));
+  const ids = surfaceIds(ctx.cfg);
+  if (!ids.includes(scope.surface)) scope.surface = ids.includes("top") ? "top" : ids[0];
+  if (ids.length < 2) return $("div", "", bar, $("p", "card-help", help));
+  // Several bars/docks: pick which one the placement below edits.
+  const surfaces = $("div", "scope-bar");
+  for (const id of ids) {
+    const s = ctx.cfg.surfaces?.[id] ?? {};
+    const b = $("button", `scope-chip${scope.surface === id ? " active" : ""}`, glyph(surfaceIcon(s)), surfaceName(id, s));
+    b.addEventListener("click", () => {
+      scope.surface = id;
+      ctx.rerender();
+    });
+    surfaces.append(b);
+  }
+  return $("div", "stack-tight", surfaces, bar, $("p", "card-help", help));
 };
+
+/** "Top bar", "Dock", ... for a surface. */
+export function surfaceName(id: string, s: any): string {
+  const edge = s?.edge ?? (id === "bottom" ? "bottom" : "top");
+  const kind = s?.mode === "dock" ? "dock" : "bar";
+  if (id === "top" || id === "bottom") return `${edge === "top" ? "Top" : "Bottom"} ${kind}`;
+  return id;
+}
+const surfaceIcon = (s: any) => (s?.edge === "bottom" ? 0xe70d : 0xe70e); // chevron down / up
 
 /** Per-monitor: StatusNotch on/off, custom layout, follow global while unchanged. */
 const monitorToggles: Editor = (ctx) => {
@@ -214,7 +262,9 @@ const monitorToggles: Editor = (ctx) => {
   const m = monitorsCache?.find((x) => x.name === name);
   const effective = (m && ruleFor(ctx.cfg, m)) ?? r;
   const set = (update: (r: any) => void) => ctx.saveMany(ruleOps(ctx.cfg, name, update));
-  const custom = !!effective?.layout || r?.custom_layout === true;
+  const own = effective?.surfaces?.[scope.surface];
+  const custom = hasLists(own) || own?.custom_layout === true;
+  const setOwn = (update: (o: any) => void) => set((x) => update(((x.surfaces ??= {})[scope.surface] ??= {})));
   const box = $("div", "stack-tight");
   box.append(
     row("StatusNotch on this monitor", undefined, sw(effective?.enabled !== false, (on) => set((x) => (x.enabled = on)))),
@@ -222,9 +272,9 @@ const monitorToggles: Editor = (ctx) => {
       "Custom layout",
       "Off: this monitor follows the global layout.",
       sw(custom, (on) =>
-        set((x) => {
-          x.custom_layout = on;
-          if (!on) delete x.layout;
+        setOwn((o) => {
+          o.custom_layout = on;
+          if (!on) for (const k of LISTS) delete o[k];
         }),
       ),
     ),
@@ -234,7 +284,7 @@ const monitorToggles: Editor = (ctx) => {
       row(
         "Follow global while unchanged",
         "Until you change this monitor's layout, global changes still apply to it.",
-        sw(r?.follow_unchanged !== false, (on) => set((x) => (x.follow_unchanged = on))),
+        sw(own?.follow_unchanged !== false, (on) => setOwn((o) => (o.follow_unchanged = on))),
       ),
     );
   }
@@ -353,18 +403,20 @@ const monitorNotches: Editor = (ctx) => {
 /** In a widget's own settings: whether it shows as (part of) a notch on its side. */
 export function widgetNotch(widget: string): Editor {
   return (ctx) => {
-    const L = globalLayout(ctx.cfg);
+    // The surface it's placed on (globally).
+    const id = surfaceIds(ctx.cfg).find((s) => sideOf(surfaceLayout(ctx.cfg, s), widget)) ?? scope.surface;
+    const L = surfaceLayout(ctx.cfg, id);
     const side = sideOf(L, widget);
     const has = L.notch.includes(widget);
+    const where = surfaceIds(ctx.cfg).length > 1 ? ` of the ${surfaceName(id, ctx.cfg.surfaces?.[id]).toLowerCase()}` : "";
     return row(
       "Own notch",
       side
-        ? `Shows in the ${side} notch while the bar is closed. Notch position and corner settings are under Notches.`
+        ? `Shows in the ${side} notch${where} while the bar is closed. Notch position and corner settings are under Notches.`
         : "Place the widget on a side first (Placement above).",
       sw(has, (on) => {
-        const next = structuredClone(L);
-        next.notch = on ? [...next.notch, widget] : next.notch.filter((x) => x !== widget);
-        ctx.saveMany([{ path: ["layout"], value: next }]);
+        const notch = on ? [...L.notch, widget] : L.notch.filter((x) => x !== widget);
+        ctx.saveMany(ctx.cfg.surfaces ? [{ path: ["surfaces", id, "notch"], value: notch }] : [{ path: ["layout", "notch"], value: notch }]);
       }),
     );
   };
@@ -376,7 +428,7 @@ export function widgetNotch(widget: string): Editor {
  */
 export function migrationOpsV3(cfg: Cfg): Op[] {
   const ops: Op[] = [];
-  const L = globalLayout(cfg);
+  const L = normalize(cfg.layout);
   for (const [w, settings] of Object.entries<any>(cfg.widgets ?? {})) {
     const n = settings?.notch;
     if (!n || typeof n !== "object") continue;
@@ -408,7 +460,7 @@ export function migrationOpsV3(cfg: Cfg): Op[] {
  * notches/bar) to the [layout] model. Returns no edits if already migrated.
  */
 export function migrationOps(cfg: Cfg): Op[] {
-  if (cfg.layout) return [];
+  if (cfg.layout || cfg.surfaces) return [];
   const L = emptyLayout();
   for (const s of SIDES) L[s] = [...(cfg.bar?.[s] ?? [])];
   const ops: Op[] = [];
@@ -455,6 +507,40 @@ export function migrationOps(cfg: Cfg): Op[] {
       return out;
     });
     ops.push({ path: ["monitors"], value: rules });
+  }
+  return ops;
+}
+
+/**
+ * v3 -> v4: the single [layout] becomes the top surface ([surfaces.top]), and
+ * monitors' own layouts move into their per-surface settings.
+ */
+export function migrationOpsV4(cfg: Cfg): Op[] {
+  if (cfg.surfaces || !cfg.layout) return [];
+  const L = normalize(cfg.layout);
+  const ops: Op[] = [
+    { path: ["surfaces", "top", "edge"], value: "top" },
+    { path: ["surfaces", "top", "mode"], value: "bar" },
+    ...LISTS.map((k) => ({ path: ["surfaces", "top", k], value: L[k] })),
+    { path: ["layout"], value: null },
+  ];
+  if (Array.isArray(cfg.monitors)) {
+    let changed = false;
+    const rules = cfg.monitors.map((r: any) => {
+      if (!r.layout && r.custom_layout === undefined && r.follow_unchanged === undefined) return r;
+      changed = true;
+      const out: any = { ...r };
+      const top: any = {};
+      if (r.custom_layout !== undefined) top.custom_layout = r.custom_layout;
+      if (r.follow_unchanged !== undefined) top.follow_unchanged = r.follow_unchanged;
+      if (r.layout) Object.assign(top, normalize(r.layout));
+      delete out.layout;
+      delete out.custom_layout;
+      delete out.follow_unchanged;
+      out.surfaces = { ...(r.surfaces ?? {}), top };
+      return out;
+    });
+    if (changed) ops.push({ path: ["monitors"], value: rules });
   }
   return ops;
 }

@@ -74,18 +74,25 @@ const widgets: Record<string, Factory> = {
 };
 const panels: Record<string, PanelFactory> = { calendar, menu, tray: trayPanel, media: mediaPanel, weather: weatherPanel, temps: tempsPanel };
 
+/**
+ * A placed widget's type: instances are named `<type>#<n>` (e.g. `buttons#2`),
+ * each with its own `[widgets."buttons#2"]` options.
+ */
+export const widgetType = (name: string): string => name.split("#")[0];
+
 export function createWidget(name: string, opts: Options = {}): Widget {
-  const factory = widgets[name];
+  const factory = widgets[widgetType(name)];
   return factory ? factory(opts) : { el: el("widget unknown", name) };
 }
 
 export function createPanel(name: string, opts: Options, ctx: PanelContext): Widget {
-  const factory = panels[name];
+  const factory = panels[widgetType(name)];
   return factory ? factory(opts, ctx) : { el: el("widget unknown", name) };
 }
 
 /** The panel a widget opens, wherever it's placed (bar dropdown or notch panel). */
 export function panelFor(name: string): string | null {
-  if (name === "clock") return "calendar";
-  return name in panels ? name : null;
+  const type = widgetType(name);
+  if (type === "clock") return name.replace(/^clock/, "calendar");
+  return type in panels ? name : null;
 }

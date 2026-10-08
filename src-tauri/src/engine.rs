@@ -1,8 +1,13 @@
-//! The engine thread: owns the config, keeps one overlay window per monitor,
-//! polls the cursor to drive the hover state machine and click-through, and
-//! hides overlays behind fullscreen apps.
+//! The engine thread: owns the config, keeps one overlay window per surface
+//! (top bar, dock, ...) per monitor, polls the cursor to drive the hover state
+//! machine and click-through, and hides overlays behind fullscreen apps.
+//!
+//! Coordinates inside an overlay are measured from its own screen edge: y is the
+//! distance from the top edge for a top surface and from the bottom edge for a
+//! bottom one (the frontend draws bottom surfaces flipped), so hover zones,
+//! regions and notch shapes are the same maths for both.
 
-use crate::config::{self, Anchor, Animation, Bar, Config, Geometry, MonitorRule};
+use crate::config::{self, Anchor, Animation, Bar, Config, Edge, Geometry, MonitorRule, SurfaceMode};
 use crate::providers::{self, SharedConfig};
 use crate::win::{self, Monitor};
 use serde::{Deserialize, Serialize};
@@ -35,6 +40,10 @@ impl Rect {
 pub struct Layout {
     pub label: String,
     pub monitor: String,
+    /// The surface this overlay draws (`top`, `bottom`, ...), its edge and mode.
+    pub surface: String,
+    pub edge: Edge,
+    pub mode: SurfaceMode,
     pub width: f64,
     pub height: f64,
     pub scale: f64,
@@ -89,6 +98,8 @@ enum Hover {
 
 struct Overlay {
     monitor: Monitor,
+    surface: String,
+    edge: Edge,
     layout: Layout,
     /// Interactive areas reported by the frontend, logical px relative to the window.
     regions: Vec<Rect>,
@@ -108,6 +119,11 @@ struct Overlay {
 }
 
 impl Overlay {
+    /// Physical screen y of the window's top edge.
+    fn window_top(&self) -> i32 {
+        window_top(&self.monitor, self.edge, self.layout.height)
+    }
+
     fn hit(&self, x: f64, y: f64) -> bool {
         if self.regions.is_empty() {
             // Frontend hasn't reported yet: assume the open bar.
@@ -185,41 +201,64 @@ pub async fn set_content_height(window: tauri::WebviewWindow, state: State<'_, S
             return Ok(());
         }
         o.layout.height = wanted;
-        (o.hwnd, o.monitor.clone(), wanted)
+        (o.hwnd, o.monitor.clone(), (wanted, o.window_top()))
     };
     if let Some(hwnd) = hwnd {
+        let (h, top) = h;
         let h_px = (h * m.scale).ceil() as i32;
         window
-            .run_on_main_thread(move || win::place(hwnd, m.left, m.top, m.width(), h_px))
+            .run_on_main_thread(move || win::place(hwnd, m.left, top, m.width(), h_px))
             .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-/// Converts logical px within an overlay to physical screen coordinates.
+/// Physical y of the top of an overlay window `height` logical px tall on `edge`.
+fn window_top(m: &Monitor, edge: Edge, height: f64) -> i32 {
+    match edge {
+        Edge::Top => m.top,
+        Edge::Bottom => m.bottom - (height * m.scale).ceil() as i32,
+    }
+}
+
+/// Converts logical px within an overlay window (from its top-left, as the page
+/// sees it) to physical screen coordinates.
 pub fn to_screen(app: &AppHandle, label: &str, x: f64, y: f64) -> Option<(i32, i32)> {
     let state = app.state::<SharedState>();
     let sh = state.lock().unwrap();
-    let m = &sh.overlays.get(label)?.monitor;
-    Some((m.left + (x * m.scale).round() as i32, m.top + (y * m.scale).round() as i32))
+    let o = sh.overlays.get(label)?;
+    Some((o.monitor.left + (x * o.monitor.scale).round() as i32, o.window_top() + (y * o.monitor.scale).round() as i32))
 }
 
-/// The overlay an OSD should appear on: the one under the cursor, else the
-/// primary monitor's. None while that overlay is hidden (fullscreen app).
+/// The overlay an OSD should appear on: on the monitor under the cursor (else the
+/// primary one), the surface showing the OSD's widget, else the top one. None
+/// while that overlay is hidden (fullscreen app).
 pub fn osd_target(app: &AppHandle) -> Option<String> {
+    let widget = app.state::<SharedConfig>().read().unwrap().osd.notch.clone();
+    overlay_for(app, &widget)
+}
+
+/// On the monitor under the cursor (else the primary one), the overlay showing
+/// `widget` (in a notch, else in its bar), else the top surface.
+pub fn overlay_for(app: &AppHandle, widget: &str) -> Option<String> {
     let (cx, cy) = win::cursor_pos()?;
     let state = app.state::<SharedState>();
     let sh = state.lock().unwrap();
-    let on = |o: &Overlay| {
+    let under = |o: &Overlay| {
         let m = &o.monitor;
         cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
     };
-    let (label, o) = sh
-        .overlays
+    let monitor = sh.overlays.values().find(|o| under(o)).or_else(|| sh.overlays.values().find(|o| o.monitor.primary))?.monitor.clone();
+    let here: Vec<(&String, &Overlay)> = sh.overlays.iter().filter(|(_, o)| o.monitor == monitor).collect();
+    let in_notch = |o: &Overlay| o.layout.notches.iter().any(|n| n.id == widget || n.widgets.iter().any(|w| w == widget));
+    let in_bar = |o: &Overlay| [&o.layout.bar.left, &o.layout.bar.center, &o.layout.bar.right].iter().any(|g| g.iter().any(|w| w == widget));
+    let (label, o) = here
         .iter()
-        .find(|(_, o)| on(o))
-        .or_else(|| sh.overlays.iter().find(|(_, o)| o.monitor.primary))?;
-    (!o.hidden).then(|| label.clone())
+        .find(|(_, o)| in_notch(o))
+        .or_else(|| here.iter().find(|(_, o)| in_bar(o)))
+        .or_else(|| here.iter().find(|(_, o)| o.edge == Edge::Top))
+        .or_else(|| here.first())?;
+    (!o.hidden).then(|| (*label).clone())
 }
 
 /// Frontend console errors, forwarded to the app log.
@@ -411,17 +450,20 @@ impl Engine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_layout(
         &self,
         label: &str,
         m: &Monitor,
         rule: Option<&MonitorRule>,
+        surface: &str,
         undocked: &[String],
         measured: &HashMap<String, NotchWidth>,
     ) -> Layout {
         let width = m.width() as f64 / m.scale;
         let g = &self.cfg.geometry;
-        let (mut defs, bar) = self.cfg.resolve_layout(rule);
+        let s = self.cfg.surface_list().into_iter().find(|(id, _)| id == surface).map(|(_, s)| s).unwrap_or_default();
+        let (mut defs, bar) = self.cfg.resolve_surface(rule, surface);
         defs.retain(|n| n.widgets.iter().any(|w| self.cfg.widget_enabled(w)));
         for n in defs.iter_mut().filter(|n| n.auto_width) {
             if let Some(w) = measured.get(&n.id) {
@@ -508,6 +550,9 @@ impl Engine {
         Layout {
             label: label.to_string(),
             monitor: if m.friendly.is_empty() { m.device.clone() } else { m.friendly.clone() },
+            surface: surface.to_string(),
+            edge: s.edge,
+            mode: s.mode,
             width,
             height: (tallest + OVERSHOOT_MARGIN).ceil(),
             scale: m.scale,
@@ -531,7 +576,8 @@ impl Engine {
 
     /// Creates, updates or destroys overlay windows to match monitors + config.
     fn reconcile(&mut self) {
-        let mut desired: Vec<(String, Monitor, Layout, Vec<config::Notch>)> = Vec::new();
+        let mut desired: Vec<(String, Monitor, String, Edge, Layout, Vec<config::Notch>)> = Vec::new();
+        let surfaces = self.cfg.surface_list();
         for (i, m) in self.monitors.iter().enumerate() {
             let rule = self.rule_for(m, i);
             eprintln!(
@@ -545,18 +591,23 @@ impl Engine {
             if rule.is_some_and(|r| !r.enabled) {
                 continue;
             }
-            let label = format!("overlay-{}", m.device.trim_start_matches(['\\', '.']));
-            let (undocked, measured) = self
-                .shared
-                .lock()
-                .unwrap()
-                .overlays
-                .get(&label)
-                .map(|o| (o.undocked.clone(), o.measured.clone()))
-                .unwrap_or_default();
-            let layout = self.build_layout(&label, m, rule, &undocked, &measured);
-            let defs = self.cfg.resolve_layout(rule).0;
-            desired.push((label, m.clone(), layout, defs));
+            for (id, s) in &surfaces {
+                if !self.cfg.surface_on(rule, id, s) {
+                    continue;
+                }
+                let label = format!("overlay-{}-{id}", m.device.trim_start_matches(['\\', '.']));
+                let (undocked, measured) = self
+                    .shared
+                    .lock()
+                    .unwrap()
+                    .overlays
+                    .get(&label)
+                    .map(|o| (o.undocked.clone(), o.measured.clone()))
+                    .unwrap_or_default();
+                let layout = self.build_layout(&label, m, rule, id, &undocked, &measured);
+                let defs = self.cfg.resolve_surface(rule, id).0;
+                desired.push((label, m.clone(), id.clone(), s.edge, layout, defs));
+            }
         }
 
         let mut to_destroy = Vec::new();
@@ -571,20 +622,24 @@ impl Engine {
                 }
                 keep
             });
-            for (label, m, layout, defs) in desired {
+            for (label, m, surface, edge, layout, defs) in desired {
                 match sh.overlays.get_mut(&label) {
                     Some(o) => {
-                        let moved = o.monitor != m || o.layout.height != layout.height;
+                        let moved = o.monitor != m || o.layout.height != layout.height || o.edge != edge;
                         o.monitor = m.clone();
+                        o.edge = edge;
                         o.layout = layout.clone();
                         o.defs = defs;
-                        to_update.push((label, m, layout, moved, o.hwnd, o.expanded));
+                        let top = o.window_top();
+                        to_update.push((label, m, layout, moved, o.hwnd, o.expanded, top));
                     }
                     None => {
                         sh.overlays.insert(
                             label.clone(),
                             Overlay {
                                 monitor: m.clone(),
+                                surface,
+                                edge,
                                 layout: layout.clone(),
                                 regions: Vec::new(),
                                 hover: Hover::Idle,
@@ -609,10 +664,10 @@ impl Engine {
                 let _ = w.destroy();
             }
         }
-        for (label, m, mut layout, moved, hwnd, expanded) in to_update {
+        for (label, m, mut layout, moved, hwnd, expanded, top) in to_update {
             if let (true, Some(h)) = (moved, hwnd) {
                 let h_px = (layout.height * m.scale).ceil() as i32;
-                let _ = self.app.run_on_main_thread(move || win::place(h, m.left, m.top, m.width(), h_px));
+                let _ = self.app.run_on_main_thread(move || win::place(h, m.left, top, m.width(), h_px));
             }
             layout.expanded = expanded;
             let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://layout", layout);
@@ -647,7 +702,7 @@ impl Engine {
         if let Some(o) = self.shared.lock().unwrap().overlays.get_mut(label) {
             o.hwnd = Some(hwnd);
         }
-        let (x, y, w, h) = (m.left, m.top, m.width(), (layout.height * m.scale).ceil() as i32);
+        let (x, y, w, h) = (m.left, window_top(m, layout.edge, layout.height), m.width(), (layout.height * m.scale).ceil() as i32);
         self.app.run_on_main_thread(move || {
             let _ = window.set_ignore_cursor_events(true);
             win::guard_overlay_style(hwnd);
@@ -702,20 +757,21 @@ impl Engine {
 
     /// Repositions notches of overlays whose measured widths changed.
     fn process_relayouts(&mut self) {
-        let jobs: Vec<(String, Monitor, Vec<String>, HashMap<String, NotchWidth>)> = {
+        type Job = (String, Monitor, String, Vec<String>, HashMap<String, NotchWidth>);
+        let jobs: Vec<Job> = {
             let mut sh = self.shared.lock().unwrap();
             let labels: Vec<String> = sh.relayout.drain().collect();
             labels
                 .into_iter()
                 .filter_map(|l| {
                     let o = sh.overlays.get(&l)?;
-                    Some((l.clone(), o.monitor.clone(), o.undocked.clone(), o.measured.clone()))
+                    Some((l.clone(), o.monitor.clone(), o.surface.clone(), o.undocked.clone(), o.measured.clone()))
                 })
                 .collect()
         };
-        for (label, m, undocked, measured) in jobs {
+        for (label, m, surface, undocked, measured) in jobs {
             let idx = self.monitors.iter().position(|x| x == &m).unwrap_or(0);
-            let layout = self.build_layout(&label, &m, self.rule_for(&m, idx), &undocked, &measured);
+            let layout = self.build_layout(&label, &m, self.rule_for(&m, idx), &surface, &undocked, &measured);
             let notches = layout.notches.clone();
             if let Some(o) = self.shared.lock().unwrap().overlays.get_mut(&label) {
                 o.layout.notches = layout.notches;
@@ -743,7 +799,7 @@ impl Engine {
         }
         let windows = win::app_windows(ours);
         let g = &self.cfg.geometry;
-        let mut changed: Vec<(String, Monitor, Vec<String>)> = Vec::new();
+        let mut changed: Vec<(String, Monitor, String, Vec<String>)> = Vec::new();
         {
             let sh = self.shared.lock().unwrap();
             for (label, o) in sh.overlays.iter() {
@@ -762,8 +818,12 @@ impl Engine {
                     let x = if n.anchor == Anchor::Center { nl.x } else { notch_x(&sized, width, g, true) };
                     let (zx0, zx1) = (x - g.concave_radius, x + full + g.concave_radius);
                     let px = |v: f64| m.left + (v.clamp(0.0, width) * m.scale).round() as i32;
-                    let bottom = m.top + ((nl.height + 4.0) * m.scale).round() as i32;
-                    if let Some((class, r)) = windows.iter().find(|(_, r)| intersects(r, px(zx0), m.top, px(zx1), bottom)) {
+                    let depth = ((nl.height + 4.0) * m.scale).round() as i32;
+                    let (zy0, zy1) = match o.edge {
+                        Edge::Top => (m.top, m.top + depth),
+                        Edge::Bottom => (m.bottom - depth, m.bottom),
+                    };
+                    if let Some((class, r)) = windows.iter().find(|(_, r)| intersects(r, px(zx0), zy0, px(zx1), zy1)) {
                         if !o.undocked.contains(&n.id) {
                             eprintln!(
                                 "[statusnotch] {label}: '{}' undocked by {class} at ({},{})-({},{})",
@@ -776,14 +836,14 @@ impl Engine {
                     }
                 }
                 if undocked != o.undocked {
-                    changed.push((label.clone(), m.clone(), undocked));
+                    changed.push((label.clone(), m.clone(), o.surface.clone(), undocked));
                 }
             }
         }
-        for (label, m, undocked) in changed {
+        for (label, m, surface, undocked) in changed {
             let idx = self.monitors.iter().position(|x| x == &m).unwrap_or(0);
             let measured = self.shared.lock().unwrap().overlays.get(&label).map(|o| o.measured.clone()).unwrap_or_default();
-            let layout = self.build_layout(&label, &m, self.rule_for(&m, idx), &undocked, &measured);
+            let layout = self.build_layout(&label, &m, self.rule_for(&m, idx), &surface, &undocked, &measured);
             let notches = layout.notches.clone();
             {
                 let mut sh = self.shared.lock().unwrap();
@@ -811,9 +871,14 @@ impl Engine {
                 let m = &o.monitor;
                 let on_monitor = cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom;
                 let lx = (cx - m.left) as f64 / m.scale;
-                let ly = (cy - m.top) as f64 / m.scale;
+                // Distance from this surface's own edge.
+                let from_edge = match o.edge {
+                    Edge::Top => cy - m.top,
+                    Edge::Bottom => m.bottom - 1 - cy,
+                };
+                let ly = from_edge as f64 / m.scale;
                 let edge = (t.edge_px * m.scale).max(1.0);
-                let at_edge = on_monitor && ((cy - m.top) as f64) < edge;
+                let at_edge = on_monitor && (from_edge as f64) < edge;
                 // Anywhere on a notch's body (or the top edge above it) within its trigger
                 // zone, or the top-left hot corner.
                 let size = t.hot_corner;
@@ -821,7 +886,9 @@ impl Engine {
                 let tl = t.hot_top_left.unwrap_or(pos == "top_left");
                 let tr = t.hot_top_right.unwrap_or(pos == "top_right");
                 let edge = t.hot_top_edge.unwrap_or(pos == "top_edge");
+                // Hot corners belong to top surfaces.
                 let in_hot_corner = t.hot_corner_enabled
+                    && o.edge == Edge::Top
                     && ly >= 0.0
                     && ((tl && ly < size && lx >= 0.0 && lx < size)
                         || (tr && ly < size && lx >= o.layout.width - size && lx <= o.layout.width)

@@ -1,6 +1,11 @@
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, path::PathBuf, sync::mpsc::Sender};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    fs,
+    path::PathBuf,
+    sync::mpsc::Sender,
+};
 
 pub const DEFAULT_CONFIG: &str = include_str!("../default-config.toml");
 
@@ -23,6 +28,10 @@ pub struct Config {
     /// How notches on each side behave ([layout] model).
     #[serde(default)]
     pub notch: NotchCfg,
+    /// Bars and docks (`[surfaces.<id>]`). When absent, there is one: the top bar,
+    /// laid out by `[layout]` (or the legacy model).
+    #[serde(default)]
+    pub surfaces: Option<BTreeMap<String, SurfaceCfg>>,
     #[serde(default)]
     pub monitors: Vec<MonitorRule>,
     #[serde(default)]
@@ -291,6 +300,101 @@ fn default_panel_height() -> f64 {
     236.0
 }
 
+/// Which screen edge a surface hangs from.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Edge {
+    #[default]
+    Top,
+    Bottom,
+}
+
+/// `bar`: notches open into the full-width bar. `dock`: notches only; they grow in place.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SurfaceMode {
+    #[default]
+    Bar,
+    Dock,
+}
+
+/// Named surface heights (`[sizes]`): tiny is a bare hover handle.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SizeName {
+    Tiny,
+    #[default]
+    Small,
+    Medium,
+}
+
+/// `[surfaces.<id>]`: a bar or dock on every monitor (rules can override it).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SurfaceCfg {
+    pub enabled: bool,
+    pub edge: Edge,
+    pub mode: SurfaceMode,
+    /// Size while idle and while open (dock mode).
+    pub rest: SizeName,
+    pub open: SizeName,
+    /// Dock: shrink to the tiny handle while a window covers it.
+    pub shrink_when_covered: bool,
+    pub left: Vec<String>,
+    pub center: Vec<String>,
+    pub right: Vec<String>,
+    pub notch: Vec<String>,
+}
+
+impl Default for SurfaceCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            edge: Edge::Top,
+            mode: SurfaceMode::Bar,
+            rest: SizeName::Small,
+            open: SizeName::Small,
+            shrink_when_covered: true,
+            left: vec![],
+            center: vec![],
+            right: vec![],
+            notch: vec![],
+        }
+    }
+}
+
+impl SurfaceCfg {
+    pub fn layout(&self) -> LayoutCfg {
+        LayoutCfg { left: self.left.clone(), center: self.center.clone(), right: self.right.clone(), notch: self.notch.clone() }
+    }
+}
+
+/// A monitor rule's changes to one surface: switch it off, or give it its own lists.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SurfaceOverride {
+    pub enabled: Option<bool>,
+    pub left: Option<Vec<String>>,
+    pub center: Option<Vec<String>>,
+    pub right: Option<Vec<String>>,
+    pub notch: Option<Vec<String>>,
+}
+
+impl SurfaceOverride {
+    /// The monitor's own layout, if it has one (any list set).
+    pub fn layout(&self) -> Option<LayoutCfg> {
+        if self.left.is_none() && self.center.is_none() && self.right.is_none() && self.notch.is_none() {
+            return None;
+        }
+        Some(LayoutCfg {
+            left: self.left.clone().unwrap_or_default(),
+            center: self.center.clone().unwrap_or_default(),
+            right: self.right.clone().unwrap_or_default(),
+            notch: self.notch.clone().unwrap_or_default(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MonitorRule {
     #[serde(rename = "match", default = "default_match")]
@@ -301,8 +405,11 @@ pub struct MonitorRule {
     pub notches: Option<Vec<String>>,
     /// Legacy model: this monitor's own bar lists.
     pub bar: Option<Bar>,
-    /// This monitor's own layout; absent = follow the global `[layout]`.
+    /// This monitor's own layout; absent = follow the global `[layout]`. (v3 model.)
     pub layout: Option<LayoutCfg>,
+    /// Per-surface changes on this monitor.
+    #[serde(default)]
+    pub surfaces: HashMap<String, SurfaceOverride>,
 }
 
 /// Widget placement: a side for every shown widget, and which of them show as
@@ -391,6 +498,34 @@ impl Config {
             return (notches, bar);
         };
         let layout = rule.and_then(|r| r.layout.as_ref()).unwrap_or(global);
+        self.notches_and_bar(layout)
+    }
+
+    /// The surfaces every monitor gets, before monitor rules. Configs from before
+    /// surfaces existed have exactly one: the top bar.
+    pub fn surface_list(&self) -> Vec<(String, SurfaceCfg)> {
+        match &self.surfaces {
+            Some(map) => map.iter().map(|(id, s)| (id.clone(), s.clone())).collect(),
+            None => vec![("top".into(), SurfaceCfg::default())],
+        }
+    }
+
+    /// Whether surface `id` shows on a monitor with this rule.
+    pub fn surface_on(&self, rule: Option<&MonitorRule>, id: &str, s: &SurfaceCfg) -> bool {
+        s.enabled && rule.and_then(|r| r.surfaces.get(id)).and_then(|o| o.enabled) != Some(false)
+    }
+
+    /// The notches and bar groups of surface `id` on a monitor with this rule.
+    pub fn resolve_surface(&self, rule: Option<&MonitorRule>, id: &str) -> (Vec<Notch>, Bar) {
+        let Some(map) = &self.surfaces else { return self.resolve_layout(rule) };
+        let Some(s) = map.get(id) else {
+            return (Vec::new(), Bar { left: vec![], center: vec![], right: vec![], ..self.bar.clone() });
+        };
+        let own = rule.and_then(|r| r.surfaces.get(id)).and_then(|o| o.layout());
+        self.notches_and_bar(&own.unwrap_or_else(|| s.layout()))
+    }
+
+    fn notches_and_bar(&self, layout: &LayoutCfg) -> (Vec<Notch>, Bar) {
         let mut notches = Vec::new();
         let sides = [
             ("left", Anchor::Left, &layout.left, &self.notch.left),
@@ -496,9 +631,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_uses_the_layout_model() {
+    fn default_config_is_one_top_bar() {
         let cfg = fallback();
-        let (notches, bar) = cfg.resolve_layout(cfg.monitors.first());
+        assert_eq!(cfg.surface_list().len(), 1);
+        let (notches, bar) = cfg.resolve_surface(cfg.monitors.first(), "top");
         let ids: Vec<_> = notches.iter().map(|n| (n.id.as_str(), n.widgets.clone())).collect();
         assert_eq!(ids, [("center", vec!["clock".to_string()])]);
         assert!(notches[0].auto_width);
@@ -551,6 +687,63 @@ mod tests {
         let (notches, bar) = cfg.resolve_layout(cfg.monitors.first());
         assert!(notches.is_empty());
         assert_eq!(bar.right, ["temps"]);
+    }
+
+    #[test]
+    fn surfaces_resolve_with_monitor_overrides() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [surfaces.top]
+            left = ["menu"]
+            center = ["clock"]
+            notch = ["clock"]
+
+            [surfaces.bottom]
+            edge = "bottom"
+            mode = "dock"
+            rest = "tiny"
+            open = "medium"
+            center = ["tasks", "buttons#2"]
+            notch = ["tasks", "buttons#2"]
+
+            [[monitors]]
+            match = "ARZOPA"
+            surfaces = { bottom = { enabled = false }, top = { center = ["clock"], right = ["temps"], notch = [] } }
+            "#,
+        )
+        .unwrap();
+        let ids: Vec<_> = cfg.surface_list().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, ["bottom", "top"]);
+        let bottom = cfg.surfaces.as_ref().unwrap()["bottom"].clone();
+        assert_eq!((bottom.edge, bottom.mode, bottom.rest, bottom.open), (Edge::Bottom, SurfaceMode::Dock, SizeName::Tiny, SizeName::Medium));
+
+        let (notches, bar) = cfg.resolve_surface(None, "bottom");
+        assert_eq!(notches[0].widgets, ["tasks", "buttons#2"]);
+        assert_eq!(bar.center, ["tasks", "buttons#2"]);
+
+        // ARZOPA: no dock, and its own top layout.
+        let rule = cfg.monitors.first();
+        assert!(!cfg.surface_on(rule, "bottom", &bottom));
+        let (notches, bar) = cfg.resolve_surface(rule, "top");
+        assert!(notches.is_empty());
+        assert_eq!((bar.left.len(), bar.right.clone()), (0, vec!["temps".to_string()]));
+    }
+
+    #[test]
+    fn configs_without_surfaces_are_one_top_bar() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [layout]
+            center = ["clock"]
+            notch = ["clock"]
+            "#,
+        )
+        .unwrap();
+        let list = cfg.surface_list();
+        assert_eq!(list.len(), 1);
+        assert_eq!((list[0].0.as_str(), list[0].1.edge, list[0].1.mode), ("top", Edge::Top, SurfaceMode::Bar));
+        let (notches, _) = cfg.resolve_surface(None, "top");
+        assert_eq!(notches[0].widgets, ["clock"]);
     }
 
     #[test]

@@ -60,9 +60,13 @@ keyboard_width = 120
 padding = 18
 gap = 18
 
-# Where widgets sit, and which show as their own notch on their side.
+# Bars and docks. Each has an edge (top | bottom), a mode (bar: notches open into
+# the full-width bar | dock: notches grow in place) and its widgets: a side for
+# every shown widget, and which of them show as their own notch on that side.
 # A widget listed in no side isn't shown.
-[layout]
+[surfaces.top]
+edge = "top"
+mode = "bar"
 left = ["menu", "language"]
 center = ["clock"]
 right = ["tray", "weather", "media", "temps"]
@@ -88,7 +92,8 @@ offset = 0                # shift from the middle
 
 # Per-monitor rules; first match wins. match = "*", "primary", "#2" (index, left to right),
 # a device name, or part of the monitor's friendly name (e.g. "DELL").
-# enabled = false hides StatusNotch there; layout = { ... } gives a monitor its own layout.
+# enabled = false hides StatusNotch there; surfaces = { top = { left = [...], ... } } gives a
+# monitor its own layout for a surface, surfaces = { bottom = { enabled = false } } turns one off.
 [[monitors]]
 match = "*"
 
