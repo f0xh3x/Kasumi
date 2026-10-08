@@ -11,6 +11,7 @@ import {
   migrationOpsV3,
   migrationOpsV4,
   migrationOpsV5,
+  openSection,
   scope,
   type Op,
 } from "./editors";
@@ -99,6 +100,7 @@ function control(f: Field): HTMLElement | null {
       toast,
       rerender: () => render(),
       reload: load,
+      goto,
     });
   }
   if (f.kind === "autostart") {
@@ -274,6 +276,17 @@ function renderPage(page: Page): HTMLElement {
     last = card;
   }
   return content;
+}
+
+/** Shows `page` with its `section` dropdown open and scrolled into view. */
+function goto(page: string, section: string): void {
+  current = page;
+  if (section) openSection(`${page}:${section}`);
+  render();
+  const app = document.getElementById("app")!;
+  const target = section && app.querySelector<HTMLElement>(`[data-key="${CSS.escape(`${page}:${section}`)}"]`);
+  if (target) target.scrollIntoView({ block: "start" });
+  else app.querySelector(".content")!.scrollTop = 0;
 }
 
 function render(): void {

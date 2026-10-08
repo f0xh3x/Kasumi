@@ -401,3 +401,7 @@ body.maximized { border: 0; border-radius: 0; }
 
 /* A bar that is switched off. */
 .scope-chip.off { opacity: 0.5; }
+
+/* Placement chips also open their widget's settings. */
+.chip { cursor: pointer; }
+.chip:hover { background: #262626; }

@@ -19,6 +19,8 @@ export interface EditorCtx {
   rerender(): void;
   /** Re-reads config.toml (e.g. after applying a preset) and redraws. */
   reload(): Promise<void>;
+  /** Shows another page with one of its dropdowns open (by its section title). */
+  goto(page: string, section: string): void;
 }
 
 type Editor = (ctx: EditorCtx) => HTMLElement;
@@ -91,6 +93,22 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "buttons", label: "Buttons", icon: 0xe7e8 },
   { id: "launcher", label: "Launcher", icon: 0xe721 },
 ];
+
+/** The Widgets page section holding a widget's settings. */
+const SECTION: Record<string, string> = {
+  clock: "Clock",
+  temps: "PC temps",
+  weather: "Weather",
+  media: "Media",
+  tray: "Tray",
+  language: "Keyboard language",
+  menu: "Menu",
+  tasks: "Tasks",
+  quick: "Quick settings",
+  buttons: "Buttons",
+  launcher: "Launcher",
+};
+const widgetSection = (id: string) => SECTION[id.split("#")[0]] ?? "";
 
 /** A placed widget's type: instances are named `<type>#<n>`. */
 const typeOf = (id: string) => id.split("#")[0];
@@ -496,6 +514,9 @@ const placement: Editor = (ctx) => {
       if (bucket !== "disabled" && notchIn.notch.includes(id)) chip.append($("span", "chip-badge", "notch"));
       chip.draggable = true;
       chip.dataset.id = id;
+      // A click (not a drag) opens the widget's own settings.
+      chip.title = `${w.label} settings`;
+      chip.addEventListener("click", () => ctx.goto("widget-settings", widgetSection(id)));
       chip.addEventListener("dragstart", (e) => {
         dragging = id;
         e.dataTransfer?.setData("text/plain", id);
@@ -766,9 +787,14 @@ export function migrationOpsV4(cfg: Cfg): Op[] {
 // --- Collapsible ---------------------------------------------------------------
 
 const open = new Set<string>();
+/** Opens a dropdown (`page:title`) the next time it's drawn. */
+export function openSection(key: string): void {
+  open.add(key);
+}
 export function collapsible(title: string, body: HTMLElement, key: string, icon?: number): HTMLElement {
   const head = $("button", "sub-head", ...(icon ? [glyph(icon)] : []), $("span", "sub-title", title), glyph(0xe70d));
   const box = $("div", `sub${open.has(key) ? " open" : ""}`, head, body);
+  box.dataset.key = key;
   head.addEventListener("click", () => {
     box.classList.toggle("open");
     if (box.classList.contains("open")) open.add(key);

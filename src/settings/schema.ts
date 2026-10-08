@@ -215,16 +215,21 @@ export const pages: Page[] = [
       { title: "This monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorToggles" }] },
       { title: "Placement", fields: [{ kind: "custom", editor: "placement" }] },
       { title: "Own notches on this monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorNotches" }] },
+    ],
+  },
+  {
+    id: "widget-settings",
+    label: "Widgets",
+    icon: 0xe74c,
+    sections: [
       {
         title: "Clock",
-        scope: "global",
         collapsible: true,
         icon: 0xe823,
         fields: [{ kind: "custom", editor: "notch:clock" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("clock"), default: false }, { kind: "custom", editor: "clockFormat" }],
       },
       {
         title: "PC temps",
-        scope: "global",
         collapsible: true,
         icon: 0xe9ca,
         fields: [
@@ -243,7 +248,6 @@ export const pages: Page[] = [
       },
       {
         title: "Weather",
-        scope: "global",
         collapsible: true,
         icon: 0xe706,
         fields: [
@@ -265,7 +269,6 @@ export const pages: Page[] = [
       },
       {
         title: "Media",
-        scope: "global",
         collapsible: true,
         icon: 0xe8d6,
         fields: [
@@ -282,7 +285,6 @@ export const pages: Page[] = [
       },
       {
         title: "Launcher",
-        scope: "global",
         collapsible: true,
         icon: 0xe721,
         help: "A search icon that becomes the launcher's search field. Switch the launcher and its hotkey under General.",
@@ -290,7 +292,6 @@ export const pages: Page[] = [
       },
       {
         title: "Quick settings",
-        scope: "global",
         collapsible: true,
         icon: 0xe713,
         help: "Its panel has volume and brightness, battery and network, and shortcuts to Windows settings.",
@@ -313,14 +314,12 @@ export const pages: Page[] = [
       },
       {
         title: "Buttons",
-        scope: "global",
         collapsible: true,
         icon: 0xe7e8,
         fields: [{ kind: "custom", editor: "buttonsWidgets" }],
       },
       {
         title: "Tasks",
-        scope: "global",
         collapsible: true,
         icon: 0xe737,
         help: "Open apps. Click: switch to it (again: minimize). Middle click: close. Right click: its windows, new window, close all.",
@@ -376,7 +375,6 @@ export const pages: Page[] = [
       },
       {
         title: "Tray",
-        scope: "global",
         collapsible: true,
         icon: 0xe70d,
         fields: [
@@ -432,14 +430,12 @@ export const pages: Page[] = [
       },
       {
         title: "Keyboard language",
-        scope: "global",
         collapsible: true,
         icon: 0xe765,
         fields: [{ kind: "custom", editor: "notch:language" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("language"), default: false }],
       },
       {
         title: "Menu",
-        scope: "global",
         collapsible: true,
         icon: 0xe700,
         fields: [{ kind: "custom", editor: "notch:menu" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("menu"), default: false }, { kind: "custom", editor: "menuItems" }],
