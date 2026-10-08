@@ -185,9 +185,22 @@ pub fn set_activatable(h: isize, on: bool) {
 
 /// Brings an overlay to the foreground (we just got the hotkey or click, so we may).
 pub fn focus(h: isize) {
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, PeekMessageW, MSG, PM_NOREMOVE};
     unsafe {
         let w = hwnd(h);
-        if !SetForegroundWindow(w).as_bool() || GetForegroundWindow() != w {
+        // Windows only lets the app in front hand the foreground over: borrow its
+        // input queue for the switch (this thread needs a message queue for that).
+        let mut msg = MSG::default();
+        let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
+        let me = GetCurrentThreadId();
+        let front = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let attached = front != 0 && front != me && AttachThreadInput(me, front, true).as_bool();
+        let _ = SetForegroundWindow(w);
+        if attached {
+            let _ = AttachThreadInput(me, front, false);
+        }
+        if GetForegroundWindow() != w {
             use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_MENU};
             keybd_event(VK_MENU.0 as u8, 0, Default::default(), 0);
             keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);

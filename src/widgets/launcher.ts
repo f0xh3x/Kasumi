@@ -166,7 +166,7 @@ export function launcherPanel(opts: Record<string, unknown>, ctx: PanelContext):
   const root = el("launcher-panel", ...parts, list, hint);
   let rows = -1;
   const render = () => {
-    hint.textContent = S.query.trim() ? (S.results.length ? "" : "No apps found") : "Type to search apps";
+    hint.textContent = S.query.trim() && !S.results.length ? "No apps found" : "";
     hint.hidden = !hint.textContent;
     list.replaceChildren(
       ...S.results.map((a, i) => {

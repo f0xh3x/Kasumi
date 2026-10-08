@@ -321,6 +321,8 @@ pub fn overlay_for(app: &AppHandle, widget: &str) -> Option<String> {
 
 /// The window that was in front before the launcher took focus.
 static LAUNCHER_PREV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+/// The open launcher has had the focus (so losing it means the user went elsewhere).
+static LAUNCHER_FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Opens (`open` = Some(true)), closes or toggles the launcher. `label` is the
 /// overlay to use (its launcher widget was clicked); without one: on the monitor
@@ -360,6 +362,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
     if opening {
         LAUNCHER_PREV.store(win::foreground(), std::sync::atomic::Ordering::Relaxed);
     }
+    LAUNCHER_FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
     let handle = app.clone();
     let l = label.clone();
     let _ = app.run_on_main_thread(move || {
@@ -841,9 +844,14 @@ impl Engine {
                 }
                 keep
             });
-            for (label, m, surface, edge, layout, defs) in desired {
+            for (label, m, surface, edge, mut layout, defs) in desired {
                 match sh.overlays.get_mut(&label) {
                     Some(o) => {
+                        // The window grew to fit dropdowns (set_content_height): keep that,
+                        // or every rebuild would shrink it, resend the layout and grow it back.
+                        if o.monitor == m && o.edge == edge && layout.height < o.layout.height {
+                            layout.height = o.layout.height;
+                        }
                         let moved = o.monitor != m || o.layout.height != layout.height || o.edge != edge;
                         // An unchanged layout isn't sent again: the bar would rebuild its widgets for nothing.
                         let same = !moved && serde_json::to_value(&o.layout).ok() == serde_json::to_value(&layout).ok();
@@ -943,7 +951,24 @@ impl Engine {
         Ok(())
     }
 
+    /// The launcher closes when the focus moves elsewhere (Alt+Tab, Win+E, Start,
+    /// a click on another app...), even where the page doesn't see that happen.
+    fn close_launcher_on_focus_loss(&self) {
+        use std::sync::atomic::Ordering;
+        let open = {
+            let sh = self.shared.lock().unwrap();
+            sh.overlays.iter().find(|(_, o)| o.pinned).and_then(|(l, o)| Some((l.clone(), o.hwnd?)))
+        };
+        let Some((label, hwnd)) = open else { return };
+        if win::foreground() == hwnd {
+            LAUNCHER_FOCUSED.store(true, Ordering::Relaxed);
+        } else if LAUNCHER_FOCUSED.swap(false, Ordering::Relaxed) {
+            launcher_toggle(&self.app, Some(label), Some(false));
+        }
+    }
+
     fn update_fullscreen(&mut self) {
+        self.close_launcher_on_focus_loss();
         let ours: Vec<isize> = {
             let sh = self.shared.lock().unwrap();
             sh.overlays.values().filter_map(|o| o.hwnd).collect()
