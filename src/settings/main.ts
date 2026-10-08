@@ -236,12 +236,17 @@ function toggleSwitch(on: boolean, onChange: (on: boolean) => void) {
 function renderPage(page: Page): HTMLElement {
   const content = $("main", "content", $("h1", "page-title", page.label));
   let group: HTMLElement | null = null;
+  let last: HTMLElement | null = null;
   for (const s of page.sections) {
     // Widgets page: some sections belong to the Global view, some to a monitor's.
     if (s.scope === "global" && scope.monitor) continue;
     if (s.scope === "monitor" && !scope.monitor) continue;
     const rows = s.fields.map(control).filter((r): r is HTMLElement => r !== null);
     if (!rows.length) continue;
+    if (s.collapsible && s.attach && last) {
+      last.append(collapsible(s.title, $("div", "sub-body", ...rows), `${page.id}:${s.title}`, s.icon));
+      continue;
+    }
     if (s.collapsible) {
       // Consecutive collapsible sections share one card, one dropdown each.
       if (!group) {
@@ -256,6 +261,7 @@ function renderPage(page: Page): HTMLElement {
     if (s.help) card.append($("p", "card-help", s.help));
     card.append(...rows);
     content.append(card);
+    last = card;
   }
   return content;
 }

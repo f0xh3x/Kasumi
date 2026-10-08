@@ -268,8 +268,26 @@ pub fn to_screen(app: &AppHandle, label: &str, x: f64, y: f64) -> Option<(i32, i
 /// primary one), the surface showing the OSD's widget, else the top one. None
 /// while that overlay is hidden (fullscreen app).
 pub fn osd_target(app: &AppHandle) -> Option<String> {
-    let widget = app.state::<SharedConfig>().read().unwrap().osd.notch.clone();
-    overlay_for(app, &widget)
+    let (widget, surface) = {
+        let cfg = app.state::<SharedConfig>();
+        let cfg = cfg.read().unwrap();
+        (cfg.osd.notch.clone(), cfg.osd.surface.clone())
+    };
+    // The chosen bar on the monitor under the cursor, if it's there and has a notch.
+    let chosen = {
+        let (cx, cy) = win::cursor_pos()?;
+        let state = app.state::<SharedState>();
+        let sh = state.lock().unwrap();
+        let under = |o: &Overlay| {
+            let m = &o.monitor;
+            cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
+        };
+        sh.overlays
+            .iter()
+            .find(|(_, o)| under(o) && o.surface == surface && !o.hidden && !o.layout.notches.is_empty())
+            .map(|(l, _)| l.clone())
+    };
+    chosen.or_else(|| overlay_for(app, &widget))
 }
 
 /// On the monitor under the cursor (else the primary one), the overlay showing

@@ -231,6 +231,8 @@ pub struct Osd {
     pub keyboard: bool,
     /// Width of that keyboard-layout peek notch.
     pub keyboard_width: f64,
+    /// The surface (bar) whose notch grows into the pill: "top" or "bottom".
+    pub surface: String,
 }
 
 impl Default for Osd {
@@ -246,6 +248,7 @@ impl Default for Osd {
             brightness: true,
             keyboard: true,
             keyboard_width: 120.0,
+            surface: "top".into(),
         }
     }
 }
@@ -572,7 +575,19 @@ impl Config {
     /// surfaces existed have exactly one: the top bar.
     pub fn surface_list(&self) -> Vec<(String, SurfaceCfg)> {
         match &self.surfaces {
-            Some(map) => map.iter().map(|(id, s)| (id.clone(), s.clone())).collect(),
+            // The top bar hangs from the top edge and the bottom bar from the bottom one.
+            Some(map) => map
+                .iter()
+                .map(|(id, s)| {
+                    let mut s = s.clone();
+                    match id.as_str() {
+                        "top" => s.edge = Edge::Top,
+                        "bottom" => s.edge = Edge::Bottom,
+                        _ => {}
+                    }
+                    (id.clone(), s)
+                })
+                .collect(),
             None => vec![("top".into(), SurfaceCfg::default())],
         }
     }

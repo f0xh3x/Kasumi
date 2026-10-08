@@ -133,8 +133,18 @@ const sameLayout = (a: LayoutCfg, b: LayoutCfg) =>
   JSON.stringify([...a.notch].sort()) === JSON.stringify([...b.notch].sort());
 const sideOf = (l: LayoutCfg, id: string): Side | null => SIDES.find((s) => l[s].includes(id)) ?? null;
 
-/** The surface ids in the config (configs from before surfaces: just the top bar). */
-export const surfaceIds = (cfg: Cfg): string[] => (cfg.surfaces ? Object.keys(cfg.surfaces) : ["top"]);
+/** The top and bottom bars (always, on or off), then any other surfaces in the config. */
+export const surfaceIds = (cfg: Cfg): string[] => [
+  "top",
+  "bottom",
+  ...Object.keys(cfg.surfaces ?? {})
+    .filter((id) => id !== "top" && id !== "bottom")
+    .sort(),
+];
+
+/** Surfaces that exist and are switched on. */
+const shownSurfaces = (cfg: Cfg): string[] =>
+  surfaceIds(cfg).filter((id) => (id === "top" && !cfg.surfaces) || (cfg.surfaces?.[id] && cfg.surfaces[id].enabled !== false));
 
 /** A surface's global layout. */
 export const surfaceLayout = (cfg: Cfg, id: string): LayoutCfg =>
@@ -303,7 +313,7 @@ const scopeSelector: Editor = (ctx) => {
   const surfaces = $("div", "scope-bar");
   for (const id of ids) {
     const s = ctx.cfg.surfaces?.[id] ?? {};
-    const b = $("button", `scope-chip${scope.surface === id ? " active" : ""}`, glyph(surfaceIcon(s)), surfaceName(id, s));
+    const b = $("button", `scope-chip${scope.surface === id ? " active" : ""}${s.enabled === false || (!ctx.cfg.surfaces?.[id] && id !== "top") ? " off" : ""}`, glyph(surfaceIcon(id)), surfaceName(id, s));
     b.addEventListener("click", () => {
       scope.surface = id;
       ctx.rerender();
@@ -313,63 +323,39 @@ const scopeSelector: Editor = (ctx) => {
   return $("div", "stack-tight", surfaces, bar, $("p", "card-help", help));
 };
 
-/** Adds a dock (or another bar), or removes the selected one. */
+/** "Show the top / bottom bar": switching the bottom bar on the first time makes it a dock. */
 const surfaceManager: Editor = (ctx) => {
-  const ids = surfaceIds(ctx.cfg);
-  const box = $("div", "stack-tight");
   const cur = scope.surface;
-  const s = ctx.cfg.surfaces?.[cur] ?? {};
-  box.append(
-    row(
-      `Show the ${surfaceName(cur, s).toLowerCase()}`,
-      undefined,
-      sw(s.enabled !== false, (on) => ctx.saveMany([{ path: ["surfaces", cur, "enabled"], value: on }])),
-    ),
-  );
-  const actions = $("div", "preset-actions");
-  if (!ids.includes("bottom")) {
-    const add = $("button", "button", "Add a dock") as HTMLButtonElement;
-    add.addEventListener("click", async () => {
-      await ctx.saveMany([
-        { path: ["surfaces", "bottom", "edge"], value: "bottom" },
-        { path: ["surfaces", "bottom", "mode"], value: "dock" },
-        { path: ["surfaces", "bottom", "rest"], value: "small" },
-        { path: ["surfaces", "bottom", "open"], value: "medium" },
-        ...LISTS.map((k) => ({ path: ["surfaces", "bottom", k], value: [] as string[] })),
-      ]);
-      scope.surface = "bottom";
-      ctx.rerender();
-    });
-    actions.append(add);
-  }
-  if (cur !== "top" && ids.length > 1) {
-    const remove = $("button", "button", "Remove") as HTMLButtonElement;
-    let armed = false;
-    remove.addEventListener("click", async () => {
-      if (!armed) {
-        armed = true;
-        remove.textContent = "Click again to remove";
-        remove.classList.add("danger");
-        return;
+  const s = ctx.cfg.surfaces?.[cur];
+  const on = !!s && s.enabled !== false;
+  return row(
+    `Show the ${surfaceName(cur, s).toLowerCase()}`,
+    cur === "bottom" ? "Starts as a dock: its notches grow in place when hovered (Style below)." : undefined,
+    sw(on, (v) => {
+      if (v && !s) {
+        const dock = cur === "bottom";
+        ctx.saveMany([
+          { path: ["surfaces", cur, "mode"], value: dock ? "dock" : "bar" },
+          ...(dock
+            ? [
+                { path: ["surfaces", cur, "rest"], value: "small" },
+                { path: ["surfaces", cur, "open"], value: "medium" },
+              ]
+            : []),
+          ...LISTS.map((k) => ({ path: ["surfaces", cur, k], value: [] as string[] })),
+        ]);
+      } else {
+        ctx.saveMany([{ path: ["surfaces", cur, "enabled"], value: v }]);
       }
-      await ctx.saveMany([{ path: ["surfaces", cur], value: null }]);
-      scope.surface = "top";
-      ctx.rerender();
-    });
-    actions.append(remove);
-  }
-  if (actions.children.length) box.append(row("Bars and docks", "A dock sits at the bottom by default; drag widgets into it below.", actions));
-  return box;
+    }),
+  );
 };
 
-/** "Top bar", "Dock", ... for a surface. */
-export function surfaceName(id: string, s: any): string {
-  const edge = s?.edge ?? (id === "bottom" ? "bottom" : "top");
-  const kind = s?.mode === "dock" ? "dock" : "bar";
-  if (id === "top" || id === "bottom") return `${edge === "top" ? "Top" : "Bottom"} ${kind}`;
-  return id;
+/** "Top bar", "Bottom bar" (any other surface: its id). */
+export function surfaceName(id: string, _s?: any): string {
+  return id === "top" ? "Top bar" : id === "bottom" ? "Bottom bar" : id;
 }
-const surfaceIcon = (s: any) => (s?.edge === "bottom" ? 0xe70d : 0xe70e); // chevron down / up
+const surfaceIcon = (id: string) => (id === "bottom" ? 0xe70d : 0xe70e); // chevron down / up
 
 /** Per-monitor: StatusNotch on/off, custom layout, follow global while unchanged. */
 const monitorToggles: Editor = (ctx) => {
@@ -438,7 +424,9 @@ const placement: Editor = (ctx) => {
     ["left", "Left"],
     ["center", "Center"],
     ["right", "Right"],
-    ...ids.filter((s) => s !== cur).map((s): [Bucket, string] => [`surface:${s}`, `In the ${surfaceName(s, ctx.cfg.surfaces?.[s]).toLowerCase()}`]),
+    ...shownSurfaces(ctx.cfg)
+      .filter((s) => s !== cur)
+      .map((s): [Bucket, string] => [`surface:${s}`, `In the ${surfaceName(s).toLowerCase()}`]),
     ["disabled", "Disabled"],
   ];
   const listOf = (bucket: Bucket): string[] => {
@@ -524,17 +512,39 @@ const placement: Editor = (ctx) => {
         side.splice(Math.min(index, side.length), 0, id);
       }
       const changed = Object.fromEntries(Object.entries(next).filter(([s, l]) => !sameLayout(l, ls[s])));
+      // Global view: a widget newly put on (or taken off) a bar is put on (taken off)
+      // that bar on monitors with their own layout too; reordering leaves them alone.
+      let target = base;
+      if (!scope.monitor && Array.isArray(base.monitors)) {
+        target = structuredClone(base);
+        for (const r of target.monitors) {
+          for (const [s, o] of Object.entries<any>(r.surfaces ?? {})) {
+            if (!hasLists(o) || !next[s]) continue;
+            const was = sideOf(ls[s], id);
+            const now = sideOf(next[s], id);
+            if (was && !now) for (const k of LISTS) if (Array.isArray(o[k])) o[k] = o[k].filter((x: string) => x !== id);
+            if (!was && now && !LISTS.slice(0, 3).some((k) => (o[k] ?? []).includes(id))) {
+              o[now] = [...(o[now] ?? []), id];
+              if (next[s].notch.includes(id)) o.notch = [...(o.notch ?? []), id];
+            }
+          }
+        }
+      }
       ctx.saveMany([
-        ...layoutDiffOps(ctx.cfg, base),
+        ...layoutDiffOps(ctx.cfg, target),
         ...(wasOff && bucket !== "disabled" ? [{ path: ["widgets", id, "enabled"], value: true }] : []),
-        ...layoutsOps(base, changed),
+        ...layoutsOps(target, changed),
       ]);
     });
     root.append(col);
   }
+  const own = (ctx.cfg.monitors ?? [])
+    .filter((r: any) => hasLists(r.surfaces?.[cur]))
+    .map((r: any) => r.match);
   const help = scope.monitor
     ? "Drag widgets between sides and bars; Disabled hides a widget on this monitor's bar."
-    : "Drag widgets between sides and bars — a widget lives in one place. Disabled takes it off this bar (and switches it off when it's nowhere else). Widgets marked “notch” show as their own notch on their side.";
+    : "Drag widgets between sides and bars — a widget lives in one place. Disabled switches it off everywhere. Widgets marked “notch” show as their own notch on their side." +
+      (own.length ? ` Adding or removing a widget here also applies to ${own.join(", ")}, which have their own layout of this bar.` : "");
   return $("div", "", root, $("p", "card-help", help));
 };
 

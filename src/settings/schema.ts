@@ -34,7 +34,7 @@ const surfacePath =
   (key: string, dockOnly = false): PathSpec =>
   (cfg) => {
     const s = cfg.surfaces?.[scope.surface];
-    if (!s || (dockOnly && s.mode !== "dock")) return null;
+    if (!s || s.enabled === false || (dockOnly && s.mode !== "dock")) return null;
     return ["surfaces", scope.surface, key];
   };
 
@@ -55,6 +55,8 @@ export interface Section {
   icon?: number;
   /** Widgets page: only in the Global view, or only when a monitor is selected. */
   scope?: "global" | "monitor";
+  /** A collapsible section shown inside the card before it (not in its own group). */
+  attach?: boolean;
 }
 
 export interface Page {
@@ -85,6 +87,28 @@ export const pages: Page[] = [
             path: ["general", "hide_in_fullscreen"],
             default: true,
           },
+          {
+            kind: "toggle",
+            label: "Hide the Windows taskbar",
+            help: "Hidden while StatusNotch runs and restored when it quits. The Win key and Start menu keep working. Turn off Windhawk mods that show the taskbar (e.g. “Taskbar auto-hide when maximized”).",
+            path: ["shell", "hide_taskbar"],
+            default: false,
+          },
+        ],
+      },
+      {
+        title: "Launcher",
+        help: "Search and start apps. With the Launcher widget placed it opens from there; without it the hotkey opens it from the middle of the bottom (or top) bar.",
+        fields: [
+          { kind: "toggle", label: "Launcher", path: ["launcher", "enabled"], default: true },
+          {
+            kind: "text",
+            label: "Hotkey",
+            help: "Like Win+Alt+Space or Ctrl+Alt+K. If the launcher doesn't open, another app has the combination (the log says so). The Win key alone stays Windows' Start menu.",
+            path: ["launcher", "hotkey"],
+            default: "Win+Alt+Space",
+            placeholder: "Win+Alt+Space",
+          },
         ],
       },
       {
@@ -112,36 +136,26 @@ export const pages: Page[] = [
     sections: [
       { title: "Layout for", fields: [{ kind: "custom", editor: "scopeSelector" }] },
       {
-        title: "Bar & dock",
+        title: "Bar",
         scope: "global",
-        help: "A bar opens into a full-width bar; a dock's notches grow in place.",
+        fields: [{ kind: "custom", editor: "surfaceManager" }],
+      },
+      {
+        title: "Bar settings",
+        scope: "global",
+        collapsible: true,
+        attach: true,
+        icon: 0xe713,
         fields: [
-          { kind: "custom", editor: "surfaceManager" },
-          {
-            kind: "toggle",
-            label: "Hide the Windows taskbar",
-            help: "Hidden while StatusNotch runs and restored when it quits. The Win key and Start menu keep working. Turn off Windhawk mods that show the taskbar (e.g. “Taskbar auto-hide when maximized”).",
-            path: ["shell", "hide_taskbar"],
-            default: false,
-          },
           {
             kind: "select",
             label: "Style",
+            help: "A status bar opens into a full-width bar; a dock's notches grow in place.",
             path: surfacePath("mode"),
             default: "bar",
             options: [
               { value: "bar", label: "Status bar" },
               { value: "dock", label: "Dock" },
-            ],
-          },
-          {
-            kind: "select",
-            label: "Edge",
-            path: surfacePath("edge"),
-            default: "top",
-            options: [
-              { value: "top", label: "Top" },
-              { value: "bottom", label: "Bottom" },
             ],
           },
           {
@@ -178,61 +192,8 @@ export const pages: Page[] = [
         ],
       },
       { title: "This monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorToggles" }] },
-      {
-        title: "Sizes",
-        scope: "global",
-        collapsible: true,
-        icon: 0xe740,
-        help: "Heights of the named sizes docks rest and open at.",
-        fields: [
-          { kind: "slider", label: "Tiny", help: "A bare handle (no content).", path: ["sizes", "tiny"], default: 12, min: 4, max: 24, step: 1, unit: "px" },
-          { kind: "slider", label: "Small", path: ["sizes", "small"], default: 30, min: 20, max: 48, step: 1, unit: "px" },
-          { kind: "slider", label: "Medium", path: ["sizes", "medium"], default: 45, min: 30, max: 72, step: 1, unit: "px" },
-          { kind: "slider", label: "Large", path: ["sizes", "large"], default: 60, min: 40, max: 96, step: 1, unit: "px" },
-        ],
-      },
       { title: "Placement", fields: [{ kind: "custom", editor: "placement" }] },
       { title: "Own notches on this monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorNotches" }] },
-      {
-        title: "Notches",
-        scope: "global",
-        help: "Widgets with “Own notch” on show as a notch on their side while the bar is closed.",
-        fields: [
-          {
-            kind: "toggle",
-            label: "Merge neighbouring notches",
-            help: "Notch widgets on the same side share one notch; when the bar opens they spread out to their places.",
-            path: ["notch", "merge"],
-            default: true,
-          },
-          {
-            kind: "toggle",
-            label: "Combine overlapping notches",
-            help: "Notches that would touch or overlap (e.g. on a narrow, vertical monitor) are drawn as one; widgets keep their places.",
-            path: ["notch", "combine_overlapping"],
-            default: true,
-          },
-          { kind: "toggle", label: "Left: sit in the corner", path: ["notch", "left", "hug"], default: true },
-          {
-            kind: "toggle",
-            label: "Left: move aside for windows",
-            help: "Slide to the offset while a maximized window's caption buttons are there (back in the corner while the bar is open).",
-            path: ["notch", "left", "avoid_windows"],
-            default: true,
-          },
-          { kind: "number", label: "Left: offset", help: "From the left edge, when moved aside or not in the corner.", path: ["notch", "left", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
-          { kind: "toggle", label: "Right: sit in the corner", path: ["notch", "right", "hug"], default: true },
-          {
-            kind: "toggle",
-            label: "Right: move aside for windows",
-            help: "Slide to the offset while a maximized window's caption buttons are there (back in the corner while the bar is open).",
-            path: ["notch", "right", "avoid_windows"],
-            default: true,
-          },
-          { kind: "number", label: "Right: offset", help: "From the right edge, when moved aside or not in the corner.", path: ["notch", "right", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
-          { kind: "number", label: "Center: offset", help: "Shift from the middle.", path: ["notch", "center", "offset"], default: 0, min: -2000, max: 2000, step: 1, unit: "px" },
-        ],
-      },
       {
         title: "Clock",
         scope: "global",
@@ -303,19 +264,8 @@ export const pages: Page[] = [
         scope: "global",
         collapsible: true,
         icon: 0xe721,
-        help: "Search and start apps. With the Launcher widget placed it opens from there (its icon becomes the search field); without it the hotkey opens it from the middle of the dock or bar.",
-        fields: [
-          { kind: "toggle", label: "Launcher", path: ["launcher", "enabled"], default: true },
-          {
-            kind: "text",
-            label: "Hotkey",
-            help: "Like Win+Alt+Space or Ctrl+Alt+K. If the launcher doesn't open, another app has the combination (the log says so). The Win key alone stays Windows' Start menu.",
-            path: ["launcher", "hotkey"],
-            default: "Win+Alt+Space",
-            placeholder: "Win+Alt+Space",
-          },
-          { kind: "custom", editor: "notch:launcher" },
-        ],
+        help: "A search icon that becomes the launcher's search field. Switch the launcher and its hotkey under General.",
+        fields: [{ kind: "custom", editor: "notch:launcher" }],
       },
       {
         title: "Quick settings",
@@ -419,6 +369,52 @@ export const pages: Page[] = [
     ],
   },
   {
+    id: "notches",
+    label: "Notches",
+    icon: 0xe8fd,
+    sections: [
+      {
+        title: "Notches",
+        help: "Widgets with “Own notch” on show as a notch on their side while the bar is closed.",
+        fields: [
+          {
+            kind: "toggle",
+            label: "Merge neighbouring notches",
+            help: "Notch widgets on the same side share one notch; when the bar opens they spread out to their places.",
+            path: ["notch", "merge"],
+            default: true,
+          },
+          {
+            kind: "toggle",
+            label: "Combine overlapping notches",
+            help: "Notches that would touch or overlap (e.g. on a narrow, vertical monitor) are drawn as one; widgets keep their places.",
+            path: ["notch", "combine_overlapping"],
+            default: true,
+          },
+          { kind: "toggle", label: "Left: sit in the corner", path: ["notch", "left", "hug"], default: true },
+          {
+            kind: "toggle",
+            label: "Left: move aside for windows",
+            help: "Slide to the offset while a maximized window's caption buttons are there (back in the corner while the bar is open).",
+            path: ["notch", "left", "avoid_windows"],
+            default: true,
+          },
+          { kind: "number", label: "Left: offset", help: "From the left edge, when moved aside or not in the corner.", path: ["notch", "left", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
+          { kind: "toggle", label: "Right: sit in the corner", path: ["notch", "right", "hug"], default: true },
+          {
+            kind: "toggle",
+            label: "Right: move aside for windows",
+            help: "Slide to the offset while a maximized window's caption buttons are there (back in the corner while the bar is open).",
+            path: ["notch", "right", "avoid_windows"],
+            default: true,
+          },
+          { kind: "number", label: "Right: offset", help: "From the right edge, when moved aside or not in the corner.", path: ["notch", "right", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
+          { kind: "number", label: "Center: offset", help: "Shift from the middle.", path: ["notch", "center", "offset"], default: 0, min: -2000, max: 2000, step: 1, unit: "px" },
+        ],
+      },
+    ],
+  },
+  {
     id: "appearance",
     label: "Appearance",
     icon: 0xe771,
@@ -450,6 +446,16 @@ export const pages: Page[] = [
           { kind: "slider", label: "Panel corners", path: ["geometry", "panel_corner_radius"], default: 12, min: 0, max: 30, step: 1, unit: "px" },
           { kind: "slider", label: "Side padding", path: ["bar", "padding"], default: 18, min: 0, max: 60, step: 1, unit: "px" },
           { kind: "slider", label: "Gap between widgets", path: ["bar", "gap"], default: 18, min: 4, max: 40, step: 1, unit: "px" },
+        ],
+      },
+      {
+        title: "Bar sizes",
+        help: "Heights of the named sizes bars and docks rest and open at.",
+        fields: [
+          { kind: "slider", label: "Tiny", help: "A bare handle (no content).", path: ["sizes", "tiny"], default: 12, min: 4, max: 24, step: 1, unit: "px" },
+          { kind: "slider", label: "Small", path: ["sizes", "small"], default: 30, min: 20, max: 48, step: 1, unit: "px" },
+          { kind: "slider", label: "Medium", path: ["sizes", "medium"], default: 45, min: 30, max: 72, step: 1, unit: "px" },
+          { kind: "slider", label: "Large", path: ["sizes", "large"], default: 60, min: 40, max: 96, step: 1, unit: "px" },
         ],
       },
     ],
@@ -512,6 +518,17 @@ export const pages: Page[] = [
         title: "On-screen display",
         fields: [
           { kind: "toggle", label: "Show OSD", path: ["osd", "enabled"], default: true },
+          {
+            kind: "select",
+            label: "Show on",
+            help: "The bar whose notch grows into the pill (on the monitor under the cursor).",
+            path: ["osd", "surface"],
+            default: "top",
+            options: [
+              { value: "top", label: "Top bar" },
+              { value: "bottom", label: "Bottom bar" },
+            ],
+          },
           { kind: "slider", label: "Duration", path: ["osd", "duration_ms"], default: 1500, min: 500, max: 4000, step: 100, unit: "ms" },
           { kind: "slider", label: "Pill width", path: ["osd", "width"], default: 230, min: 160, max: 400, step: 5, unit: "px" },
           { kind: "slider", label: "Pill height", path: ["osd", "height"], default: 34, min: 24, max: 48, step: 1, unit: "px" },
