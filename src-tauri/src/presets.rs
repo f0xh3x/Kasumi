@@ -23,6 +23,63 @@ fn dir() -> PathBuf {
     config::dir().join("presets")
 }
 
+/// Presets that come with StatusNotch (made from the author's, minus personal bits).
+const SHIPPED: &[(&str, &str)] = &[
+    ("Classic status bar", include_str!("../presets/Classic status bar.toml")),
+    ("Classic taskbar", include_str!("../presets/Classic taskbar.toml")),
+    ("Modern", include_str!("../presets/Modern.toml")),
+];
+
+/// Adds the shipped presets that weren't added before (once each: one the user
+/// deleted or changed stays that way). Listed in `presets/.shipped`.
+pub fn install_shipped() {
+    let marker = dir().join(".shipped");
+    let done = fs::read_to_string(&marker).unwrap_or_default();
+    let mut added: Vec<&str> = done.lines().collect();
+    let mut changed = false;
+    for (name, text) in SHIPPED {
+        if added.contains(name) {
+            continue;
+        }
+        let path = dir().join(format!("{name}.toml"));
+        if !path.exists() {
+            if fs::create_dir_all(dir()).is_err() || fs::write(&path, text).is_err() {
+                continue;
+            }
+            eprintln!("[statusnotch] added preset {name}");
+        }
+        added.push(name);
+        changed = true;
+    }
+    if changed {
+        let _ = fs::write(marker, added.join("
+"));
+    }
+}
+
+/// Settings that are yours rather than a setup's: when a preset doesn't set them
+/// (shipped ones don't), applying it keeps the ones in use.
+const PERSONAL: &[(&str, &str)] =
+    &[("tasks", "pins"), ("weather", "location"), ("weather", "latitude"), ("weather", "longitude")];
+
+/// A preset's text with the personal settings it lacks taken from `current`.
+fn with_personal(preset: &str, current: &str) -> String {
+    use toml_edit::DocumentMut;
+    let (Ok(mut doc), Ok(cur)) = (preset.parse::<DocumentMut>(), current.parse::<DocumentMut>()) else {
+        return preset.to_string();
+    };
+    let mut changed = false;
+    for (widget, key) in PERSONAL {
+        let Some(value) = cur.get("widgets").and_then(|w| w.get(widget)).and_then(|t| t.get(key)) else { continue };
+        if doc.get("widgets").and_then(|w| w.get(widget)).and_then(|t| t.get(key)).is_some() {
+            continue;
+        }
+        doc["widgets"][widget][key] = value.clone();
+        changed = true;
+    }
+    if changed { doc.to_string() } else { preset.to_string() }
+}
+
 /// The file for a preset name; the name becomes the file name, so it must be one.
 fn file(name: &str) -> Result<PathBuf, String> {
     let name = name.trim();
@@ -42,6 +99,8 @@ fn normalized(bytes: &[u8]) -> String {
 pub async fn presets_list() -> Result<Vec<Preset>, String> {
     let current = normalized(&fs::read(config::path()).unwrap_or_default());
     let Ok(entries) = fs::read_dir(dir()) else { return Ok(Vec::new()) };
+    // In use = what applying it would give (with the personal settings kept).
+    let same = |bytes: &[u8]| normalized(with_personal(&normalized(bytes), &current).as_bytes()) == current;
     let mut out: Vec<Preset> = entries
         .flatten()
         .filter_map(|e| {
@@ -56,7 +115,7 @@ pub async fn presets_list() -> Result<Vec<Preset>, String> {
                 .ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_millis() as u64);
-            let current = fs::read(&p).is_ok_and(|b| normalized(&b) == current);
+            let current = fs::read(&p).is_ok_and(|b| same(&b));
             Some(Preset { name, modified, current })
         })
         .collect();
@@ -72,11 +131,12 @@ pub async fn preset_save(name: String) -> Result<(), String> {
     fs::copy(config::path(), target).map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Makes a preset the config in use. The setup it replaces is kept as
-/// config.before-preset.toml, in case it wasn't saved.
+/// Makes a preset the config in use (keeping your pins and weather city if it
+/// has none). The setup it replaces is kept as config.before-preset.toml.
 #[tauri::command]
 pub async fn preset_apply(name: String) -> Result<(), String> {
     let text = fs::read_to_string(file(&name)?).map_err(|e| e.to_string())?;
+    let text = with_personal(&text, &fs::read_to_string(config::path()).unwrap_or_default());
     toml::from_str::<config::Config>(&text).map_err(|e| format!("This preset isn't a valid config: {e}"))?;
     let path = config::path();
     let _ = fs::copy(&path, config::dir().join("config.before-preset.toml"));
@@ -110,5 +170,42 @@ mod tests {
             assert!(file(bad).is_err(), "{bad:?} should be rejected");
         }
         assert_eq!(file("  Gaming ").unwrap().file_name().unwrap(), "Gaming.toml");
+    }
+
+    #[test]
+    fn shipped_presets_are_valid_and_impersonal() {
+        for (name, text) in SHIPPED {
+            let cfg: config::Config = toml::from_str(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let raw: toml::Table = toml::from_str(text).unwrap();
+            let widgets = raw.get("widgets").and_then(|w| w.as_table());
+            assert!(widgets.and_then(|w| w.get("tasks")).and_then(|t| t.get("pins")).is_none(), "{name} has pins");
+            assert!(widgets.and_then(|w| w.get("weather")).and_then(|t| t.get("location")).is_none(), "{name} has a city");
+            assert!(cfg.monitors.iter().all(|m| m.matcher == "*"), "{name} has monitor rules");
+        }
+    }
+
+    #[test]
+    fn applying_keeps_personal_settings_a_preset_lacks() {
+        let current = "[widgets.tasks]
+pins = [\"a.exe\"]
+
+[widgets.weather]
+location = \"Kaunas\"
+latitude = 54.9
+longitude = 23.9
+";
+        let preset = "[widgets.weather]
+units = \"metric\"
+";
+        let out: toml::Table = toml::from_str(&with_personal(preset, current)).unwrap();
+        assert_eq!(out["widgets"]["tasks"]["pins"][0].as_str(), Some("a.exe"));
+        assert_eq!(out["widgets"]["weather"]["location"].as_str(), Some("Kaunas"));
+        assert_eq!(out["widgets"]["weather"]["units"].as_str(), Some("metric"));
+        // A preset that sets them wins.
+        let own = "[widgets.tasks]
+pins = []
+";
+        let out: toml::Table = toml::from_str(&with_personal(own, current)).unwrap();
+        assert_eq!(out["widgets"]["tasks"]["pins"].as_array().map(|a| a.len()), Some(0));
     }
 }

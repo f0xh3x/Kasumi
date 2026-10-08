@@ -59,7 +59,7 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src-tauri/src/osd/` | `mod.rs` low-level keyboard hook + keyboard-layout watch; `volume.rs` Core Audio; `brightness.rs` WMI |
 | `src-tauri/src/actions.rs` | `run_action(action, target)`: open, settings, sleep, hibernate, lock, restart, shutdown, sign_out, open_config, open_log, open_config_folder |
 | `src-tauri/src/settings.rs` | Opens the settings window; `monitors_list`, `lhm_sensors`, `system_time_format`, `app_version` |
-| `src-tauri/src/presets.rs` | Presets = full config copies in `%APPDATA%\StatusNotch\presets\<name>.toml` |
+| `src-tauri/src/presets.rs` | Presets = full config copies in `%APPDATA%\StatusNotch\presets\<name>.toml`. Shipped presets (`src-tauri/presets/*.toml`, the author's minus monitor rules, pins and weather city) are added once each on start (`presets/.shipped`). Applying a preset keeps your pins and weather city if it has none |
 | `src-tauri/src/win.rs` | Win32 helpers: monitors/DPI, overlay styles, z-order, app windows (DWM frame bounds), fullscreen detection, keyboard layouts |
 | `src-tauri/src/{tray,autostart,instance,logfile}.rs` | Own tray icon menu, Run-key autostart, single instance, release log → `%APPDATA%\StatusNotch\statusnotch.log` |
 | `src/main.ts` | `Overlay`: builds DOM from a `Layout`, springs, drops (notches/panels), OSD, keyboard peek, glide animation, region reporting, notch width measuring |
