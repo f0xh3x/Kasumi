@@ -109,6 +109,9 @@ class Overlay {
   private groups: Partial<Record<"left" | "center" | "right", HTMLDivElement>> = {};
   // Notch widths follow their content: measured here, positioned by Rust.
   private notchObserver = new ResizeObserver(() => this.scheduleMeasure());
+  // And now and then regardless: a missed resize would leave a notch the wrong
+  // width (content spilling out of it). Cheap: only sends when a width changed.
+  readonly remeasure = window.setInterval(() => this.checkWidths(), 2000);
   private measureTimer = 0;
   private lastWidths = "";
 
@@ -450,9 +453,50 @@ class Overlay {
     content.append(this.osdEl);
   }
 
+  /** At most every 80 ms (a widget that keeps resizing mustn't postpone it forever). */
   private scheduleMeasure(): void {
-    clearTimeout(this.measureTimer);
-    this.measureTimer = window.setTimeout(() => this.measureNotches(), 80);
+    if (this.measureTimer) return;
+    this.measureTimer = window.setTimeout(() => {
+      this.measureTimer = 0;
+      this.measureNotches();
+    }, 80);
+  }
+
+  /** A notch slot's content width as laid out now: full, and without the widgets
+   *  that hide under windows. `pad`: its curves and padding. */
+  private slotWidths(n: NotchLayout, slot: HTMLElement, pad: number): [number, number] {
+    const L = this.layout!;
+    const hides = (name: string) => L.widgets[name]?.hide_when_maximized === true;
+    const gap = parseFloat(getComputedStyle(slot).columnGap) || 0;
+    const total = pad + this.edgeExtra(n);
+    const span = (els: HTMLElement[]) =>
+      els.length ? Math.ceil(els.reduce((sum, k) => sum + k.offsetWidth, 0) + gap * (els.length - 1) + total) : 0;
+    // Widgets with nothing to show (e.g. media while idle) take no room.
+    const kids = this.notchEls.filter((e) => e.slot === slot && e.el.offsetWidth > 0);
+    return [span(kids.map((k) => k.el)), span(kids.filter((k) => !hides(k.name)).map((k) => k.el))];
+  }
+
+  /** Cheap check (reads only, nothing restyled): do the notches still fit their
+   *  content as last reported? A missed resize would otherwise leave a notch the
+   *  wrong width, its content spilling out. */
+  private checkWidths(): void {
+    const L = this.layout;
+    if (!L || !this.lastWidths || this.running) return;
+    const last = JSON.parse(this.lastWidths) as Record<string, { full: number; open: number }>;
+    const dock = L.mode === "dock";
+    const open = dock && this.expanded;
+    const h = open ? L.openHeight : L.restHeight;
+    const pad = 2 * L.geometry.notchCornerRadius * (dock ? h / L.geometry.notchHeight : 1) + 2 * NOTCH_PAD;
+    for (const n of L.notches) {
+      const slot = this.drops.find((d) => d.key === `notch:${n.id}`)?.slot;
+      if (!slot) continue;
+      const [now] = this.slotWidths(n, slot, pad);
+      const was = last[n.id] ? (open ? last[n.id].open : last[n.id].full) : 0;
+      if (Math.abs(now - was) > 1) {
+        this.scheduleMeasure();
+        return;
+      }
+    }
   }
 
   /** Reports each notch's content width (plus its curves and padding) to Rust. */
@@ -475,21 +519,10 @@ class Overlay {
       root.setProperty("--t", prevT);
       return v;
     };
-    const hides = (name: string) => L.widgets[name]?.hide_when_maximized === true;
     for (const n of L.notches) {
       const slot = this.drops.find((d) => d.key === `notch:${n.id}`)?.slot;
       if (!slot) continue;
-      const gap = parseFloat(getComputedStyle(slot).columnGap) || 0;
-      const measure = (h: number, t: number) =>
-        at(h, t, () => {
-          const pad = base(h) + this.edgeExtra(n);
-          const span = (els: HTMLElement[]) =>
-            els.length ? Math.ceil(els.reduce((sum, k) => sum + k.offsetWidth, 0) + gap * (els.length - 1) + pad) : 0;
-          // Widgets with nothing to show (e.g. media while idle) take no room.
-          const kids = this.notchEls.filter((e) => e.slot === slot && e.el.offsetWidth > 0);
-          // Full width, and without the widgets that hide under windows.
-          return [span(kids.map((k) => k.el)), span(kids.filter((k) => !hides(k.name)).map((k) => k.el))];
-        });
+      const measure = (h: number, t: number) => at(h, t, () => this.slotWidths(n, slot, base(h)));
       const [full, compact] = measure(L.restHeight, 0);
       const [open] = dock ? measure(L.openHeight, 1) : [full];
       if (full || open) widths[n.id] = { full, compact, open };
