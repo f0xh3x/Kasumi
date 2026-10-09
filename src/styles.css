@@ -647,3 +647,8 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .note-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .note-action { font-size: 12px; color: var(--fg-dim); padding: 3px 8px; border-radius: 6px; cursor: pointer; }
 .note-action:hover { color: var(--fg); background: rgba(255, 255, 255, 0.1); }
+.quick-expand { width: 18px; text-align: center; font-size: 10px; color: var(--fg-dim); transition: transform 160ms ease; }
+.quick-expand:hover { color: var(--fg); }
+.quick-expand.open { transform: rotate(180deg); }
+.quick-apps { padding-left: 30px; }
+.quick-apps-empty { color: var(--fg-dim); font-size: 12px; }

@@ -144,9 +144,14 @@ function outputPicker(ctx: PanelContext) {
   return { el: root, refresh };
 }
 
-/** Per-app volume: a slider per app playing on the default output. */
+/** Per-app volume: a slider per app playing on the default output, in a list
+ *  that opens from the volume row's chevron (closed by default). */
 function appVolumes(ctx: PanelContext) {
   const list = el("quick-apps");
+  const empty = el("quick-apps-empty", "No apps are playing sound.");
+  list.append(empty);
+  list.hidden = true;
+  const state = { open: false };
   const rows = new Map<number, { row: HTMLElement; input: HTMLInputElement; mute: HTMLElement; dragging: boolean }>();
   const refresh = () =>
     invoke<{ pid: number; name: string; level: number; muted: boolean }[]>("audio_sessions")
@@ -193,11 +198,17 @@ function appVolumes(ctx: PanelContext) {
           r.mute.classList.toggle("muted", a.muted);
           r.mute.textContent = g(a.muted ? 0xe74f : 0xe767);
         }
-        list.hidden = rows.size === 0;
+        empty.hidden = rows.size > 0;
         if (changed) ctx.resize();
       })
       .catch(console.error);
-  return { el: list, refresh };
+  const toggle = () => {
+    state.open = !state.open;
+    list.hidden = !state.open;
+    if (state.open) refresh();
+    ctx.resize();
+  };
+  return { el: list, refresh, toggle, state };
 }
 
 export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
@@ -224,6 +235,18 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
   tiles.hidden = chosen.length === 0;
   const outputs = opts.outputs === true ? outputPicker(ctx) : null;
   const apps = opts.apps === true ? appVolumes(ctx) : null;
+  if (apps) {
+    // A chevron at the end of the volume row opens the per-app list.
+    const chevron = icon(g(0xe70d));
+    chevron.classList.add("quick-expand", "clickable");
+    chevron.title = "Apps";
+    chevron.addEventListener("click", (e) => {
+      e.stopPropagation();
+      apps.toggle();
+      chevron.classList.toggle("open", apps.state.open);
+    });
+    volume.row.append(chevron);
+  }
   const root = el(
     "quick-panel",
     volume.row,
@@ -246,7 +269,7 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
       return;
     }
     if (tick % 3 === 0) outputs?.refresh();
-    apps?.refresh();
+    if (apps?.state.open) apps.refresh();
     tick++;
   }, 1000);
   let shape = "";
