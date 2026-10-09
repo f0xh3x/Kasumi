@@ -1,7 +1,7 @@
 // Structured editors for the settings window: things richer than a single
 // control (widget placement, notches, menu entries, monitors, lookups).
 import { invoke } from "@tauri-apps/api/core";
-import { DEFAULT_TILES, QUICK_TILES } from "../quick-tiles";
+import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
 import type { Cfg, Path } from "./schema";
 
 export interface Op {
@@ -1316,7 +1316,7 @@ function presets(ctx: EditorCtx): HTMLElement {
 /** Quick settings tiles: the chosen ones in order (move, remove), the rest to add. */
 const quickTiles: Editor = (ctx) => {
   const saved = ctx.cfg.widgets?.quick?.tiles;
-  const chosen: string[] = Array.isArray(saved) ? saved.filter((t: string) => t in QUICK_TILES) : [...DEFAULT_TILES];
+  const chosen: string[] = (Array.isArray(saved) ? saved.filter((t: string) => t in QUICK_TILES) : [...DEFAULT_TILES]).slice(0, MAX_TILES);
   const save = () => ctx.saveMany([{ path: ["widgets", "quick", "tiles"], value: chosen }]);
   const tile = (id: string, ...extra: HTMLElement[]) => {
     const [label, code] = QUICK_TILES[id];
@@ -1345,18 +1345,27 @@ const quickTiles: Editor = (ctx) => {
     );
   });
   if (!chosen.length) picked.append($("p", "card-help", "No tiles: the panel shows none."));
+  const full = chosen.length >= MAX_TILES;
   const rest = $("div", "tile-row");
   for (const id of Object.keys(QUICK_TILES).filter((t) => !chosen.includes(t))) {
     const add = tile(id);
     add.classList.add("add");
-    add.title = "Add";
+    if (full) add.classList.add("full");
+    add.title = full ? `Up to ${MAX_TILES} tiles: remove one first` : "Add";
     add.addEventListener("click", () => {
+      if (chosen.length >= MAX_TILES) return;
       chosen.push(id);
       save();
     });
     rest.append(add);
   }
-  return $("div", "stack-tight", row("Tiles", "Shortcuts at the bottom of the panel, in this order.", $("span")), picked, ...(rest.children.length ? [$("p", "card-help", "Add:"), rest] : []));
+  return $(
+    "div",
+    "stack-tight",
+    row("Tiles", `Shortcuts in one row at the bottom of the panel, in this order (up to ${MAX_TILES}; two or fewer show as slim pills).`, $("span")),
+    picked,
+    ...(rest.children.length ? [$("p", "card-help", full ? `Add (remove one first: ${MAX_TILES} is the most):` : "Add:"), rest] : []),
+  );
 };
 
 /** Quick settings: what its icon shows, and a custom icon to pick. */

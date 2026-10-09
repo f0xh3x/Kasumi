@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { DEFAULT_TILES, QUICK_TILES } from "../quick-tiles";
+import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
 import { subscribe, type SystemStatus } from "../data";
 import { el, icon, type PanelContext, type Widget } from "./index";
 import { iconUrl } from "./tray";
@@ -263,7 +263,7 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
   const brightness = slider((v) => invoke("brightness_set", { level: v }).catch(console.error));
   const battery = el("quick-status");
   const network = el("quick-status");
-  const chosen = Array.isArray(opts.tiles) ? (opts.tiles as unknown[]).filter((t): t is string => typeof t === "string" && t in QUICK_TILES) : DEFAULT_TILES;
+  const chosen = (Array.isArray(opts.tiles) ? (opts.tiles as unknown[]).filter((t): t is string => typeof t === "string" && t in QUICK_TILES) : DEFAULT_TILES).slice(0, MAX_TILES);
   const tiles = el(
     "quick-tiles",
     ...chosen.map((id) => {
@@ -276,7 +276,9 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
       return t;
     }),
   );
+  // One row filling the width; with two or fewer they're slim pills, not blocks.
   tiles.style.gridTemplateColumns = `repeat(${Math.max(1, chosen.length)}, minmax(0, 1fr))`;
+  tiles.classList.toggle("pills", chosen.length <= 2);
   tiles.hidden = chosen.length === 0;
   const outputs = opts.outputs === true ? outputPicker(ctx) : null;
   const apps = opts.apps === true ? appVolumes(ctx) : null;

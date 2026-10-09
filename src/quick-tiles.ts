@@ -17,5 +17,8 @@ export const QUICK_TILES: Record<string, [label: string, glyph: number, target: 
   explorer: ["Explorer", 0xe838, "explorer.exe"],
 };
 
+/** At most this many tiles (one row). */
+export const MAX_TILES = 6;
+
 /** The tiles shown when none are chosen. */
 export const DEFAULT_TILES = ["wifi", "bluetooth", "display", "sound", "power", "settings"];
