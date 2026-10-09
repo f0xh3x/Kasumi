@@ -49,31 +49,6 @@ export function netspeed(opts: Record<string, unknown>): Widget {
   return { el: root, dispose: off };
 }
 
-const size = (bytes: number) =>
-  bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.round(bytes / 1e3)} KB`;
-
-/** Recycle bin: click opens it, right-click empties it (Windows asks first). */
-export function recycle(opts: Record<string, unknown>): Widget {
-  const count = el("recycle-count");
-  const root = el("widget recycle clickable", icon(g(0xe74d)), ...(opts.count === true ? [count] : []));
-  root.addEventListener("click", (e) => {
-    e.stopPropagation();
-    invoke("run_action", { action: "open", target: "shell:RecycleBinFolder" }).catch(console.error);
-  });
-  root.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    invoke("recycle_empty").catch(console.error);
-  });
-  const off = subscribe("recycle", (r) => {
-    const items = r?.items ?? 0;
-    root.classList.toggle("empty", items === 0);
-    count.textContent = items ? String(items) : "";
-    root.title = items ? `Recycle bin: ${items} item${items === 1 ? "" : "s"}, ${size(r?.bytes ?? 0)} — right-click to empty` : "Recycle bin is empty";
-  });
-  return { el: root, dispose: off };
-}
-
 const DEVICES: [key: "mic" | "camera" | "location", glyph: number, label: string][] = [
   ["mic", 0xe720, "Microphone"],
   ["camera", 0xe714, "Camera"],

@@ -52,7 +52,7 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "launcher", label: "Launcher", icon: 0xe721 },
   { id: "focus", label: "Focused app", icon: 0xe7c4 },
   { id: "netspeed", label: "Network speed", icon: 0xe74b },
-  { id: "recycle", label: "Recycle bin", icon: 0xe74d },
+  { id: "disk", label: "Disk usage", icon: 0xeda2 },
   { id: "privacy", label: "Privacy", icon: 0xe720 },
   { id: "claude", label: "Claude Code", icon: 0xe8bd },
   { id: "clipboard", label: "Clipboard", icon: 0xe77f },
@@ -74,7 +74,7 @@ const SECTION: Record<string, string> = {
   launcher: "Launcher",
   focus: "Focused app",
   netspeed: "Network speed",
-  recycle: "Recycle bin",
+  disk: "Disk usage",
   privacy: "Privacy",
   claude: "Claude Code",
   clipboard: "Clipboard",
@@ -226,6 +226,18 @@ export function migrationOpsDisabledSpots(cfg: Cfg): Op[] {
   let next = cfg;
   for (const [id, w] of Object.entries<any>(cfg.widgets ?? {})) if (w?.enabled === false) next = stripped(next, id);
   return next === cfg ? [] : layoutDiffOps(cfg, next);
+}
+
+/** Widgets that no longer exist: out of every layout, their settings gone. */
+const REMOVED_WIDGETS = ["recycle"];
+export function migrationOpsRemovedWidgets(cfg: Cfg): Op[] {
+  let next = cfg;
+  const ops: Op[] = [];
+  for (const id of REMOVED_WIDGETS) {
+    next = stripped(next, id);
+    if (cfg.widgets?.[id] !== undefined) ops.push({ path: ["widgets", id], value: null });
+  }
+  return [...layoutDiffOps(cfg, next), ...ops];
 }
 
 /** Rewrites (or creates, before the catch-all) the named monitor's rule. */
@@ -1309,6 +1321,37 @@ function presets(ctx: EditorCtx): HTMLElement {
 }
 
 /** Quick settings tiles: the chosen ones in order (move, remove), the rest to add. */
+// --- Disk usage -------------------------------------------------------------------------
+
+/** Which drives the disk widget shows: chips to switch on / off (none chosen = all). */
+const diskPicker: Editor = (ctx) => {
+  const saved = ctx.cfg.widgets?.disk?.disks;
+  const chosen = new Set<string>(Array.isArray(saved) ? saved : []);
+  const chips = $("div", "tile-row", $("p", "card-help", "Looking for drives…"));
+  invoke<{ id: string; label: string; total: number }[]>("disk_list")
+    .then((disks) => {
+      chips.replaceChildren(
+        ...disks.map((d) => {
+          // None chosen means all: show them all as on.
+          const on = !chosen.size || chosen.has(d.id);
+          const gb = Math.round(d.total / 1024 ** 3);
+          const chip = $("div", `tile-chip toggle${on ? "" : " add"}`, glyph(0xeda2), $("span", "", `${d.id} ${d.label || "Local disk"} · ${gb} GB`));
+          chip.addEventListener("click", () => {
+            const next = new Set(chosen.size ? chosen : disks.map((x) => x.id));
+            if (next.has(d.id)) next.delete(d.id);
+            else next.add(d.id);
+            // All of them again: back to "all" (new drives show up too).
+            const value = next.size === disks.length ? null : disks.map((x) => x.id).filter((x) => next.has(x));
+            ctx.saveMany([{ path: ["widgets", "disk", "disks"], value }]);
+          });
+          return chip;
+        }),
+      );
+    })
+    .catch(() => chips.replaceChildren($("p", "card-help", "Couldn't list the drives.")));
+  return $("div", "stack-tight", row("Drives", "Which drives it shows (all of them when none is off).", $("span")), chips);
+};
+
 // --- Launcher power buttons ----------------------------------------------------------
 
 /** Which power buttons the launcher shows: chips to switch on / off (bright = on). */
@@ -1422,6 +1465,7 @@ export const editors: Record<string, Editor> = {
   quickIcon,
   quickTiles,
   launcherPower,
+  diskPicker,
   presets,
   surfaceManager,
   surfaceStyle,

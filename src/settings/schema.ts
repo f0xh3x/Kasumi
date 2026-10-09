@@ -416,11 +416,38 @@ export const pages: Page[] = [
         ],
       },
       {
-        title: "Recycle bin",
+        title: "Disk usage",
         collapsible: true,
-        icon: 0xe74d,
-        help: "Click to open it, right-click to empty it (Windows asks first).",
-        fields: [{ kind: "toggle", label: "Item count", help: "How many items are in it, beside the icon.", path: ["widgets", "recycle", "count"], default: false }],
+        icon: 0xeda2,
+        help: "How full your drives are. A click opens This PC.",
+        fields: [
+          { kind: "custom", editor: "diskPicker" },
+          {
+            kind: "select",
+            label: "Indicator",
+            path: ["widgets", "disk", "indicator"],
+            default: "bar",
+            options: [
+              { value: "bar", label: "Bar" },
+              { value: "circle", label: "Ring" },
+              { value: "none", label: "None" },
+            ],
+          },
+          { kind: "slider", label: "Bar length", path: (cfg) => ((cfg.widgets?.disk?.indicator ?? "bar") === "bar" ? ["widgets", "disk", "bar_length"] : null), default: 30, min: 16, max: 80, step: 2, unit: "px" },
+          {
+            kind: "select",
+            label: "Text",
+            path: ["widgets", "disk", "show"],
+            default: "percent",
+            options: [
+              { value: "percent", label: "Percent full" },
+              { value: "used", label: "Used / total (GB)" },
+              { value: "free", label: "Free (GB)" },
+              { value: "none", label: "None" },
+            ],
+          },
+          { kind: "toggle", label: "Drive letters", path: ["widgets", "disk", "letters"], default: true },
+        ],
       },
       {
         title: "Privacy",

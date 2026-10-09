@@ -1,7 +1,7 @@
 //! Small pollers sharing one thread, each only while its widget is placed:
 //! - "focus": the window in front (title, app),
 //! - "netspeed": bytes per second down / up over the hardware network adapters,
-//! - "recycle": items and size in the recycle bin,
+//! - "disks": size and free space of the fixed drives,
 //! - "privacy": apps using the microphone, camera or location right now.
 
 use serde_json::json;
@@ -13,7 +13,6 @@ use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB
 use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
 };
-use windows::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
 pub fn start(app: &AppHandle) {
@@ -27,7 +26,7 @@ pub fn start(app: &AppHandle) {
 fn run(app: AppHandle) {
     let mut net = NetSpeed::default();
     let mut last_net = Instant::now() - Duration::from_secs(10);
-    let mut last_bin = last_net;
+    let mut last_disks = last_net;
     let mut last_privacy = last_net;
     loop {
         let now = Instant::now();
@@ -42,9 +41,10 @@ fn run(app: AppHandle) {
         } else if !super::placed(&app, "netspeed") {
             net = NetSpeed::default();
         }
-        if super::placed(&app, "recycle") && now - last_bin >= Duration::from_secs(3) {
-            last_bin = now;
-            super::publish(&app, "recycle", recycle_bin());
+        // Disks fill up slowly: every 10 s is plenty.
+        if super::placed(&app, "disk") && now - last_disks >= Duration::from_secs(10) {
+            last_disks = now;
+            super::publish(&app, "disks", disks());
         }
         if super::placed(&app, "privacy") && now - last_privacy >= Duration::from_secs(1) {
             last_privacy = now;
@@ -111,21 +111,38 @@ fn net_totals() -> Option<(u64, u64)> {
     }
 }
 
-fn recycle_bin() -> serde_json::Value {
-    let mut info = SHQUERYRBINFO { cbSize: std::mem::size_of::<SHQUERYRBINFO>() as u32, ..Default::default() };
-    unsafe {
-        if SHQueryRecycleBinW(PCWSTR::null(), &mut info).is_err() {
-            return json!(null);
+/// The fixed drives: [{ id: "C:", label, total, free }] (bytes).
+fn disks() -> serde_json::Value {
+    use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
+    const DRIVE_FIXED: u32 = 3;
+    let mask = unsafe { GetLogicalDrives() };
+    let mut out = Vec::new();
+    for i in 0..26u32 {
+        if mask & (1 << i) == 0 {
+            continue;
+        }
+        let id = format!("{}:", (b'A' + i as u8) as char);
+        let root = crate::win::wide(&format!("{id}\\"));
+        unsafe {
+            if GetDriveTypeW(PCWSTR(root.as_ptr())) != DRIVE_FIXED {
+                continue;
+            }
+            let (mut free, mut total) = (0u64, 0u64);
+            if GetDiskFreeSpaceExW(PCWSTR(root.as_ptr()), None, Some(&mut total), Some(&mut free)).is_err() || total == 0 {
+                continue;
+            }
+            let mut name = [0u16; 128];
+            let _ = GetVolumeInformationW(PCWSTR(root.as_ptr()), Some(&mut name), None, None, None, None);
+            out.push(json!({ "id": id, "label": crate::win::wide_to_string(&name), "total": total, "free": free }));
         }
     }
-    json!({ "items": info.i64NumItems, "bytes": info.i64Size })
+    json!(out)
 }
 
-/// Empties the recycle bin (Windows asks for confirmation itself).
+/// The fixed drives, for the disk widget's settings (whether or not it's placed).
 #[tauri::command]
-pub async fn recycle_empty() -> Result<(), String> {
-    use windows::Win32::UI::Shell::SHEmptyRecycleBinW;
-    unsafe { SHEmptyRecycleBinW(None, PCWSTR::null(), 0) }.map_err(|e| e.to_string())
+pub async fn disk_list() -> serde_json::Value {
+    disks()
 }
 
 /// Apps using each device now: Windows' privacy records (ConsentStore) keep, per
@@ -222,4 +239,16 @@ fn in_use(path: &str) -> bool {
         }
     };
     matches!((read("LastUsedTimeStart"), read("LastUsedTimeStop")), (Some(s), Some(0)) if s != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lists_the_system_drive() {
+        let disks = super::disks();
+        let c = disks.as_array().unwrap().iter().find(|d| d["id"] == "C:").expect("C: is a fixed drive");
+        let (total, free) = (c["total"].as_u64().unwrap(), c["free"].as_u64().unwrap());
+        assert!(total > 0 && free <= total);
+        println!("disks: {disks}");
+    }
 }

@@ -135,7 +135,7 @@ interface DataMap {
   keyboard: Keyboard | null;
   focus: { title: string; app: string } | null;
   netspeed: { down: number; up: number } | null;
-  recycle: { items: number; bytes: number } | null;
+  disks: { id: string; label: string; total: number; free: number }[] | null;
   privacy: { mic: string[]; camera: string[]; location: string[] } | null;
   claude: ClaudeUsage | null;
   notifications: { count: number; unseen: number; items: { id: number; app: string; title: string; body: string; time: number }[] } | null;

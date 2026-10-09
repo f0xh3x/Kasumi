@@ -565,15 +565,12 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .widget.tasks.reordering .task:not(.dragging) { transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .widget.tasks.drop-target { outline: 1px dashed rgba(255, 255, 255, 0.5); outline-offset: 3px; border-radius: 10px; }
 
-/* Focused app, network speed, recycle bin, privacy indicators. */
+/* Focused app, network speed, privacy indicators. */
 .widget.focus-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: rgba(255, 255, 255, 0.85); }
 .widget.netspeed { gap: 10px; font-variant-numeric: tabular-nums; }
 .netspeed-part { display: flex; align-items: center; gap: 4px; }
 .netspeed-part .icon { font-size: 11px; color: var(--fg-dim); }
 .netspeed-value { min-width: 58px; }
-.widget.recycle { gap: 5px; cursor: pointer; }
-.widget.recycle.empty .icon { color: var(--fg-dim); }
-.recycle-count { font-variant-numeric: tabular-nums; }
 .widget.privacy { gap: 6px; }
 .widget.privacy .icon { color: var(--warn); }
 .privacy-panel { display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
@@ -584,14 +581,15 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 
 /* Claude Code usage: text, a bar or ring, a "working" dot. */
 .widget.claude { gap: 7px; font-variant-numeric: tabular-nums; }
-.claude-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); overflow: hidden; flex: none; }
-.claude-bar-fill { height: 100%; width: 0; border-radius: 3px; background: var(--fg); transition: width 400ms ease; }
-.claude-ring { width: 15px; height: 15px; flex: none; transform: rotate(-90deg); }
-.claude-ring circle { fill: none; stroke-width: 2.5; }
-.claude-ring .track { stroke: rgba(255, 255, 255, 0.18); }
-.claude-ring .fill { stroke: var(--fg); stroke-linecap: round; transition: stroke-dasharray 400ms ease; }
-.widget.claude.high .claude-bar-fill { background: var(--warn); }
-.widget.claude.high .claude-ring .fill { stroke: var(--warn); }
+.meter-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); overflow: hidden; flex: none; }
+.meter-bar-fill { height: 100%; width: 0; border-radius: 3px; background: var(--fg); transition: width 400ms ease; }
+.meter-ring { width: 15px; height: 15px; flex: none; transform: rotate(-90deg); }
+.meter-ring circle { fill: none; stroke-width: 2.5; }
+.meter-ring .track { stroke: rgba(255, 255, 255, 0.18); }
+.meter-ring .fill { stroke: var(--fg); stroke-linecap: round; transition: stroke-dasharray 400ms ease; }
+/* Meters (Claude usage, disks) past their limit take the warning colour. */
+.high .meter-bar-fill { background: var(--warn); }
+.high .meter-ring .fill { stroke: var(--warn); }
 .claude-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); flex: none; }
 .claude-dot.busy { background: #d97757; animation: claude-pulse 1.2s ease-in-out infinite; }
 @keyframes claude-pulse { 50% { opacity: 0.35; } }
@@ -677,3 +675,8 @@ html.edge-bottom .launcher-power { padding: 0 4px 6px; margin: 0 0 4px; border-t
 .launcher-power-button { width: 30px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--fg-dim); }
 .launcher-power-button:hover { background: rgba(255, 255, 255, 0.1); color: var(--fg); }
 .launcher-power-button.armed { background: rgba(255, 255, 255, 0.16); color: var(--fg); }
+/* Disk usage: per drive its letter, meter and text. */
+.widget.disk { gap: 12px; }
+.disk-item { display: flex; align-items: center; gap: 6px; }
+.disk-letter { color: var(--fg-dim); }
+.disk-text { font-variant-numeric: tabular-nums; }

@@ -12,7 +12,8 @@ import { tasks, tasksPanel } from "./tasks";
 import { quick, quickPanel } from "./quick";
 import { buttons } from "./buttons";
 import { launcher, launcherPanel } from "./launcher";
-import { clipboard, clipboardPanel, focus, netspeed, notifications, notificationsPanel, privacy, privacyPanel, recycle } from "./extras";
+import { clipboard, clipboardPanel, focus, netspeed, notifications, notificationsPanel, privacy, privacyPanel } from "./extras";
+import { disk } from "./disk";
 import { claude, claudePanel } from "./claude";
 import { subscribe } from "../data";
 
@@ -83,7 +84,7 @@ const widgets: Record<string, Factory> = {
   launcher,
   focus,
   netspeed,
-  recycle,
+  disk,
   privacy,
   claude,
   clipboard,
@@ -186,4 +187,46 @@ export function confirmClick(target: HTMLElement, confirm: boolean, run: () => v
     run();
   });
   return () => clearTimeout(timer);
+}
+
+/** A small bar or ring showing a share (0..1): Claude usage, disk usage. */
+export function meter(kind: "bar" | "circle", length: number) {
+  if (kind === "circle") {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.classList.add("meter-ring");
+    const track = document.createElementNS(ns, "circle");
+    const fill = document.createElementNS(ns, "circle");
+    for (const c of [track, fill]) {
+      c.setAttribute("cx", "8");
+      c.setAttribute("cy", "8");
+      c.setAttribute("r", "6");
+    }
+    track.classList.add("track");
+    fill.classList.add("fill");
+    const C = 2 * Math.PI * 6;
+    fill.setAttribute("stroke-dasharray", `0 ${C}`);
+    svg.append(track, fill);
+    return {
+      el: svg as unknown as HTMLElement,
+      set: (v: number) => fill.setAttribute("stroke-dasharray", `${Math.min(1, Math.max(0, v)) * C} ${C}`),
+    };
+  }
+  const fill = el("meter-bar-fill");
+  const bar = el("meter-bar", fill);
+  bar.style.width = `${length}px`;
+  return { el: bar, set: (v: number) => (fill.style.width = `${Math.min(1, Math.max(0, v)) * 100}%`) };
+}
+
+/** Bytes as Explorer shows them (1024-based): "931 GB", "1.8 TB", "512 MB". */
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }

@@ -1,5 +1,5 @@
 import { subscribe, type ClaudeUsage } from "../data";
-import { el, type PanelContext, type Widget } from "./index";
+import { meter, el, type PanelContext, type Widget } from "./index";
 
 /** 1234 -> "1.2k", 3_400_000 -> "3.4M". */
 export function tokens(n: number): string {
@@ -57,40 +57,10 @@ function share(u: ClaudeUsage | null, opts: Record<string, unknown>): number {
   return limit > 0 ? w.tokens / limit : (Date.now() / 1000 - w.start) / (w.end - w.start);
 }
 
-/** A small bar or ring showing `share`. */
-function indicator(kind: string, length: number) {
-  if (kind === "circle") {
-    const ns = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("viewBox", "0 0 16 16");
-    svg.classList.add("claude-ring");
-    const track = document.createElementNS(ns, "circle");
-    const fill = document.createElementNS(ns, "circle");
-    for (const c of [track, fill]) {
-      c.setAttribute("cx", "8");
-      c.setAttribute("cy", "8");
-      c.setAttribute("r", "6");
-    }
-    track.classList.add("track");
-    fill.classList.add("fill");
-    const C = 2 * Math.PI * 6;
-    fill.setAttribute("stroke-dasharray", `0 ${C}`);
-    svg.append(track, fill);
-    return {
-      el: svg as unknown as HTMLElement,
-      set: (v: number) => fill.setAttribute("stroke-dasharray", `${Math.min(1, Math.max(0, v)) * C} ${C}`),
-    };
-  }
-  const fill = el("claude-bar-fill");
-  const bar = el("claude-bar", fill);
-  bar.style.width = `${length}px`;
-  return { el: bar, set: (v: number) => (fill.style.width = `${Math.min(1, Math.max(0, v)) * 100}%`) };
-}
-
 /** Claude Code usage: text, an indicator and a "working" dot, each optional. */
 export function claude(opts: Record<string, unknown>): Widget {
   const kind = opts.indicator === "none" || opts.indicator === "circle" ? opts.indicator : "bar";
-  const ind = kind === "none" ? null : indicator(kind, num(opts.bar_length, 40));
+  const ind = kind === "none" ? null : meter(kind, num(opts.bar_length, 40));
   const text = el("claude-text");
   const dot = el("claude-dot");
   const showText = opts.text !== false;

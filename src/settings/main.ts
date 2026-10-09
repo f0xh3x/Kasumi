@@ -8,6 +8,7 @@ import {
   editors,
   migrationOps,
   migrationOpsDisabledSpots,
+  migrationOpsRemovedWidgets,
   migrationOpsV3,
   migrationOpsV4,
   migrationOpsV5,
@@ -305,7 +306,7 @@ async function load(): Promise<void> {
     // Older configs move to the current format once: [bar] lists + [[notches]]
     // -> [layout], then per-widget notch tables -> [notch] side settings.
     let migrated = false;
-    for (const step of [migrationOps, migrationOpsV3, migrationOpsV4, migrationOpsV5, migrationOpsDisabledSpots]) {
+    for (const step of [migrationOps, migrationOpsV3, migrationOpsV4, migrationOpsV5, migrationOpsDisabledSpots, migrationOpsRemovedWidgets]) {
       const ops = step(cfg);
       if (!ops.length) continue;
       await invoke("config_write_many", { ops });
