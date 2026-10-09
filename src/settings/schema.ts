@@ -272,6 +272,13 @@ export const pages: Page[] = [
         icon: 0xe8d6,
         fields: [
           { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("media"), default: false },
+          {
+            kind: "toggle",
+            label: "Playback keys",
+            help: "Previous / play-pause / next beside the title. They're always in the media panel (click the title).",
+            path: ["widgets", "media", "keys"],
+            default: false,
+          },
           { kind: "slider", label: "Title width", path: ["widgets", "media", "max_width"], default: 240, min: 100, max: 500, step: 10, unit: "px" },
           {
             kind: "toggle",
