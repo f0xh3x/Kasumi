@@ -259,6 +259,7 @@ function renderPage(page: Page): HTMLElement {
     const title = $("h2", "card-title", s.title);
     const badge = s.badge?.(cfg);
     if (badge) title.append($("span", "card-badge", badge));
+    if (s.legend) title.append($("span", "card-legend", ...s.legend.map(([code, text]) => $("span", "", glyph(code), text))));
     const card = $("section", "card", title);
     if (s.help) card.append($("p", "card-help", s.help));
     card.append(...rows);

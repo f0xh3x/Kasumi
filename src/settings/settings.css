@@ -357,26 +357,44 @@ body.maximized { border: 0; border-radius: 0; }
 .scope-chip .icon { font-size: 13px; }
 .scope-chip:hover { color: var(--fg); }
 .scope-chip.active { background: var(--fg); color: var(--bg); }
-.chip-badge {
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--dim);
-}
-/* The notch pill on a chip: lit when the widget is also a notch, dim when not. */
-.chip-badge.toggle {
+/* A chip's two square buttons (own notch, hide under maximized windows): lit when
+   on, dim when off, faint when they don't apply there. */
+.chip-buttons { margin-left: auto; display: flex; gap: 3px; }
+.chip .chip-button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: transparent;
-  font-family: inherit;
+  color: var(--dim);
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.6;
   transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
 }
-.chip-badge.toggle:hover { opacity: 1; }
-.chip-badge.on { background: var(--fg); color: var(--bg); border-color: var(--fg); opacity: 1; }
+.chip .chip-button .icon { font-size: 11px; color: inherit; }
+.chip .chip-button:hover:not(:disabled) { opacity: 1; }
+.chip .chip-button.on { background: var(--fg); color: var(--bg); border-color: var(--fg); opacity: 1; }
+.chip .chip-button:disabled { cursor: default; opacity: 0.2; }
+.chip .chip-button.on:disabled { opacity: 0.55; }
+/* The legend on the right of a card title (Placement's chip buttons). */
+.card-title:has(.card-legend) { display: flex; align-items: center; }
+.card-legend { margin-left: auto; display: flex; gap: 14px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.card-legend > span { display: flex; align-items: center; gap: 6px; }
+.card-legend .icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 10px;
+}
 .bucket.disabled { grid-column: 1 / -1; min-height: 0; background: transparent; border: 1px dashed rgba(255, 255, 255, 0.12); }
 .bucket.disabled .bucket-list { flex-direction: row; flex-wrap: wrap; min-height: 34px; }
 .bucket.disabled .chip { opacity: 0.5; }

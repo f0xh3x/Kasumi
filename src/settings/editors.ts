@@ -457,6 +457,12 @@ const monitorToggles: Editor = (ctx) => {
  * surfaces and Disabled. A widget lives in one place: putting it somewhere takes
  * it out of wherever it was.
  */
+/** The placement chips' two buttons, also explained in the Placement legend. */
+export const CHIP_LEGEND: [number, string][] = [
+  [0xe718, "Own notch"],
+  [0xed1a, "Hides under maximized windows"],
+];
+
 const placement: Editor = (ctx) => {
   const cur = scope.surface;
   const ids = surfaceIds(ctx.cfg);
@@ -488,6 +494,58 @@ const placement: Editor = (ctx) => {
     return L[bucket as Side].filter((id) => enabled(ctx.cfg, id) && known(id));
   };
 
+  /**
+   * A chip's buttons: own notch (bars: a notch on its side while the bar is closed;
+   * a dock's widgets are all notches, an always-on bar has none) and hide under
+   * maximized windows (a [widgets] option, so the same on every bar; it only does
+   * anything in a notch). On another bar's column they just show the state.
+   */
+  const chipButtons = (id: string, where: string, elsewhere: boolean) => {
+    const mode = ctx.cfg.surfaces?.[where]?.mode ?? "bar";
+    const notch = mode === "dock" || (mode === "bar" && layouts[where].notch.includes(id));
+    const hides = ctx.cfg.widgets?.[id]?.hide_when_maximized === true;
+    const button = (code: number, on: boolean, usable: boolean, title: string, toggle: () => void) => {
+      const b = $("button", `chip-button${on ? " on" : ""}`, glyph(code)) as HTMLButtonElement;
+      b.title = title;
+      b.draggable = false;
+      b.disabled = elsewhere || !usable;
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggle();
+      });
+      return b;
+    };
+    const pin = button(
+      CHIP_LEGEND[0][0],
+      notch,
+      mode === "bar",
+      mode === "dock"
+        ? "Own notch: every widget in a dock is a notch"
+        : mode !== "bar"
+          ? "Own notch: an always-shown bar has no notches"
+          : notch
+            ? "Own notch: shows as a notch on its side while the bar is closed. Click to stop"
+            : "Own notch: click to also show it as a notch on its side while the bar is closed",
+      () => {
+        const next = structuredClone(L);
+        next.notch = notch ? next.notch.filter((x) => x !== id) : [...next.notch, id];
+        ctx.saveMany(layoutOps(ctx.cfg, next));
+      },
+    );
+    const hide = button(
+      CHIP_LEGEND[1][0],
+      hides && notch,
+      notch,
+      !notch
+        ? "Hides under maximized windows: only for widgets in a notch"
+        : hides
+          ? "Hides while a maximized window covers its notch (on every bar). Click to keep it"
+          : "Click to hide it while a maximized window covers its notch, instead of moving aside (on every bar)",
+      () => ctx.saveMany([{ path: ["widgets", id, "hide_when_maximized"], value: hides ? null : true }]),
+    );
+    return $("div", "chip-buttons", pin, hide);
+  };
+
   for (const [bucket, title] of columns) {
     const elsewhere = bucket.startsWith("surface:");
     const list = $("div", "bucket-list");
@@ -495,26 +553,7 @@ const placement: Editor = (ctx) => {
       const w = cat.find((x) => x.id === id)!;
       const chip = $("div", "chip", glyph(w.icon), w.label);
       const where = elsewhere ? bucket.slice(8) : cur;
-      // Own notch: only bars have closed notches (docks are all notches; always-on bars none).
-      const notched = (ctx.cfg.surfaces?.[where]?.mode ?? "bar") === "bar";
-      if (bucket !== "disabled" && notched) {
-        const on = layouts[where].notch.includes(id);
-        if (elsewhere) {
-          if (on) chip.append($("span", "chip-badge on", "notch"));
-        } else {
-          // A click switches whether it also shows as a notch on its side.
-          const pill = $("button", `chip-badge toggle${on ? " on" : ""}`, "notch");
-          pill.title = on ? "Shows as a notch while the bar is closed — click to stop" : "Click to also show it as a notch while the bar is closed";
-          pill.draggable = false;
-          pill.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const next = structuredClone(L);
-            next.notch = on ? next.notch.filter((x) => x !== id) : [...next.notch, id];
-            ctx.saveMany(layoutOps(ctx.cfg, next));
-          });
-          chip.append(pill);
-        }
-      }
+      if (bucket !== "disabled") chip.append(chipButtons(id, where, elsewhere));
       chip.draggable = true;
       chip.dataset.id = id;
       // A click (not a drag) opens the widget's own settings.
@@ -614,8 +653,8 @@ const placement: Editor = (ctx) => {
     .filter((r: any) => hasLists(r.surfaces?.[cur]))
     .map((r: any) => r.match);
   const help = scope.monitor
-    ? "Drag widgets between sides and bars; Disabled hides a widget on this monitor's bar. Click “notch” to show a widget as a notch on this monitor."
-    : "Drag widgets between sides and bars — a widget lives in one place. Disabled switches it off everywhere. Click “notch” on a widget to also show it as a notch on its side while the bar is closed." +
+    ? "Drag widgets between sides and bars; Disabled hides a widget on this monitor's bar. The pin shows a widget as a notch on this monitor."
+    : "Drag widgets between sides and bars — a widget lives in one place. Disabled switches it off everywhere. A click on a widget opens its settings." +
       (own.length ? ` Adding or removing a widget here also applies to ${own.join(", ")}, which have their own layout of this bar.` : "");
   return $("div", "", root, $("p", "card-help", help));
 };

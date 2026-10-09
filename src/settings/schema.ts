@@ -2,7 +2,7 @@
 // listed once, with where it lives in config.toml, its control and default.
 // Adding a feature's settings = adding entries here.
 
-import { ownsLayout, scope } from "./editors";
+import { CHIP_LEGEND, ownsLayout, scope } from "./editors";
 
 export type Path = (string | number)[];
 export type Cfg = Record<string, any>;
@@ -43,14 +43,6 @@ const surfacePath =
     return ["surfaces", scope.surface, key];
   };
 
-/** Only for widgets that have their own notch (in the global layout). */
-const hideWhenMaximized =
-  (widget: string): PathSpec =>
-  (cfg) =>
-    [cfg.layout, ...Object.values<any>(cfg.surfaces ?? {})].some((l) => (l?.notch ?? []).includes(widget))
-      ? ["widgets", widget, "hide_when_maximized"]
-      : null;
-
 export interface Section {
   title: string;
   help?: string;
@@ -64,6 +56,8 @@ export interface Section {
   attach?: boolean;
   /** A small tag beside the title, e.g. what the settings apply to. */
   badge?: (cfg: Cfg) => string | null;
+  /** Icons explained on the right of the title: [glyph, meaning]. */
+  legend?: [number, string][];
 }
 
 export interface Page {
@@ -229,6 +223,7 @@ export const pages: Page[] = [
         // Which layout this edits: the global one, or the selected monitor's own.
         badge: (cfg) =>
           !scope.monitor ? "Global layout" : ownsLayout(cfg, scope.monitor) ? `${scope.monitor}'s own layout` : "Global layout · a change here gives it its own",
+        legend: CHIP_LEGEND,
         fields: [{ kind: "custom", editor: "placement" }],
       },
     ],
@@ -242,14 +237,13 @@ export const pages: Page[] = [
         title: "Clock",
         collapsible: true,
         icon: 0xe823,
-        fields: [{ kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("clock"), default: false }, { kind: "custom", editor: "clockFormat" }],
+        fields: [{ kind: "custom", editor: "clockFormat" }],
       },
       {
         title: "PC temps",
         collapsible: true,
         icon: 0xe9ca,
         fields: [
-          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("temps"), default: false },
           {
             kind: "text",
             label: "LibreHardwareMonitor address",
@@ -267,7 +261,6 @@ export const pages: Page[] = [
         collapsible: true,
         icon: 0xe706,
         fields: [
-          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("weather"), default: false },
           { kind: "custom", editor: "weatherLocation" },
           {
             kind: "select",
@@ -288,7 +281,6 @@ export const pages: Page[] = [
         collapsible: true,
         icon: 0xe8d6,
         fields: [
-          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("media"), default: false },
           {
             kind: "select",
             label: "Playback keys",
@@ -597,7 +589,6 @@ export const pages: Page[] = [
         collapsible: true,
         icon: 0xe70d,
         fields: [
-          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("tray"), default: false },
           {
             kind: "toggle",
             label: "Host tray icons",
@@ -648,16 +639,10 @@ export const pages: Page[] = [
         ],
       },
       {
-        title: "Keyboard language",
-        collapsible: true,
-        icon: 0xe765,
-        fields: [{ kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("language"), default: false }],
-      },
-      {
         title: "Menu",
         collapsible: true,
         icon: 0xe700,
-        fields: [{ kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("menu"), default: false }, { kind: "custom", editor: "menuItems" }],
+        fields: [{ kind: "custom", editor: "menuItems" }],
       },
     ],
   },
@@ -668,7 +653,7 @@ export const pages: Page[] = [
     sections: [
       {
         title: "All notches",
-        help: "Widgets marked “notch” in Bars › Placement show as a notch on their side while the bar is closed.",
+        help: "Widgets pinned in Bars › Placement show as a notch on their side while the bar is closed.",
         fields: [
           {
             kind: "toggle",
