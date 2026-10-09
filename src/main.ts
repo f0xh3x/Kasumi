@@ -3,7 +3,7 @@ import "./styles.css";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { initData } from "./data";
-import { computeFrame, type Bump } from "./geometry";
+import { computeFrame, mirrorPath, type Bump } from "./geometry";
 import { Spring } from "./spring";
 import type { Layout, NotchLayout, Rect } from "./types";
 import { createPanel, createWidget, panelFor, widgetType, type Widget } from "./widgets";
@@ -74,6 +74,12 @@ interface Drop {
 
 /** Space between a notch's content and the start of its curves, each side. */
 const NOTCH_PAD = 10;
+/**
+ * Height of the drawing area (SVG and content). Oversized, so the window can grow
+ * (panels) without resizing it; on a bottom surface it's anchored to the window's
+ * bottom, so it doesn't move when the window grows upward either.
+ */
+const STAGE_HEIGHT = 2000;
 /** Room a bottom bar's window keeps for its panels from the start (see measureBarDrops). */
 const BOTTOM_PANEL_ROOM = 640;
 
@@ -99,9 +105,7 @@ class Overlay {
   private peekEl = div("peek");
   private langEl: HTMLElement | null = null;
 
-  // Notch widgets glide to their place in the bar as it opens, then hand over to
-  // the bar's own copy (same spot, so the swap is invisible).
-  private barEls = new Map<string, HTMLElement>();
+  // Notch widgets (one instance each: a notch's widgets aren't in the bar too).
   private notchEls: { slot: HTMLDivElement; name: string; el: HTMLElement }[] = [];
 
   private widgets: Widget[] = [];
@@ -153,10 +157,11 @@ class Overlay {
     this.spread.target = this.spreadTarget();
     if (first || layout.animation.style !== "spread") this.spread.snap();
 
-    // Oversized so the window can grow (dropdowns) without resizing the SVG.
     svg.setAttribute("width", String(layout.width));
-    svg.setAttribute("height", "2000");
-    svg.setAttribute("viewBox", `0 0 ${layout.width} 2000`);
+    svg.setAttribute("height", String(STAGE_HEIGHT));
+    svg.setAttribute("viewBox", `0 0 ${layout.width} ${STAGE_HEIGHT}`);
+    // A bottom surface's content hangs from the window's bottom, as tall as the SVG.
+    content.style.height = layout.edge === "bottom" ? `${STAGE_HEIGHT}px` : "";
     this.requestedHeight = 0;
     this.buildDom(layout, prevSprings, prevX);
     this.layoutBar();
@@ -300,7 +305,6 @@ class Overlay {
     this.widgets = [];
     this.drops = [];
     this.langEl = null;
-    this.barEls.clear();
     this.notchEls = [];
     this.openLauncher = null;
     this.lastWidths = "";
@@ -371,7 +375,6 @@ class Overlay {
         const w = createWidget(name, opts(name));
         this.widgets.push(w);
         group.append(w.el);
-        this.barEls.set(name, w.el);
         if (name === "language") this.langEl = w.el;
         dropdown(name, w);
       }
@@ -864,12 +867,18 @@ class Overlay {
       root.setProperty("--h", `${lerp(L.restHeight, L.openHeight, t).toFixed(2)}px`);
     }
 
-    queueMicrotask(() => this.glide());
+    // Positions below are distances from the surface's edge. A top surface lays
+    // things out from the top; a bottom one from the bottom (styles.css anchors
+    // them there), so moving away from the edge is up: y goes negative. Content is
+    // never mirrored (a mirrored box redraws its text at sub-pixel offsets whenever
+    // its height changes); only the SVG shape is, being pure vector.
+    const bottom = L.edge === "bottom";
+    const away = bottom ? -1 : 1;
     fill.setAttribute("d", frame.d);
     cornersPath.setAttribute("d", frame.corners);
-    content.style.clipPath = `path("${frame.d}")`;
+    content.style.clipPath = `path("${bottom ? mirrorPath(frame.d, STAGE_HEIGHT) : frame.d}")`;
 
-    this.bar.style.transform = `translateY(${frame.base - H}px)`;
+    this.bar.style.transform = `translateY(${(frame.base - H) * away}px)`;
     this.bar.style.opacity = String(clamp01((this.expand.value - 0.25) / 0.6));
 
     const od = this.osdDrop();
@@ -889,14 +898,14 @@ class Overlay {
       }
       if (d === this.peekDrop) {
         const k = clamp01(this.peek.value);
-        this.peekEl.style.transform = `translate(${bf.cx}px, ${bf.rowDepth / 2}px) translate(-50%, -50%)`;
+        this.peekEl.style.transform = `translate(${bf.cx}px, ${(away * bf.rowDepth) / 2}px) translate(-50%, ${-away * 50}%)`;
         this.peekEl.style.opacity = String(clamp01(k * 1.8 - 0.5) * (1 - clamp01(this.expand.value)));
         this.peekEl.style.visibility = k > 0.01 ? "visible" : "hidden";
       }
       if (d === od) {
         const inner = L.osd.width - 2 * L.geometry.notchCornerRadius - 8;
         this.osdEl.style.width = `${inner}px`;
-        this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${bf.rowDepth / 2}px) translateY(-50%)`;
+        this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${(away * bf.rowDepth) / 2}px) translateY(${-away * 50}%)`;
         this.osdEl.style.opacity = String(clamp01(o * 1.8 - 0.5));
         this.osdEl.style.visibility = o > 0.01 ? "visible" : "hidden";
       }
@@ -904,44 +913,10 @@ class Overlay {
         const p = d.spring.value;
         d.panelEl.style.visibility = p > 0.01 ? "visible" : "hidden";
         d.panelEl.style.opacity = String(clamp01(p * 1.4 - 0.2));
-        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${bf.depth - d.panelHeight}px)`;
+        // Its edge-side end (the far end is `depth`).
+        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(bf.depth - d.panelHeight) * away}px)`;
       }
     });
-  }
-
-  /**
-   * Moves each notch widget from its spot in the notch toward its twin's spot
-   * in the bar, in step with the bar opening. Once the bar is open the twin
-   * takes over; while it's closing the notch copy is shown again and glides back.
-   */
-  private glide(): void {
-    const L = this.layout;
-    if (!L) return;
-    const handedOver = this.expanded && this.expand.value >= 0.97;
-    const k = clamp01(this.expand.value);
-    for (const { slot, name, el } of this.notchEls) {
-      const twin = this.barEls.get(name);
-      if (!twin) continue;
-      twin.style.visibility = handedOver ? "" : "hidden";
-      twin.classList.toggle("arrived", handedOver);
-      el.style.visibility = handedOver ? "hidden" : "";
-      if (handedOver) continue;
-      // Glide by the part both copies share (e.g. the media title), else the whole widget.
-      const src = el.querySelector<HTMLElement>("[data-glide]") ?? el;
-      const dst = twin.querySelector<HTMLElement>("[data-glide]") ?? twin;
-      // offsetLeft is relative to the slot / bar (the positioned ancestors), for
-      // the widget and its parts alike.
-      // Natural position of the notch copy (content coords: slot is at its translateX).
-      const slotX = new DOMMatrixReadOnly(getComputedStyle(slot).transform).m41;
-      const nx = slotX + src.offsetLeft + src.offsetWidth / 2;
-      const ny = el.offsetTop + el.offsetHeight / 2;
-      // Where the twin's part sits in the fully open bar (the bar is at 0,0 when open).
-      const tx = dst.offsetLeft + dst.offsetWidth / 2;
-      const ty = twin.offsetTop + twin.offsetHeight / 2;
-      // Bottom surfaces are drawn flipped (see styles.css): rows mirror around their centers.
-      const dy = (L.edge === "bottom" ? ny - ty : ty - ny) * k;
-      el.style.transform = `translate(${(tx - nx) * k}px, ${dy}px)`;
-    }
   }
 
   private kick(): void {

@@ -45,15 +45,19 @@ body {
   inset: 0;
 }
 
-/* Bottom surfaces (docks) are the top-edge drawing flipped upside down; their
-   content is flipped back so it reads normally. The stage is the whole window,
-   so y in the page is the distance from the surface's edge either way. */
 #stage {
   position: fixed;
   inset: 0;
 }
-html.edge-bottom #stage { transform: scaleY(-1); }
-html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 -1; }
+/* Bottom surfaces are laid out from the screen's bottom edge: the drawing area
+   (main.ts STAGE_HEIGHT tall) and everything placed in it hang from the window's
+   bottom, and main.ts moves things up (negative y) by their distance from the
+   edge. Nothing with text in it is mirrored: a mirrored box redraws its text at
+   sub-pixel offsets whenever its height changes (a shimmer). The shape is, as
+   it's pure vector; the content's clip path is mirrored in main.ts. */
+html.edge-bottom #shape { top: auto; bottom: 0; transform: scaleY(-1); }
+html.edge-bottom #content { top: auto; }
+html.edge-bottom :is(.bar, .slot, .panel, .osd, .peek) { top: auto; bottom: 0; }
 
 /* Icons reuse the YASB glyphs. Segoe Fluent Icons ships with Windows 11 and
    may not be redistributed, so it is referenced by name rather than bundled. */
@@ -111,14 +115,21 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 .slot > * { pointer-events: none; will-change: transform; }
 .slot.clickable > * { pointer-events: auto; }
 
+/* Panels' padding toward the bar (near) and away from it (far): on a bottom
+   surface "toward the bar" is down, so the two swap. */
 .panel {
+  --pad-near: 10px;
+  --pad-far: 14px;
+  --pad-x: 16px;
   position: absolute;
   left: 0;
   top: 0;
   box-sizing: border-box;
-  padding: 10px 16px 14px;
+  padding: var(--pad-near) var(--pad-x) var(--pad-far);
   will-change: transform, opacity;
 }
+
+html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); }
 
 [hidden] { display: none !important; }
 
@@ -181,7 +192,7 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 
 .widget.clickable { cursor: pointer; }
 
-.panel-menu { padding: 6px 6px 10px; min-width: 190px; }
+.panel-menu { --pad-near: 6px; --pad-x: 6px; --pad-far: 10px; min-width: 190px; }
 .menu-list { display: flex; flex-direction: column; }
 .menu-item {
   display: flex;
@@ -225,7 +236,7 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 .osd-value { width: 26px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* Tray: chevron in the bar, icon grid in its dropdown. */
-.panel-tray { padding: 8px 10px 12px; }
+.panel-tray { --pad-near: 8px; --pad-x: 10px; --pad-far: 12px; }
 .tray-grid { display: grid; gap: 4px; }
 .tray-icon {
   width: 32px;
@@ -263,7 +274,7 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 .widget.language { font-size: 12px; letter-spacing: 0.4px; }
 
 /* Media panel: art | title, artist, seek bar, keys. */
-.panel-media { padding: 12px 14px 14px; }
+.panel-media { --pad-near: 12px; --pad-x: 14px; --pad-far: 14px; }
 .media-panel { display: flex; gap: 14px; width: 320px; align-items: center; }
 .media-art {
   flex: none;
@@ -305,7 +316,7 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 .media-btn.big .icon { font-size: 14px; }
 
 /* Weather panel: now + next hours. */
-.panel-weather { padding: 12px 14px 14px; }
+.panel-weather { --pad-near: 12px; --pad-x: 14px; --pad-far: 14px; }
 .weather-panel { display: flex; flex-direction: column; gap: 12px; }
 .wx-head { display: flex; align-items: center; gap: 10px; }
 .wx-now-icon { display: flex; }
@@ -329,7 +340,7 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 .wx-hour-temp { font-size: 11px; }
 
 /* Temps panel: CPU and GPU cards, memory row. */
-.panel-temps { padding: 12px 14px 12px; }
+.panel-temps { --pad-near: 12px; --pad-x: 14px; --pad-far: 12px; }
 .temps-panel { display: flex; flex-direction: column; gap: 10px; width: 400px; }
 .hw-cards { display: flex; gap: 18px; }
 .hw-card { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
@@ -366,8 +377,6 @@ html.bar-open .widget.media.keys-closed .media-controls { display: none; }
 .widget.media.fixed .media-text.scrolling { text-align: left; }
 .widget.media.compact .media-text { margin-left: 0; }
 /* The bar copy's keys fade in as a notch's media widget arrives. */
-@keyframes arrive { from { opacity: 0; } to { opacity: 1; } }
-.widget.media.arrived .media-controls { animation: arrive 220ms ease both; }
 
 /* A widget hidden under a window (hide_when_maximized): out of the notch's flow, faded. */
 .slot > .covered { position: absolute; opacity: 0; }
@@ -513,9 +522,7 @@ html.mode-dock .slot > * { pointer-events: auto; }
 .launcher-w.searching .launcher-field { width: 190px; margin-left: 8px; opacity: 1; }
 .launcher-field::placeholder, .launcher-own-field::placeholder { color: var(--fg-dim); }
 /* The hotkey launcher's drop point: the middle of the bar, outside the center
-   group's layout (as a flex item, the group's gap would push the clock off-center).
-   Placed against the bar: groups must stay unpositioned, the glide measures widgets
-   with offsetLeft from the bar. */
+   group's layout (as a flex item, the group's gap would push the clock off-center). */
 .launcher-anchor { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
 .launcher-panel { display: flex; flex-direction: column; gap: 2px; width: 340px; }
 .launcher-own { display: flex; align-items: center; gap: 10px; padding: 4px 8px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 4px; }

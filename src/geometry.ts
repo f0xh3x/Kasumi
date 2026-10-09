@@ -301,3 +301,17 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
 
   return { d: P.join(""), corners: C.join(""), base, bumps: frames };
 }
+
+/**
+ * The shape's path for a bottom surface: y (distance from the screen edge)
+ * becomes `height - y`. Only absolute M / L / C / Z, which is all computeFrame's
+ * outline uses (arcs would need their sweep flipped too).
+ */
+export function mirrorPath(d: string, height: number): string {
+  return d.replace(/([A-Za-z])([^A-Za-z]*)/g, (_, cmd: string, args: string) => {
+    if (!"MLCZ".includes(cmd)) throw new Error(`mirrorPath: unsupported command ${cmd}`);
+    const n = args.trim() ? args.trim().split(/[\s,]+/).map(Number) : [];
+    for (let i = 1; i < n.length; i += 2) n[i] = height - n[i];
+    return cmd + n.map(f).join(" ");
+  });
+}

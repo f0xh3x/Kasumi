@@ -34,8 +34,6 @@ export function media(opts: Record<string, unknown>): Widget {
   track.className = "media-track";
   track.append(label, echo);
   const text = el("media-text", track);
-  // Where a notch copy glides to/from (see Overlay.glide).
-  text.dataset.glide = "";
   text.style.maxWidth = `${maxWidth}px`;
   // Fixed: always the full title width, so the notch keeps one size whatever plays.
   if (opts.fixed_width === true) text.style.width = `${maxWidth}px`;
