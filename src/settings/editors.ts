@@ -1,6 +1,7 @@
 // Structured editors for the settings window: things richer than a single
 // control (widget placement, notches, menu entries, monitors, lookups).
 import { invoke } from "@tauri-apps/api/core";
+import { DEFAULT_TILES, QUICK_TILES } from "../quick-tiles";
 import type { Cfg, Path } from "./schema";
 
 export interface Op {
@@ -1310,6 +1311,52 @@ function presets(ctx: EditorCtx): HTMLElement {
   return $("div", "presets", saveRow, list);
 }
 
+/** Quick settings tiles: the chosen ones in order (move, remove), the rest to add. */
+const quickTiles: Editor = (ctx) => {
+  const saved = ctx.cfg.widgets?.quick?.tiles;
+  const chosen: string[] = Array.isArray(saved) ? saved.filter((t: string) => t in QUICK_TILES) : [...DEFAULT_TILES];
+  const save = () => ctx.saveMany([{ path: ["widgets", "quick", "tiles"], value: chosen }]);
+  const tile = (id: string, ...extra: HTMLElement[]) => {
+    const [label, code] = QUICK_TILES[id];
+    return $("div", "tile-chip", glyph(code), $("span", "", label), ...extra);
+  };
+  const picked = $("div", "tile-row");
+  chosen.forEach((id, i) => {
+    picked.append(
+      tile(
+        id,
+        iconButton(0xe76b, "Move left", () => {
+          if (i === 0) return;
+          [chosen[i - 1], chosen[i]] = [chosen[i], chosen[i - 1]];
+          save();
+        }),
+        iconButton(0xe76c, "Move right", () => {
+          if (i === chosen.length - 1) return;
+          [chosen[i + 1], chosen[i]] = [chosen[i], chosen[i + 1]];
+          save();
+        }),
+        iconButton(0xe711, "Remove", () => {
+          chosen.splice(i, 1);
+          save();
+        }),
+      ),
+    );
+  });
+  if (!chosen.length) picked.append($("p", "card-help", "No tiles: the panel shows none."));
+  const rest = $("div", "tile-row");
+  for (const id of Object.keys(QUICK_TILES).filter((t) => !chosen.includes(t))) {
+    const add = tile(id);
+    add.classList.add("add");
+    add.title = "Add";
+    add.addEventListener("click", () => {
+      chosen.push(id);
+      save();
+    });
+    rest.append(add);
+  }
+  return $("div", "stack-tight", row("Tiles", "Shortcuts at the bottom of the panel, in this order.", $("span")), picked, ...(rest.children.length ? [$("p", "card-help", "Add:"), rest] : []));
+};
+
 /** Quick settings: what its icon shows, and a custom icon to pick. */
 const quickIcon: Editor = (ctx) => {
   const o = ctx.cfg.widgets?.quick ?? {};
@@ -1341,6 +1388,7 @@ const quickIcon: Editor = (ctx) => {
 
 export const editors: Record<string, Editor> = {
   quickIcon,
+  quickTiles,
   presets,
   surfaceManager,
   surfaceStyle,

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { DEFAULT_TILES, QUICK_TILES } from "../quick-tiles";
 import { subscribe, type SystemStatus } from "../data";
 import { el, icon, type PanelContext, type Widget } from "./index";
 
@@ -101,16 +102,105 @@ function slider(onInput: (v: number) => void, onIcon?: () => void) {
   };
 }
 
-const SHORTCUTS: [string, number, string][] = [
-  ["Wi-Fi", 0xe701, "ms-settings:network-wifi"],
-  ["Bluetooth", 0xe702, "ms-settings:bluetooth"],
-  ["Display", 0xe7f4, "ms-settings:display"],
-  ["Sound", 0xe767, "ms-settings:sound"],
-  ["Power", 0xe7e8, "ms-settings:powersleep"],
-  ["Settings", 0xe713, "ms-settings:"],
-];
+/** Output devices: the default one, and the list to switch to (opened on click). */
+function outputPicker(ctx: PanelContext) {
+  const name = el("quick-output-name");
+  const head = el("quick-output clickable", icon(g(0xe7f5)), name, icon(g(0xe70d)));
+  const list = el("quick-output-list");
+  list.hidden = true;
+  const root = el("quick-outputs", head, list);
+  let devices: { id: string; name: string; default: boolean }[] = [];
+  const draw = () => {
+    name.textContent = devices.find((d) => d.default)?.name ?? "No output device";
+    list.replaceChildren(
+      ...devices.map((d) => {
+        const row = el(`quick-output-item${d.default ? " on" : ""}`, el("", d.name));
+        row.addEventListener("click", (e) => {
+          e.stopPropagation();
+          invoke("audio_set_output", { id: d.id })
+            .then(refresh)
+            .catch(console.error);
+          list.hidden = true;
+          ctx.resize();
+        });
+        return row;
+      }),
+    );
+  };
+  const refresh = () =>
+    invoke<typeof devices>("audio_outputs")
+      .then((d) => {
+        if (JSON.stringify(d) === JSON.stringify(devices)) return;
+        devices = d;
+        draw();
+        ctx.resize();
+      })
+      .catch(console.error);
+  head.addEventListener("click", (e) => {
+    e.stopPropagation();
+    list.hidden = !list.hidden;
+    ctx.resize();
+  });
+  return { el: root, refresh };
+}
 
-export function quickPanel(_opts: Record<string, unknown>, ctx: PanelContext): Widget {
+/** Per-app volume: a slider per app playing on the default output. */
+function appVolumes(ctx: PanelContext) {
+  const list = el("quick-apps");
+  const rows = new Map<number, { row: HTMLElement; input: HTMLInputElement; mute: HTMLElement; dragging: boolean }>();
+  const refresh = () =>
+    invoke<{ pid: number; name: string; level: number; muted: boolean }[]>("audio_sessions")
+      .then((apps) => {
+        let changed = false;
+        for (const [pid, r] of rows) {
+          if (!apps.some((a) => a.pid === pid)) {
+            r.row.remove();
+            rows.delete(pid);
+            changed = true;
+          }
+        }
+        for (const a of apps) {
+          let r = rows.get(a.pid);
+          if (!r) {
+            const input = document.createElement("input");
+            input.type = "range";
+            input.className = "quick-range";
+            input.min = "0";
+            input.max = "100";
+            const mute = icon("");
+            mute.classList.add("clickable");
+            const row = el("quick-app", el("quick-app-name", a.name), input, mute);
+            row.title = a.name;
+            const entry = { row, input, mute, dragging: false };
+            input.addEventListener("input", () => {
+              entry.dragging = true;
+              input.style.setProperty("--fill", `${input.value}%`);
+              invoke("audio_session_set", { pid: a.pid, level: Number(input.value) / 100 }).catch(console.error);
+            });
+            input.addEventListener("change", () => window.setTimeout(() => (entry.dragging = false), 400));
+            mute.addEventListener("click", (e) => {
+              e.stopPropagation();
+              invoke("audio_session_set", { pid: a.pid, muted: !mute.classList.contains("muted") }).then(refresh).catch(console.error);
+            });
+            rows.set(a.pid, (r = entry));
+            list.append(row);
+            changed = true;
+          }
+          if (!r.dragging) {
+            r.input.value = String(Math.round(a.level * 100));
+            r.input.style.setProperty("--fill", `${a.muted ? 0 : a.level * 100}%`);
+          }
+          r.mute.classList.toggle("muted", a.muted);
+          r.mute.textContent = g(a.muted ? 0xe74f : 0xe767);
+        }
+        list.hidden = rows.size === 0;
+        if (changed) ctx.resize();
+      })
+      .catch(console.error);
+  return { el: list, refresh };
+}
+
+export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
   const volume = slider(
     (v) => invoke("volume_set", { level: v / 100 }).catch(console.error),
     () => invoke("volume_toggle_mute").catch(console.error),
@@ -118,9 +208,11 @@ export function quickPanel(_opts: Record<string, unknown>, ctx: PanelContext): W
   const brightness = slider((v) => invoke("brightness_set", { level: v }).catch(console.error));
   const battery = el("quick-status");
   const network = el("quick-status");
+  const chosen = Array.isArray(opts.tiles) ? (opts.tiles as unknown[]).filter((t): t is string => typeof t === "string" && t in QUICK_TILES) : DEFAULT_TILES;
   const tiles = el(
     "quick-tiles",
-    ...SHORTCUTS.map(([label, glyph, target]) => {
+    ...chosen.map((id) => {
+      const [label, glyph, target] = QUICK_TILES[id];
       const t = el("quick-tile", icon(g(glyph)), el("quick-tile-label", label));
       t.addEventListener("click", () => {
         invoke("run_action", { action: "open", target }).catch(console.error);
@@ -129,7 +221,34 @@ export function quickPanel(_opts: Record<string, unknown>, ctx: PanelContext): W
       return t;
     }),
   );
-  const root = el("quick-panel", volume.row, brightness.row, battery, network, tiles);
+  tiles.hidden = chosen.length === 0;
+  const outputs = opts.outputs === true ? outputPicker(ctx) : null;
+  const apps = opts.apps === true ? appVolumes(ctx) : null;
+  const root = el(
+    "quick-panel",
+    volume.row,
+    ...(outputs ? [outputs.el] : []),
+    ...(apps ? [apps.el] : []),
+    brightness.row,
+    battery,
+    network,
+    tiles,
+  );
+  // Devices and apps are asked for only while the panel shows.
+  const shown = () => {
+    const p = root.closest<HTMLElement>(".panel");
+    return !!p && p.style.visibility !== "hidden";
+  };
+  let tick = 0;
+  const poll = window.setInterval(() => {
+    if (!shown()) {
+      tick = 0;
+      return;
+    }
+    if (tick % 3 === 0) outputs?.refresh();
+    apps?.refresh();
+    tick++;
+  }, 1000);
   let shape = "";
   const off = subscribe("system", (s) => {
     volume.row.hidden = !s?.volume;
@@ -154,5 +273,5 @@ export function quickPanel(_opts: Record<string, unknown>, ctx: PanelContext): W
       ctx.resize();
     }
   });
-  return { el: root, dispose: off };
+  return { el: root, dispose: () => (off(), clearInterval(poll)) };
 }

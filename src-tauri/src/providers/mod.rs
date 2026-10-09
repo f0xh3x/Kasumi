@@ -2,6 +2,7 @@
 //! it to every overlay. Each value lives under a key ("temps", "media",
 //! "weather"); the latest one is kept so a freshly loaded page can catch up.
 
+pub mod audio;
 pub mod claude;
 pub mod clipboard;
 pub mod extras;

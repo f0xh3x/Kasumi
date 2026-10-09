@@ -479,3 +479,10 @@ body.maximized { border: 0; border-radius: 0; }
 .icon-cell .icon { font-size: 16px; }
 .icon-cell:hover { background: rgba(255, 255, 255, 0.1); }
 .icon-cell.on { background: var(--fg); color: var(--bg); }
+
+/* Quick settings tiles editor. */
+.tile-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tile-chip { display: flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; border-radius: 9px; background: #2a2a2a; font-weight: 600; }
+.tile-chip .icon { font-size: 13px; color: var(--dim); }
+.tile-chip.add { cursor: pointer; opacity: 0.6; padding-right: 10px; }
+.tile-chip.add:hover { opacity: 1; }

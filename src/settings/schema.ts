@@ -479,6 +479,9 @@ export const pages: Page[] = [
         help: "Its panel has volume and brightness, battery and network, and shortcuts to Windows settings.",
         fields: [
           { kind: "custom", editor: "quickIcon" },
+          { kind: "toggle", label: "Output device", help: "Switch between speakers, headphones... from the panel.", path: ["widgets", "quick", "outputs"], default: false },
+          { kind: "toggle", label: "Per-app volume", help: "A volume slider for each app playing sound.", path: ["widgets", "quick", "apps"], default: false },
+          { kind: "custom", editor: "quickTiles" },
         ],
       },
       {
