@@ -280,6 +280,9 @@ class Overlay {
   private resizeDrops(): void {
     if (!this.layout) return;
     this.measureBarDrops();
+    // Redraw the shape now, not next frame: content animating inside a panel
+    // (a list sliding open) would otherwise poke out of it for a frame each step.
+    this.render();
     this.kick();
     this.sendRegions();
   }
@@ -650,7 +653,7 @@ class Overlay {
         d.panelEl.style.height = "auto";
         d.panelHeight = d.panelEl.offsetHeight;
         d.panelEl.style.height = `${d.panelHeight}px`;
-        tallest = Math.max(tallest, d.panelHeight);
+        tallest = Math.max(tallest, d.panelHeight + this.growRoom(d.panelEl));
         continue;
       }
       d.panelWidth = d.panelEl.offsetWidth;
@@ -667,7 +670,14 @@ class Overlay {
         // Everything else centers under the whole widget.
         d.x = anchorBox.left + anchorBox.width / 2;
       }
-      tallest = Math.max(tallest, d.panelHeight);
+      tallest = Math.max(tallest, d.panelHeight + this.growRoom(d.panelEl));
+    }
+    // A dock's notch panels that aren't open count too: the window must already be
+    // tall enough when one opens (growing it then moves a bottom bar: a flicker).
+    for (const d of this.drops) {
+      for (const p of d.panels?.values() ?? []) {
+        if (p !== d.panelEl) tallest = Math.max(tallest, p.offsetHeight + this.growRoom(p));
+      }
     }
     // Rust sizes the window for notch panels only; ask for room for dropdowns too.
     const needed = (L.mode === "dock" ? L.openHeight : L.geometry.expandedHeight) + tallest;
@@ -675,6 +685,15 @@ class Overlay {
       this.requestedHeight = needed;
       invoke("set_content_height", { height: needed }).catch((e) => report(`set_content_height: ${e}`));
     }
+  }
+
+  /**
+   * Room a panel may still grow into (lists inside it that open, e.g. quick
+   * settings' outputs / apps): asked for up front, so the window never has to
+   * grow (and on a bottom bar, move) while one slides open.
+   */
+  private growRoom(panel: HTMLElement): number {
+    return panel.querySelector(".quick-drop") ? 280 : 0;
   }
 
   /** Drops in path order (left to right by collapsed center). */
