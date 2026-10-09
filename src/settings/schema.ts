@@ -214,7 +214,6 @@ export const pages: Page[] = [
       },
       { title: "This monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorToggles" }] },
       { title: "Placement", fields: [{ kind: "custom", editor: "placement" }] },
-      { title: "Own notches on this monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorNotches" }] },
     ],
   },
   {
@@ -226,14 +225,14 @@ export const pages: Page[] = [
         title: "Clock",
         collapsible: true,
         icon: 0xe823,
-        fields: [{ kind: "custom", editor: "notch:clock" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("clock"), default: false }, { kind: "custom", editor: "clockFormat" }],
+        fields: [{ kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("clock"), default: false }, { kind: "custom", editor: "clockFormat" }],
       },
       {
         title: "PC temps",
         collapsible: true,
         icon: 0xe9ca,
         fields: [
-          { kind: "custom", editor: "notch:temps" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("temps"), default: false },
+          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("temps"), default: false },
           {
             kind: "text",
             label: "LibreHardwareMonitor address",
@@ -251,7 +250,7 @@ export const pages: Page[] = [
         collapsible: true,
         icon: 0xe706,
         fields: [
-          { kind: "custom", editor: "notch:weather" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("weather"), default: false },
+          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("weather"), default: false },
           { kind: "custom", editor: "weatherLocation" },
           {
             kind: "select",
@@ -272,7 +271,7 @@ export const pages: Page[] = [
         collapsible: true,
         icon: 0xe8d6,
         fields: [
-          { kind: "custom", editor: "notch:media" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("media"), default: false },
+          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("media"), default: false },
           { kind: "slider", label: "Title width", path: ["widgets", "media", "max_width"], default: 240, min: 100, max: 500, step: 10, unit: "px" },
           {
             kind: "toggle",
@@ -287,8 +286,11 @@ export const pages: Page[] = [
         title: "Launcher",
         collapsible: true,
         icon: 0xe721,
-        help: "A search icon that becomes the launcher's search field. Switch the launcher and its hotkey under General.",
-        fields: [{ kind: "custom", editor: "notch:launcher" }],
+        help: "A search icon that becomes the launcher's search field. The launcher can be switched off under General.",
+        fields: [
+          { kind: "slider", label: "Results shown", help: "How many apps the search lists at most.", path: ["widgets", "launcher", "results"], default: 8, min: 3, max: 20, step: 1 },
+          { kind: "text", label: "Hotkey", help: "Like Win+Alt+Space or Ctrl+Alt+K (also under General).", path: ["launcher", "hotkey"], default: "Win+Alt+Space", placeholder: "Win+Alt+Space" },
+        ],
       },
       {
         title: "Quick settings",
@@ -296,7 +298,6 @@ export const pages: Page[] = [
         icon: 0xe713,
         help: "Its panel has volume and brightness, battery and network, and shortcuts to Windows settings.",
         fields: [
-          { kind: "custom", editor: "notch:quick" },
           {
             kind: "select",
             label: "Shows",
@@ -324,7 +325,6 @@ export const pages: Page[] = [
         icon: 0xe737,
         help: "Open apps. Click: switch to it (again: minimize). Middle click: close. Right click: its windows, new window, close all.",
         fields: [
-          { kind: "custom", editor: "notch:tasks" },
           {
             kind: "select",
             label: "Windows from",
@@ -378,7 +378,7 @@ export const pages: Page[] = [
         collapsible: true,
         icon: 0xe70d,
         fields: [
-          { kind: "custom", editor: "notch:tray" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("tray"), default: false },
+          { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("tray"), default: false },
           {
             kind: "toggle",
             label: "Host tray icons",
@@ -432,13 +432,13 @@ export const pages: Page[] = [
         title: "Keyboard language",
         collapsible: true,
         icon: 0xe765,
-        fields: [{ kind: "custom", editor: "notch:language" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("language"), default: false }],
+        fields: [{ kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("language"), default: false }],
       },
       {
         title: "Menu",
         collapsible: true,
         icon: 0xe700,
-        fields: [{ kind: "custom", editor: "notch:menu" }, { kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("menu"), default: false }, { kind: "custom", editor: "menuItems" }],
+        fields: [{ kind: "toggle", label: "Hide under maximized windows", help: "Instead of moving aside with its notch, this widget hides while a window covers the notch's spot. Back when the bar opens.", path: hideWhenMaximized("menu"), default: false }, { kind: "custom", editor: "menuItems" }],
       },
     ],
   },
@@ -448,8 +448,8 @@ export const pages: Page[] = [
     icon: 0xe8fd,
     sections: [
       {
-        title: "Notches",
-        help: "Widgets with “Own notch” on show as a notch on their side while the bar is closed.",
+        title: "All notches",
+        help: "Widgets marked “notch” in Bars › Placement show as a notch on their side while the bar is closed.",
         fields: [
           {
             kind: "toggle",
@@ -465,25 +465,40 @@ export const pages: Page[] = [
             path: ["notch", "combine_overlapping"],
             default: true,
           },
-          { kind: "toggle", label: "Left: sit in the corner", path: ["notch", "left", "hug"], default: true },
+        ],
+      },
+      {
+        title: "Left notch",
+        fields: [
+          { kind: "toggle", label: "Sit in the corner", path: ["notch", "left", "hug"], default: true },
           {
             kind: "toggle",
-            label: "Left: move aside for windows",
+            label: "Move aside for windows",
             help: "Slide to the offset while a maximized window's caption buttons are there (back in the corner while the bar is open).",
             path: ["notch", "left", "avoid_windows"],
             default: true,
           },
-          { kind: "number", label: "Left: offset", help: "From the left edge, when moved aside or not in the corner.", path: ["notch", "left", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
-          { kind: "toggle", label: "Right: sit in the corner", path: ["notch", "right", "hug"], default: true },
+          { kind: "number", label: "Offset", help: "From the left edge, when moved aside or not in the corner.", path: ["notch", "left", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
+        ],
+      },
+      {
+        title: "Center notch",
+        fields: [
+          { kind: "number", label: "Offset", help: "Shift from the middle.", path: ["notch", "center", "offset"], default: 0, min: -2000, max: 2000, step: 1, unit: "px" },
+        ],
+      },
+      {
+        title: "Right notch",
+        fields: [
+          { kind: "toggle", label: "Sit in the corner", path: ["notch", "right", "hug"], default: true },
           {
             kind: "toggle",
-            label: "Right: move aside for windows",
+            label: "Move aside for windows",
             help: "Slide to the offset while a maximized window's caption buttons are there (back in the corner while the bar is open).",
             path: ["notch", "right", "avoid_windows"],
             default: true,
           },
-          { kind: "number", label: "Right: offset", help: "From the right edge, when moved aside or not in the corner.", path: ["notch", "right", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
-          { kind: "number", label: "Center: offset", help: "Shift from the middle.", path: ["notch", "center", "offset"], default: 0, min: -2000, max: 2000, step: 1, unit: "px" },
+          { kind: "number", label: "Offset", help: "From the right edge, when moved aside or not in the corner.", path: ["notch", "right", "offset"], default: 150, min: 0, max: 2000, step: 1, unit: "px" },
         ],
       },
     ],

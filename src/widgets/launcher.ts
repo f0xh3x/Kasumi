@@ -15,7 +15,6 @@ interface App {
   name: string;
 }
 
-const MAX_RESULTS = 8;
 const g = (c: number) => String.fromCharCode(c);
 
 const S = {
@@ -24,6 +23,8 @@ const S = {
   selected: 0,
   apps: [] as App[],
   results: [] as App[],
+  /** How many results show ([widgets.launcher] results). */
+  max: 8,
   listeners: new Set<() => void>(),
   fields: new Set<HTMLInputElement>(),
 };
@@ -50,7 +51,7 @@ function search(): void {
         .map((a) => [a, score(a.name, q)] as const)
         .filter(([, s]) => s >= 0)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, MAX_RESULTS)
+        .slice(0, S.max)
         .map(([a]) => a)
     : [];
   S.selected = 0;
@@ -128,7 +129,14 @@ export function launcherSetOpen(open: boolean): void {
 // Clicking another app (or anywhere outside) closes the launcher.
 window.addEventListener("blur", () => close(false));
 
-export function launcher(_opts: Record<string, unknown>): Widget {
+/** Results shown, from the widget's options (3–20, default 8). */
+function setMax(opts: Record<string, unknown>): void {
+  const n = Number(opts.results);
+  if (Number.isFinite(n) && n > 0) S.max = Math.min(20, Math.max(3, Math.round(n)));
+}
+
+export function launcher(opts: Record<string, unknown>): Widget {
+  setMax(opts);
   const field = document.createElement("input");
   field.className = "launcher-field";
   bindField(field);
@@ -153,6 +161,7 @@ export function launcher(_opts: Record<string, unknown>): Widget {
 }
 
 export function launcherPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
+  setMax(opts);
   const list = el("launcher-list");
   const hint = el("launcher-hint");
   const parts: HTMLElement[] = [];

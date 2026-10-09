@@ -297,8 +297,6 @@ function layoutsOps(cfg: Cfg, changed: Record<string, LayoutCfg>): Op[] {
   });
 }
 
-const currentLayout = (cfg: Cfg) => (scope.monitor ? monitorLayout(cfg, scope.monitor) : globalLayout(cfg));
-
 /** Global / per-monitor selector at the top of the Widgets page. */
 const scopeSelector: Editor = (ctx) => {
   const bar = $("div", "scope-bar");
@@ -510,8 +508,27 @@ const placement: Editor = (ctx) => {
     for (const id of listOf(bucket)) {
       const w = cat.find((x) => x.id === id)!;
       const chip = $("div", "chip", glyph(w.icon), w.label);
-      const notchIn = elsewhere ? layouts[bucket.slice(8)] : L;
-      if (bucket !== "disabled" && notchIn.notch.includes(id)) chip.append($("span", "chip-badge", "notch"));
+      const where = elsewhere ? bucket.slice(8) : cur;
+      // Own notch: only bars have closed notches (docks are all notches; always-on bars none).
+      const notched = (ctx.cfg.surfaces?.[where]?.mode ?? "bar") === "bar";
+      if (bucket !== "disabled" && notched) {
+        const on = layouts[where].notch.includes(id);
+        if (elsewhere) {
+          if (on) chip.append($("span", "chip-badge on", "notch"));
+        } else {
+          // A click switches whether it also shows as a notch on its side.
+          const pill = $("button", `chip-badge toggle${on ? " on" : ""}`, "notch");
+          pill.title = on ? "Shows as a notch while the bar is closed — click to stop" : "Click to also show it as a notch while the bar is closed";
+          pill.draggable = false;
+          pill.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const next = structuredClone(L);
+            next.notch = on ? next.notch.filter((x) => x !== id) : [...next.notch, id];
+            ctx.saveMany(layoutOps(ctx.cfg, next));
+          });
+          chip.append(pill);
+        }
+      }
       chip.draggable = true;
       chip.dataset.id = id;
       // A click (not a drag) opens the widget's own settings.
@@ -611,55 +628,11 @@ const placement: Editor = (ctx) => {
     .filter((r: any) => hasLists(r.surfaces?.[cur]))
     .map((r: any) => r.match);
   const help = scope.monitor
-    ? "Drag widgets between sides and bars; Disabled hides a widget on this monitor's bar."
-    : "Drag widgets between sides and bars — a widget lives in one place. Disabled switches it off everywhere. Widgets marked “notch” show as their own notch on their side." +
+    ? "Drag widgets between sides and bars; Disabled hides a widget on this monitor's bar. Click “notch” to show a widget as a notch on this monitor."
+    : "Drag widgets between sides and bars — a widget lives in one place. Disabled switches it off everywhere. Click “notch” on a widget to also show it as a notch on its side while the bar is closed." +
       (own.length ? ` Adding or removing a widget here also applies to ${own.join(", ")}, which have their own layout of this bar.` : "");
   return $("div", "", root, $("p", "card-help", help));
 };
-
-/** Per-monitor: which widgets show as their own notch here. */
-const monitorNotches: Editor = (ctx) => {
-  const L = currentLayout(ctx.cfg);
-  const box = $("div", "stack-tight");
-  for (const w of catalog(ctx.cfg)) {
-    if (!enabled(ctx.cfg, w.id) || !sideOf(L, w.id)) continue;
-    box.append(
-      row(
-        `${w.label}`,
-        undefined,
-        sw(L.notch.includes(w.id), (on) => {
-          const next = structuredClone(L);
-          next.notch = on ? [...next.notch, w.id] : next.notch.filter((x) => x !== w.id);
-          ctx.saveMany(layoutOps(ctx.cfg, next));
-        }),
-      ),
-    );
-  }
-  if (!box.children.length) box.append($("p", "card-help", "No widgets are placed on this monitor."));
-  return box;
-};
-
-/** In a widget's own settings: whether it shows as (part of) a notch on its side. */
-export function widgetNotch(widget: string): Editor {
-  return (ctx) => {
-    // The surface it's placed on (globally).
-    const id = surfaceIds(ctx.cfg).find((s) => sideOf(surfaceLayout(ctx.cfg, s), widget)) ?? scope.surface;
-    const L = surfaceLayout(ctx.cfg, id);
-    const side = sideOf(L, widget);
-    const has = L.notch.includes(widget);
-    const where = surfaceIds(ctx.cfg).length > 1 ? ` of the ${surfaceName(id, ctx.cfg.surfaces?.[id]).toLowerCase()}` : "";
-    return row(
-      "Own notch",
-      side
-        ? `Shows in the ${side} notch${where} while the bar is closed. Notch position and corner settings are under Notches.`
-        : "Place the widget on a side first (Placement above).",
-      sw(has, (on) => {
-        const notch = on ? [...L.notch, widget] : L.notch.filter((x) => x !== widget);
-        ctx.saveMany(ctx.cfg.surfaces ? [{ path: ["surfaces", id, "notch"], value: notch }] : [{ path: ["layout", "notch"], value: notch }]);
-      }),
-    );
-  };
-}
 
 /**
  * v2 -> v3: per-widget notch tables become per-side [notch.<side>] settings, and
@@ -1102,7 +1075,7 @@ const buttonsWidgets: Editor = (ctx) => {
       });
       head.append(remove);
     }
-    box.append($("div", "buttons-card", head, widgetNotch(id)(ctx), itemsEditor(id, false)(ctx)));
+    box.append($("div", "buttons-card", head, itemsEditor(id, false)(ctx)));
   }
   const add = $("button", "button", "Add another Buttons widget") as HTMLButtonElement;
   add.addEventListener("click", () => {
@@ -1123,7 +1096,6 @@ const buttonsWidgets: Editor = (ctx) => {
   );
 };
 
-const widgetNotchEditors = Object.fromEntries(WIDGETS.map((w) => [`notch:${w.id}`, widgetNotch(w.id)]));
 
 // --- Presets -------------------------------------------------------------------
 
@@ -1289,10 +1261,8 @@ export const editors: Record<string, Editor> = {
   scopeSelector,
   monitorToggles,
   placement,
-  monitorNotches,
   clockFormat,
   weatherLocation,
   tempsSensors,
   menuItems,
-  ...widgetNotchEditors,
 };
