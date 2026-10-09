@@ -7,12 +7,12 @@ import { el, Glyph, icon, type Widget } from "./index";
  * "title — artist". Hidden when nothing is playing. `max_width` (px) caps the text;
  * with `scroll`, text that doesn't fit scrolls instead of ending in "…".
  */
-/** Title scrolling speed, px per second. */
-const SCROLL_SPEED = 32;
 
 export function media(opts: Record<string, unknown>): Widget {
   const maxWidth = typeof opts.max_width === "number" ? opts.max_width : 240;
   const scroll = opts.scroll === true;
+  // Title scrolling speed, px per second ([widgets.media] scroll_speed).
+  const speed = typeof opts.scroll_speed === "number" ? Math.min(120, Math.max(5, opts.scroll_speed)) : 32;
 
   const button = (glyph: string, action: string) => {
     const b = el("media-btn", icon(glyph));
@@ -62,7 +62,7 @@ export function media(opts: Record<string, unknown>): Widget {
     if (!over) return;
     const distance = label.offsetWidth + echo.offsetLeft - label.offsetLeft - label.offsetWidth;
     const hold = 1800;
-    const total = hold + (distance / SCROLL_SPEED) * 1000;
+    const total = hold + (distance / speed) * 1000;
     marquee = track.animate(
       [
         { transform: "translateX(0)" },

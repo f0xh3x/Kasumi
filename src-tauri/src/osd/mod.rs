@@ -84,8 +84,9 @@ impl KeyboardWatch {
         if prev.is_some_and(|(_, l)| l == lang) {
             return;
         }
-        let (code, name) = crate::win::language_names(lang);
-        crate::providers::publish(app, "keyboard", json!({ "code": code, "name": name }));
+        let (code, code2, name) = crate::win::language_names(lang);
+        let data = json!({ "code": code, "code2": code2, "name": name });
+        crate::providers::publish(app, "keyboard", data.clone());
         let same_window = prev.is_some_and(|(w, _)| w == fg);
         let enabled = {
             let cfg = app.state::<SharedConfig>();
@@ -95,7 +96,7 @@ impl KeyboardWatch {
         if same_window && enabled {
             // The peek pops at the language widget, on whichever surface shows it.
             if let Some(label) = crate::engine::overlay_for(app, "language") {
-                let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://keyboard", json!({ "code": code, "name": name }));
+                let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://keyboard", data);
             }
         }
     }

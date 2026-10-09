@@ -331,6 +331,16 @@ export const pages: Page[] = [
             path: ["widgets", "media", "scroll"],
             default: false,
           },
+          {
+            kind: "slider",
+            label: "Scroll speed",
+            path: (cfg) => (cfg.widgets?.media?.scroll === true ? ["widgets", "media", "scroll_speed"] : null),
+            default: 32,
+            min: 10,
+            max: 80,
+            step: 2,
+            unit: "px/s",
+          },
         ],
       },
       {
@@ -340,7 +350,20 @@ export const pages: Page[] = [
         help: "A search icon that becomes the launcher's search field. These settings are for the launcher however it opens; its hotkey and the Start menu option are under General.",
         fields: [
           { kind: "slider", label: "Results shown", help: "How many apps the search lists at most.", path: ["widgets", "launcher", "results"], default: 8, min: 3, max: 20, step: 1 },
+          { kind: "slider", label: "Width", path: ["widgets", "launcher", "panel_width"], default: 340, min: 260, max: 600, step: 10, unit: "px" },
           { kind: "custom", editor: "launcherPower" },
+          {
+            kind: "select",
+            label: "Power buttons position",
+            path: (cfg) => ((cfg.widgets?.launcher?.power ?? []).length ? ["widgets", "launcher", "power_align"] : null),
+            default: "right",
+            options: [
+              { value: "left", label: "Left" },
+              { value: "center", label: "Middle" },
+              { value: "right", label: "Right" },
+            ],
+          },
+          { kind: "toggle", label: "User button", help: "Your account picture and name beside the power buttons; opens Settings › Your info.", path: ["widgets", "launcher", "user"], default: false },
         ],
       },
       {
@@ -635,6 +658,25 @@ export const pages: Page[] = [
             path: ["widgets", "tray", "hide"],
             default: ["explorer.exe"],
             placeholder: "explorer.exe",
+          },
+        ],
+      },
+      {
+        title: "Keyboard language",
+        collapsible: true,
+        icon: 0xe765,
+        fields: [
+          { kind: "toggle", label: "Keyboard icon", help: "A keyboard before the language code.", path: ["widgets", "language", "icon"], default: false },
+          {
+            kind: "select",
+            label: "Code",
+            help: "Also used by the popup when you switch layouts.",
+            path: ["widgets", "language", "format"],
+            default: "three",
+            options: [
+              { value: "three", label: "ENG (three letters)" },
+              { value: "two", label: "EN (two letters)" },
+            ],
           },
         ],
       },

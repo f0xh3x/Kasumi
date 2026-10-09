@@ -76,6 +76,11 @@ function launch(app: App | undefined): void {
   close(false);
 }
 
+/** The signed-in user (name, account picture), asked for once. */
+let user: Promise<{ name: string; picture: string | null }> | null = null;
+const userInfo = () =>
+  (user ??= invoke<{ name: string; picture: string | null }>("launcher_user").catch(() => ({ name: "", picture: null })));
+
 const bottomEdge = () => document.documentElement.classList.contains("edge-bottom");
 
 function bindField(input: HTMLInputElement): void {
@@ -171,34 +176,59 @@ export function launcherPanel(opts: Record<string, unknown>, ctx: PanelContext):
     bindField(own);
     parts.push(el("launcher-own", icon(g(0xe721)), own));
   }
-  // Power buttons ([widgets.launcher] power), at the end away from the bar, like
-  // a start menu's; restart / shut down / sign out need a second click.
+  // The row at the end away from the bar, like a start menu's: the user (button
+  // to the account page, [widgets.launcher] user) and the power buttons
+  // ([widgets.launcher] power, aligned by power_align); restart / shut down /
+  // sign out need a second click, which the note asks for.
   const chosen = Array.isArray(opts.power) ? (opts.power as unknown[]).filter((p): p is string => typeof p === "string" && p in POWER_ACTIONS) : [];
+  const showUser = opts.user === true;
+  const align = opts.power_align === "left" || opts.power_align === "center" ? opts.power_align : "right";
   const disposers: (() => void)[] = [];
-  const power = el("launcher-power");
-  if (chosen.length) {
-    const note = el("launcher-power-note");
-    power.append(note);
-    for (const id of Object.keys(POWER_ACTIONS).filter((p) => chosen.includes(p))) {
-      const [label, glyph, confirm] = POWER_ACTIONS[id];
-      const b = el("launcher-power-button clickable", icon(g(glyph)));
-      b.title = label;
-      disposers.push(
-        confirmClick(
-          b,
-          confirm,
-          () => {
-            invoke("run_action", { action: id, target: null }).catch(console.error);
-            close(false);
-          },
-          (on) => (note.textContent = on ? `Click again to ${label.toLowerCase()}` : ""),
-        ),
-      );
-      power.append(b);
-    }
+  const note = el("launcher-power-note");
+  const buttons = el("launcher-power-buttons");
+  const power = el(`launcher-power align-${align}`);
+  if (showUser) {
+    const pic = el("launcher-user-pic", icon(g(0xe77b)));
+    const name = el("launcher-user-name");
+    const user = el("launcher-user clickable", pic, name);
+    user.title = "Your account";
+    user.addEventListener("click", () => {
+      invoke("run_action", { action: "open", target: "ms-settings:yourinfo" }).catch(console.error);
+      close(false);
+    });
+    userInfo().then((u) => {
+      name.textContent = u.name;
+      if (u.picture) {
+        const img = document.createElement("img");
+        img.src = u.picture;
+        img.draggable = false;
+        pic.replaceChildren(img);
+      }
+    });
+    power.append(user);
   }
-  power.hidden = !chosen.length;
+  power.append(note, buttons, el("launcher-power-tail"));
+  for (const id of Object.keys(POWER_ACTIONS).filter((p) => chosen.includes(p))) {
+    const [label, glyph, confirm] = POWER_ACTIONS[id];
+    const b = el("launcher-power-button clickable", icon(g(glyph)));
+    b.title = label;
+    disposers.push(
+      confirmClick(
+        b,
+        confirm,
+        () => {
+          invoke("run_action", { action: id, target: null }).catch(console.error);
+          close(false);
+        },
+        (on) => (note.textContent = on ? `Click again to ${label.toLowerCase()}` : ""),
+      ),
+    );
+    buttons.append(b);
+  }
+  power.hidden = !chosen.length && !showUser;
   const root = el("launcher-panel", ...parts, list, hint, power);
+  // [widgets.launcher] panel_width.
+  if (typeof opts.panel_width === "number") root.style.width = `${Math.min(700, Math.max(240, opts.panel_width))}px`;
   let rows = -1;
   const render = () => {
     hint.textContent = S.query.trim() && !S.results.length ? "No apps found" : "";

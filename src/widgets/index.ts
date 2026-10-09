@@ -88,12 +88,14 @@ const widgets: Record<string, Factory> = {
   claude,
   clipboard,
   notifications,
-  language: () => {
+  language: (opts) => {
     // Click to switch the window you're typing in to the next keyboard layout.
-    const root = el("widget language clickable");
+    // Options: icon (a keyboard glyph before the code), format "three" (ENG) | "two" (EN).
+    const text = el("language-code");
+    const root = el("widget language clickable", ...(opts.icon === true ? [icon(g(0xe765))] : []), text);
     root.addEventListener("click", () => invoke("switch_keyboard_layout").catch(console.error));
     const unsubscribe = subscribe("keyboard", (k) => {
-      root.textContent = k?.code ?? "";
+      text.textContent = k ? languageCode(k, opts) : "";
       root.title = k?.name ?? "";
     });
     return { el: root, dispose: unsubscribe };
@@ -120,6 +122,11 @@ const panels: Record<string, PanelFactory> = {
  * each with its own `[widgets."buttons#2"]` options.
  */
 export const widgetType = (name: string): string => name.split("#")[0];
+
+/** A keyboard layout's code as the language widget shows it ([widgets.language] format). */
+export function languageCode(k: { code: string; code2?: string }, opts: Options | undefined): string {
+  return opts?.format === "two" && k.code2 ? k.code2 : k.code;
+}
 
 export function createWidget(name: string, opts: Options = {}): Widget {
   const factory = widgets[widgetType(name)];

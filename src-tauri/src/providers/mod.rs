@@ -63,6 +63,12 @@ pub fn rgba_json(w: u32, h: u32, rgba: &[u8]) -> Value {
     json!({ "w": w, "h": h, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) })
 }
 
+/// File bytes as a data URL the frontend can show directly (album art, pictures).
+pub fn data_url(mime: &str, bytes: &[u8]) -> String {
+    use base64::Engine;
+    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 /// `[widgets.<name>]` from the current config.
 fn widget_opts(app: &AppHandle, name: &str) -> toml::Table {
     let cfg = app.state::<SharedConfig>();

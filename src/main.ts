@@ -6,7 +6,7 @@ import { initData } from "./data";
 import { computeFrame, lerp, mirrorPath, type Bump } from "./geometry";
 import { Spring } from "./spring";
 import type { Layout, NotchLayout, Rect } from "./types";
-import { createPanel, createWidget, g, panelFor, widgetType, type Widget } from "./widgets";
+import { createPanel, createWidget, g, languageCode, panelFor, widgetType, type Widget } from "./widgets";
 import { launcherSetOpen } from "./widgets/launcher";
 
 const svg = document.getElementById("shape") as unknown as SVGSVGElement;
@@ -739,7 +739,7 @@ class Overlay {
   }
 
   /** Keyboard layout changed: pop a small notch at the language widget (or use the OSD). */
-  showKeyboard(e: { code: string; name: string }): void {
+  showKeyboard(e: { code: string; code2?: string; name: string }): void {
     const L = this.layout;
     if (!L) return;
     // The language widget shows the new layout itself whenever it's visible.
@@ -747,7 +747,7 @@ class Overlay {
     const anchor = this.langEl?.getBoundingClientRect();
     // Docks (tiny handle / covered): grow the OSD pill rather than a second bump.
     if (!anchor || !this.peekDrop || this.expanded || L.mode === "dock") {
-      this.showOsd({ kind: "keyboard", level: 0, muted: false, text: e.code });
+      this.showOsd({ kind: "keyboard", level: 0, muted: false, text: languageCode(e, L.widgets.language) });
       return;
     }
     this.peekDrop.x = anchor.left + anchor.width / 2;
@@ -755,7 +755,7 @@ class Overlay {
     glyph.className = "icon";
     glyph.textContent = g(0xe765);
     const code = document.createElement("span");
-    code.textContent = e.code;
+    code.textContent = languageCode(e, L.widgets.language);
     this.peekEl.replaceChildren(glyph, code);
     this.peek.target = 1;
     clearTimeout(this.peekTimer);
@@ -999,7 +999,7 @@ async function main(): Promise<void> {
   await win.listen<{ expanded: boolean }>("notch://state", (e) => overlay.setExpanded(e.payload.expanded));
   await win.listen<NotchLayout[]>("notch://positions", (e) => overlay.updatePositions(e.payload));
   await win.listen<{ open: boolean }>("notch://launcher", (e) => overlay.setLauncher(e.payload.open));
-  await win.listen<{ code: string; name: string }>("notch://keyboard", (e) => overlay.showKeyboard(e.payload));
+  await win.listen<{ code: string; code2?: string; name: string }>("notch://keyboard", (e) => overlay.showKeyboard(e.payload));
   await win.listen<{ kind: "volume" | "brightness" | "caps"; level: number; muted: boolean; text?: string }>("notch://osd", (e) =>
     overlay.showOsd(e.payload),
   );

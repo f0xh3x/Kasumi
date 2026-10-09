@@ -73,6 +73,8 @@ export interface TrayIcon {
 export interface Keyboard {
   /** ISO 639-2 code, e.g. "ENG", "LIT". */
   code: string;
+  /** ISO 639-1 code, e.g. "EN", "LT". */
+  code2: string;
   name: string;
 }
 

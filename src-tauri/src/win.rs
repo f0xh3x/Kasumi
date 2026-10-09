@@ -19,9 +19,9 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFO,
     MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
 };
-use windows::Win32::Globalization::{GetLocaleInfoW, LOCALE_SENGLISHLANGUAGENAME, LOCALE_SISO639LANGNAME2};
+use windows::Win32::Globalization::{GetLocaleInfoW, LOCALE_SENGLISHLANGUAGENAME, LOCALE_SISO639LANGNAME, LOCALE_SISO639LANGNAME2};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
-use windows::core::w;
+use windows::core::PCWSTR;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardLayout, GetKeyboardLayoutList, SendInput, HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
@@ -547,41 +547,67 @@ pub fn foreground_layout() -> Option<(isize, u16)> {
 }
 
 /// Short code and display name for a LANGID, e.g. ("ENG", "English") or ("LIT", "Lithuanian").
-pub fn language_names(langid: u16) -> (String, String) {
+pub fn language_names(langid: u16) -> (String, String, String) {
     let get = |kind: u32| -> String {
         let mut buf = [0u16; 128];
         let n = unsafe { GetLocaleInfoW(langid as u32, kind, Some(&mut buf)) } as usize;
         String::from_utf16_lossy(&buf[..n.saturating_sub(1)])
     };
     let code = get(LOCALE_SISO639LANGNAME2).to_uppercase();
+    let code2 = get(LOCALE_SISO639LANGNAME).to_uppercase();
     let name = get(LOCALE_SENGLISHLANGUAGENAME);
-    (if code.is_empty() { format!("{langid:04X}") } else { code }, name)
+    let fallback = || format!("{langid:04X}");
+    (if code.is_empty() { fallback() } else { code }, if code2.is_empty() { fallback() } else { code2 }, name)
 }
 
 /// Presses the user's layout-switch hotkey (Settings > Typing > Advanced keyboard
 /// settings > Input language hot keys): Alt+Shift by default, Ctrl+Shift, or
 /// Win+Space when the classic hotkey is disabled. Works whatever has focus.
 fn press_layout_hotkey() {
-    let mut buf = [0u16; 8];
-    let mut len = (buf.len() * 2) as u32;
-    let setting = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!(r"Keyboard Layout\Toggle"),
-            w!("Language Hotkey"),
-            RRF_RT_REG_SZ,
-            None,
-            Some(buf.as_mut_ptr().cast()),
-            Some(&mut len),
-        )
-    };
-    let value = if setting.is_ok() { String::from_utf16_lossy(&buf[..(len as usize / 2).saturating_sub(1)]) } else { "1".into() };
+    let value = reg_string(HKEY_CURRENT_USER, r"Keyboard Layout\Toggle", "Language Hotkey").unwrap_or_else(|| "1".into());
     let (modifier, key) = match value.as_str() {
         "2" => (VK_LCONTROL, VK_LSHIFT),
         "3" | "4" => (VK_LWIN, VK_SPACE),
         _ => (VK_LMENU, VK_LSHIFT),
     };
     send_keys(&[KeyEvent::key(modifier, false), KeyEvent::key(key, false), KeyEvent::key(key, true), KeyEvent::key(modifier, true)], 0);
+}
+
+/// A string value from the registry.
+pub fn reg_string(root: windows::Win32::System::Registry::HKEY, path: &str, name: &str) -> Option<String> {
+    let (path, name) = (wide(path), wide(name));
+    let mut buf = vec![0u16; 1024];
+    let mut len = (buf.len() * 2) as u32;
+    unsafe {
+        RegGetValueW(root, PCWSTR(path.as_ptr()), PCWSTR(name.as_ptr()), RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr().cast()), Some(&mut len))
+            .ok()
+            .ok()?;
+    }
+    Some(String::from_utf16_lossy(&buf[..(len as usize / 2).saturating_sub(1)]))
+}
+
+/// The signed-in user's SID ("S-1-5-21-..."), e.g. for per-user registry keys.
+pub fn user_sid() -> Option<String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = windows::Win32::Foundation::HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        let mut len = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+        let mut buf = vec![0u8; len as usize];
+        let got = GetTokenInformation(token, TokenUser, Some(buf.as_mut_ptr().cast()), len, &mut len);
+        let _ = CloseHandle(token);
+        got.ok()?;
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut s = PWSTR::null();
+        ConvertSidToStringSidW(user.User.Sid, &mut s).ok()?;
+        let out = s.to_string().ok();
+        let _ = LocalFree(Some(HLOCAL(s.0.cast())));
+        out
+    }
 }
 
 /// One key event to send. `scan` 0 lets Windows derive it from `vk`.

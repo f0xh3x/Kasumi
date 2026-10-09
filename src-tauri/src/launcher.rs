@@ -150,6 +150,20 @@ pub fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     key.map(|k| (mods, k))
 }
 
+/// The signed-in user for the launcher's user button: name and account picture
+/// (Settings > Accounts > Your info), as a data URL (None without one).
+#[tauri::command]
+pub async fn launcher_user() -> Value {
+    let picture = crate::win::user_sid()
+        .and_then(|sid| {
+            let key = format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\AccountPicture\Users\{sid}");
+            crate::win::reg_string(windows::Win32::System::Registry::HKEY_LOCAL_MACHINE, &key, "Image96")
+        })
+        .and_then(|path| std::fs::read(path).ok())
+        .map(|bytes| crate::providers::data_url("image/jpeg", &bytes));
+    json!({ "name": std::env::var("USERNAME").unwrap_or_default(), "picture": picture })
+}
+
 /// [launcher] start_menu: the keyboard helper (keyhook.rs) presses this hotkey on
 /// a lone Windows key press.
 const START_HOTKEY_ID: i32 = 2;

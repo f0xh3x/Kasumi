@@ -2,7 +2,6 @@
 //! Transport Controls (the same session the volume flyout shows).
 
 use super::publish;
-use base64::Engine as _;
 use serde_json::{json, Value};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Mutex;
@@ -70,7 +69,7 @@ fn read_art(props: &MediaProperties) -> Option<String> {
     let mut bytes = vec![0u8; size as usize];
     reader.ReadBytes(&mut bytes).ok()?;
     let mime = if mime.starts_with("image/") { mime } else { "image/png".into() };
-    Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    Some(super::data_url(&mime, &bytes))
 }
 
 fn unix_ms_now() -> i64 {
