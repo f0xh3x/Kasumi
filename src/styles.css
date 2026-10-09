@@ -574,3 +574,26 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .privacy-row .icon { color: var(--warn); }
 .privacy-app { flex: 1; }
 .privacy-what, .privacy-none { color: var(--fg-dim); }
+
+/* Claude Code usage: text, a bar or ring, a "working" dot. */
+.widget.claude { gap: 7px; font-variant-numeric: tabular-nums; }
+.claude-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); overflow: hidden; flex: none; }
+.claude-bar-fill { height: 100%; width: 0; border-radius: 3px; background: var(--fg); transition: width 400ms ease; }
+.claude-ring { width: 15px; height: 15px; flex: none; transform: rotate(-90deg); }
+.claude-ring circle { fill: none; stroke-width: 2.5; }
+.claude-ring .track { stroke: rgba(255, 255, 255, 0.18); }
+.claude-ring .fill { stroke: var(--fg); stroke-linecap: round; transition: stroke-dasharray 400ms ease; }
+.widget.claude.high .claude-bar-fill { background: var(--warn); }
+.widget.claude.high .claude-ring .fill { stroke: var(--warn); }
+.claude-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); flex: none; }
+.claude-dot.busy { background: #d97757; animation: claude-pulse 1.2s ease-in-out infinite; }
+@keyframes claude-pulse { 50% { opacity: 0.35; } }
+.claude-panel { display: flex; flex-direction: column; gap: 5px; width: 260px; }
+.claude-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--fg-dim); margin-top: 6px; }
+.claude-head:first-child { margin-top: 0; }
+.claude-row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.claude-row.dim { color: var(--fg-dim); }
+.claude-chart { display: flex; align-items: flex-end; justify-content: space-between; gap: 6px; height: 66px; margin-top: 4px; }
+.claude-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+.claude-col-bar { width: 100%; border-radius: 3px; background: rgba(255, 255, 255, 0.55); }
+.claude-col-day { font-size: 10px; color: var(--fg-dim); }

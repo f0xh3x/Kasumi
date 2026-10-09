@@ -19,6 +19,7 @@ webview2-com = "0.39"   # WebView2 APIs (same version as wry): dropped files' pa
 windows-core-062 = { package = "windows-core", version = "0.62" }  # what webview2-com is built on
 wmi = "0.18.4"
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std"] }  # Claude Code session timestamps
 toml_edit = "0.25.15"
 
 [dependencies.windows]

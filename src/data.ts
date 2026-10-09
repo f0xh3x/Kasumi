@@ -114,6 +114,14 @@ export interface SystemStatus {
   network: { connected: boolean; internet?: boolean; name: string; wifi: boolean } | null;
 }
 
+/** Claude Code usage from its local session files (see providers/claude.rs). */
+export interface ClaudeUsage {
+  buckets: { h: number; model: string; tokens: number; cacheRead: number; messages: number; sessions: string[] }[];
+  window: { start: number; end: number; tokens: number; messages: number } | null;
+  busy: boolean;
+  now: number;
+}
+
 interface DataMap {
   system: SystemStatus | null;
   tasks: Tasks | null;
@@ -127,6 +135,7 @@ interface DataMap {
   netspeed: { down: number; up: number } | null;
   recycle: { items: number; bytes: number } | null;
   privacy: { mic: string[]; camera: string[]; location: string[] } | null;
+  claude: ClaudeUsage | null;
 }
 
 type Key = keyof DataMap;
