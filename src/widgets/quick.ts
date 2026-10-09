@@ -1,8 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
 import { subscribe, type SystemStatus } from "../data";
-import { el, icon, type PanelContext, type Widget } from "./index";
-import { iconUrl } from "./tray";
+import { iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
 
 /**
  * Quick settings. The button shows the battery (on PCs that have one) or a
@@ -11,7 +10,6 @@ import { iconUrl } from "./tray";
  * shortcuts to Windows' own settings pages.
  */
 
-const g = (c: number) => String.fromCharCode(c);
 
 export function batteryGlyph(percent: number, charging: boolean): string {
   const step = Math.max(0, Math.min(10, Math.round(percent / 10)));
@@ -59,9 +57,11 @@ export function quick(opts: Record<string, unknown>): Widget {
   return { el: root, dispose: off };
 }
 
-/** A slider row: icon (click: `onIcon`), range input, value. */
-function slider(onInput: (v: number) => void, onIcon?: () => void) {
-  const ico = icon("");
+/**
+ * A slider row: icon (click: `onIcon`), range input, value. Volume, brightness
+ * and each app's volume. `ico` is the icon element (an app's picture), else a glyph.
+ */
+function slider(onInput: (v: number) => void, onIcon?: () => void, ico: HTMLElement = icon(""), rowClass = "quick-row") {
   const input = document.createElement("input");
   input.type = "range";
   input.min = "0";
@@ -88,13 +88,16 @@ function slider(onInput: (v: number) => void, onIcon?: () => void) {
   });
   if (onIcon) {
     ico.classList.add("clickable");
-    ico.addEventListener("click", onIcon);
+    ico.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onIcon();
+    });
   }
-  const row = el("quick-row", ico, input, val);
+  const row = el(rowClass, ico, input, val);
   return {
     row,
-    set(v: number, glyph: string) {
-      ico.textContent = glyph;
+    set(v: number, glyph?: string) {
+      if (glyph !== undefined) ico.textContent = glyph;
       if (dragging) return;
       input.value = String(Math.round(v));
       val.textContent = String(Math.round(v));
@@ -188,7 +191,7 @@ function appVolumes(ctx: PanelContext) {
   const list = el("quick-apps");
   const empty = el("quick-apps-empty", "No apps are playing sound.");
   list.append(empty);
-  type Row = { row: HTMLElement; input: HTMLInputElement; mute: HTMLElement; val: HTMLElement; dragging: boolean };
+  type Row = { slider: ReturnType<typeof slider>; mute: HTMLElement };
   const rows = new Map<number, Row>();
   type App = { pid: number; name: string; icon: { w: number; h: number; rgba: string } | null; level: number; muted: boolean };
   const refresh = () =>
@@ -197,7 +200,7 @@ function appVolumes(ctx: PanelContext) {
         let changed = false;
         for (const [pid, r] of rows) {
           if (!apps.some((a) => a.pid === pid)) {
-            r.row.remove();
+            r.slider.row.remove();
             rows.delete(pid);
             changed = true;
           }
@@ -205,12 +208,7 @@ function appVolumes(ctx: PanelContext) {
         for (const a of apps) {
           let r = rows.get(a.pid);
           if (!r) {
-            const input = document.createElement("input");
-            input.type = "range";
-            input.className = "quick-range";
-            input.min = "0";
-            input.max = "100";
-            const mute = el("quick-app-icon clickable");
+            const mute = el("quick-app-icon");
             if (a.icon) {
               const img = document.createElement("img");
               img.src = iconUrl(a.icon);
@@ -218,30 +216,19 @@ function appVolumes(ctx: PanelContext) {
               mute.append(img);
             } else mute.append(icon(g(0xe767)));
             mute.title = `${a.name} — click to mute`;
-            const val = el("quick-num");
-            const row = el("quick-app", mute, input, val);
-            const entry: Row = { row, input, mute, val, dragging: false };
-            input.addEventListener("input", () => {
-              entry.dragging = true;
-              val.textContent = input.value;
-              input.style.setProperty("--fill", `${input.value}%`);
-              invoke("audio_session_set", { pid: a.pid, level: Number(input.value) / 100 }).catch(console.error);
-            });
-            input.addEventListener("change", () => window.setTimeout(() => (entry.dragging = false), 400));
-            mute.addEventListener("click", (e) => {
-              e.stopPropagation();
-              invoke("audio_session_set", { pid: a.pid, muted: !mute.classList.contains("muted") }).then(refresh).catch(console.error);
-            });
+            const row = slider(
+              (v) => invoke("audio_session_set", { pid: a.pid, level: v / 100 }).catch(console.error),
+              () => invoke("audio_session_set", { pid: a.pid, muted: !mute.classList.contains("muted") }).then(refresh).catch(console.error),
+              mute,
+              "quick-app",
+            );
+            const entry: Row = { slider: row, mute };
+            list.append(row.row);
             rows.set(a.pid, (r = entry));
-            list.append(row);
             changed = true;
           }
-          if (!r.dragging) {
-            const v = Math.round(a.level * 100);
-            r.input.value = String(v);
-            r.val.textContent = String(v);
-            r.input.style.setProperty("--fill", `${a.muted ? 0 : v}%`);
-          }
+          // Like the master volume: muted reads 0.
+          r.slider.set(a.muted ? 0 : a.level * 100);
           r.mute.classList.toggle("muted", a.muted);
         }
         empty.hidden = rows.size > 0;

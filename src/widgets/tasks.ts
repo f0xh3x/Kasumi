@@ -1,8 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { subscribe, type TaskApp, type TaskWindow, type Tasks } from "../data";
-import { el, type PanelContext, type Widget } from "./index";
-import { iconUrl } from "./tray";
+import { iconUrl, g, el, type PanelContext, type Widget } from "./index";
 
 /**
  * Open apps (the windows Alt+Tab shows), one button per app.
@@ -395,7 +394,7 @@ export function tasksPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
     }
     head.append(el("tasks-name", app.name));
     const rows = wins.map((w) => {
-      const close = el("tasks-close", String.fromCharCode(0xe711));
+      const close = el("tasks-close", g(0xe711));
       close.title = "Close window";
       close.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -411,7 +410,7 @@ export function tasksPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
       return row;
     });
     const action = (label: string, glyph: number, run: () => void) => {
-      const a = el("tasks-action", el("icon", String.fromCharCode(glyph)), label);
+      const a = el("tasks-action", el("icon", g(glyph)), label);
       a.addEventListener("click", () => {
         run();
         ctx.close();

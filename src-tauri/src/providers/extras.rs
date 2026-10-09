@@ -6,7 +6,7 @@
 
 use serde_json::json;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
@@ -14,13 +14,7 @@ use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
 };
 use windows::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
-
-fn placed(app: &AppHandle, ty: &str) -> bool {
-    let cfg = app.state::<super::SharedConfig>();
-    let cfg = cfg.read().unwrap();
-    cfg.widget_placed(ty)
-}
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
 pub fn start(app: &AppHandle) {
     let app = app.clone();
@@ -37,22 +31,22 @@ fn run(app: AppHandle) {
     let mut last_privacy = last_net;
     loop {
         let now = Instant::now();
-        if placed(&app, "focus") {
+        if super::placed(&app, "focus") {
             super::publish(&app, "focus", focus());
         }
-        if placed(&app, "netspeed") && now - last_net >= Duration::from_secs(1) {
+        if super::placed(&app, "netspeed") && now - last_net >= Duration::from_secs(1) {
             last_net = now;
             if let Some((down, up)) = net.sample() {
                 super::publish(&app, "netspeed", json!({ "down": down, "up": up }));
             }
-        } else if !placed(&app, "netspeed") {
+        } else if !super::placed(&app, "netspeed") {
             net = NetSpeed::default();
         }
-        if placed(&app, "recycle") && now - last_bin >= Duration::from_secs(3) {
+        if super::placed(&app, "recycle") && now - last_bin >= Duration::from_secs(3) {
             last_bin = now;
             super::publish(&app, "recycle", recycle_bin());
         }
-        if placed(&app, "privacy") && now - last_privacy >= Duration::from_secs(1) {
+        if super::placed(&app, "privacy") && now - last_privacy >= Duration::from_secs(1) {
             last_privacy = now;
             super::publish(&app, "privacy", privacy());
         }
@@ -70,9 +64,7 @@ fn focus() -> serde_json::Value {
         if h.is_invalid() || pid == std::process::id() {
             return json!(null);
         }
-        let mut buf = [0u16; 512];
-        let n = GetWindowTextW(h, &mut buf) as usize;
-        let title = String::from_utf16_lossy(&buf[..n]);
+        let title = crate::win::window_title(h);
         let app = crate::win::process_name(pid).unwrap_or_default();
         if title.is_empty() || matches!(app.to_lowercase().as_str(), "explorer" if title == "Program Manager") {
             return json!(null);
@@ -190,15 +182,11 @@ fn running_exes() -> std::collections::HashSet<String> {
     out
 }
 
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
 fn subkeys(root: HKEY, path: &str) -> Vec<String> {
     let mut out = Vec::new();
     unsafe {
         let mut key = HKEY::default();
-        let p = wide(path);
+        let p = crate::win::wide(path);
         if RegOpenKeyExW(root, PCWSTR(p.as_ptr()), None, KEY_READ, &mut key).is_err() {
             return out;
         }
@@ -221,11 +209,11 @@ fn in_use(path: &str) -> bool {
     let read = |name: &str| -> Option<u64> {
         unsafe {
             let mut key = HKEY::default();
-            let p = wide(path);
+            let p = crate::win::wide(path);
             if RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(p.as_ptr()), None, KEY_READ, &mut key).is_err() {
                 return None;
             }
-            let n = wide(name);
+            let n = crate::win::wide(name);
             let mut v = 0u64;
             let mut size = 8u32;
             let ok = RegQueryValueExW(key, PCWSTR(n.as_ptr()), None, None, Some(&mut v as *mut u64 as *mut u8), Some(&mut size)).is_ok();

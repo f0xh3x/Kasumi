@@ -3,10 +3,10 @@ import "./styles.css";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { initData } from "./data";
-import { computeFrame, mirrorPath, type Bump } from "./geometry";
+import { computeFrame, lerp, mirrorPath, type Bump } from "./geometry";
 import { Spring } from "./spring";
 import type { Layout, NotchLayout, Rect } from "./types";
-import { createPanel, createWidget, panelFor, widgetType, type Widget } from "./widgets";
+import { createPanel, createWidget, g, panelFor, widgetType, type Widget } from "./widgets";
 import { launcherSetOpen } from "./widgets/launcher";
 
 const svg = document.getElementById("shape") as unknown as SVGSVGElement;
@@ -15,7 +15,6 @@ const cornersPath = document.getElementById("corners") as unknown as SVGPathElem
 const content = document.getElementById("content") as HTMLDivElement;
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
 /** "#rrggbb" + opacity → "rgba(r, g, b, a)" (other color syntaxes pass through). */
 function withAlpha(color: string, alpha: number): string {
@@ -660,7 +659,7 @@ class Overlay {
         d.panelEl.style.height = "auto";
         d.panelHeight = d.panelEl.getBoundingClientRect().height;
         d.panelEl.style.height = `${d.panelHeight}px`;
-        tallest = Math.max(tallest, d.panelHeight + this.growRoom(d.panelEl));
+        tallest = Math.max(tallest, d.panelHeight);
         continue;
       }
       const size = d.panelEl.getBoundingClientRect();
@@ -678,13 +677,13 @@ class Overlay {
         // Everything else centers under the whole widget.
         d.x = anchorBox.left + anchorBox.width / 2;
       }
-      tallest = Math.max(tallest, d.panelHeight + this.growRoom(d.panelEl));
+      tallest = Math.max(tallest, d.panelHeight);
     }
     // A dock's notch panels that aren't open count too: the window must already be
     // tall enough when one opens (growing it then moves a bottom bar: a flicker).
     for (const d of this.drops) {
       for (const p of d.panels?.values() ?? []) {
-        if (p !== d.panelEl) tallest = Math.max(tallest, p.offsetHeight + this.growRoom(p));
+        if (p !== d.panelEl) tallest = Math.max(tallest, p.offsetHeight);
       }
     }
     // A bottom bar's window grows upward: Windows moves its top edge and the page is
@@ -697,16 +696,6 @@ class Overlay {
       this.requestedHeight = needed;
       invoke("set_content_height", { height: needed }).catch((e) => report(`set_content_height: ${e}`));
     }
-  }
-
-  /**
-   * Room a panel may still grow into (lists inside it that open, e.g. quick
-   * settings' outputs / apps): asked for up front, so the window never has to
-   * grow (and on a bottom bar, move) while one slides open.
-   */
-  private growRoom(_panel: HTMLElement): number {
-    // Lists now open in cards beside their panel (no growth): nothing to reserve.
-    return 0;
   }
 
   /** Drops in path order (left to right by collapsed center). */
@@ -736,7 +725,7 @@ class Overlay {
     if (e.kind === "volume") {
       glyph = e.muted ? 0xe74f : pct === 0 ? 0xe992 : pct < 34 ? 0xe993 : pct < 67 ? 0xe994 : 0xe995;
     }
-    this.osdIcon.textContent = String.fromCharCode(glyph);
+    this.osdIcon.textContent = g(glyph);
     this.osdFill.style.width = `${pct}%`;
     this.osdEl.classList.toggle("muted", e.muted);
     this.osdValue.textContent = e.text ?? String(pct);
@@ -765,7 +754,7 @@ class Overlay {
     this.peekDrop.x = anchor.left + anchor.width / 2;
     const glyph = document.createElement("span");
     glyph.className = "icon";
-    glyph.textContent = String.fromCharCode(0xe765);
+    glyph.textContent = g(0xe765);
     const code = document.createElement("span");
     code.textContent = e.code;
     this.peekEl.replaceChildren(glyph, code);
@@ -998,8 +987,6 @@ new MutationObserver((records) => {
 
 // Files dropped on a bar are for the tasks widget (if any): never open them as a page.
 for (const type of ["dragover", "drop"]) document.addEventListener(type, (e) => e.preventDefault());
-window.addEventListener("error", (e) => report(`${e.message} @ ${e.filename}:${e.lineno}`));
-window.addEventListener("unhandledrejection", (e) => report(`unhandled: ${e.reason}`));
 
 async function main(): Promise<void> {
   document.addEventListener("contextmenu", (e) => e.preventDefault());

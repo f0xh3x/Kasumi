@@ -15,6 +15,13 @@
     </header>
     <div id="app"></div>
     <div id="toast"></div>
+    <script>
+      // Page errors go to the app log. Inline and first, so it also catches the page's
+      // own code failing to load (it once failed silently: nothing drawn, nothing logged).
+      const logError = (message) => window.__TAURI_INTERNALS__?.invoke("fe_log", { message }).catch(() => {});
+      addEventListener("error", (e) => logError(`${e.message} @ ${e.filename}:${e.lineno}`));
+      addEventListener("unhandledrejection", (e) => logError(`unhandled: ${e.reason}`));
+    </script>
     <script type="module" src="/src/settings/main.ts"></script>
   </body>
 </html>

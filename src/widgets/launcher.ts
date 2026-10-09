@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { el, icon, type PanelContext, type Widget } from "./index";
-import { iconUrl } from "./tray";
+import { iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
 
 /**
  * The app launcher. The widget is a search icon that morphs into a text field
@@ -15,7 +14,6 @@ interface App {
   name: string;
 }
 
-const g = (c: number) => String.fromCharCode(c);
 
 const S = {
   open: false,

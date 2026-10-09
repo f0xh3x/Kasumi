@@ -5,23 +5,19 @@
 //! exe's), sent once.
 
 use super::publish;
-use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
-use windows::core::{Interface, HSTRING, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, PROPERTYKEY, SIZE, WPARAM};
+use windows::core::{Interface, HSTRING};
+use windows::Win32::Foundation::{HWND, LPARAM, PROPERTYKEY, SIZE, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetMonitorInfoW, GetObjectW, MonitorFromWindow, BITMAP, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
+    DeleteObject, GetMonitorInfoW, MonitorFromWindow, HBITMAP, HGDIOBJ, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
-use windows::Win32::System::Threading::{
-    GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-};
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_MENU};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
@@ -29,8 +25,8 @@ use windows::Win32::UI::Shell::{
     IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
+    DispatchMessageW, EnumWindows, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW,
+    GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
     SetForegroundWindow, SetTimer, ShowWindow, BringWindowToTop, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, GWL_EXSTYLE, GW_OWNER, MSG, OBJID_WINDOW, SW_MINIMIZE, SW_RESTORE,
@@ -209,7 +205,7 @@ fn shortcut_target(lnk: &str) -> Option<String> {
         link.cast::<IPersistFile>().ok()?.Load(&HSTRING::from(lnk), STGM_READ).ok()?;
         let mut buf = [0u16; 1024];
         link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
-        let s = text(&buf);
+        let s = crate::win::wide_to_string(&buf);
         (!s.is_empty()).then_some(s)
     }
 }
@@ -270,58 +266,13 @@ fn run(app: AppHandle) {
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             if msg.hwnd.is_invalid() && msg.message == windows::Win32::UI::WindowsAndMessaging::WM_TIMER {
                 ticks = ticks.wrapping_add(1);
-                if (DIRTY.swap(false, Ordering::Relaxed) || ticks % 25 == 0) && wanted(&app) {
+                if (DIRTY.swap(false, Ordering::Relaxed) || ticks.is_multiple_of(25)) && super::placed(&app, "tasks") {
                     scan(&app);
                 }
                 continue;
             }
             DispatchMessageW(&msg);
         }
-    }
-}
-
-/// Only work while a tasks widget is placed somewhere.
-fn wanted(app: &AppHandle) -> bool {
-    use tauri::Manager;
-    let cfg = app.state::<super::SharedConfig>();
-    let cfg = cfg.read().unwrap();
-    cfg.widget_placed("tasks")
-}
-
-fn text(buf: &[u16]) -> String {
-    let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..n])
-}
-
-fn class_of(h: HWND) -> String {
-    let mut buf = [0u16; 128];
-    let n = unsafe { GetClassNameW(h, &mut buf) } as usize;
-    String::from_utf16_lossy(&buf[..n])
-}
-
-fn title_of(h: HWND) -> String {
-    unsafe {
-        let len = GetWindowTextLengthW(h);
-        if len <= 0 {
-            return String::new();
-        }
-        let mut buf = vec![0u16; len as usize + 1];
-        let n = GetWindowTextW(h, &mut buf) as usize;
-        String::from_utf16_lossy(&buf[..n])
-    }
-}
-
-/// Full path of the window's process image.
-fn exe_of(h: HWND) -> (u32, String) {
-    unsafe {
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(h, Some(&mut pid));
-        let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return (pid, String::new()) };
-        let mut buf = [0u16; 1024];
-        let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
-        let _ = CloseHandle(p);
-        (pid, if ok { String::from_utf16_lossy(&buf[..len as usize]) } else { String::new() })
     }
 }
 
@@ -354,7 +305,7 @@ fn monitor_of(h: HWND) -> String {
         let mut info = MONITORINFOEXW::default();
         info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
         if GetMonitorInfoW(mon, &mut info as *mut _ as *mut MONITORINFO).as_bool() {
-            text(&info.szDevice)
+            crate::win::wide_to_string(&info.szDevice)
         } else {
             String::new()
         }
@@ -381,7 +332,7 @@ fn is_task(h: HWND, own_pid: u32) -> bool {
         if pid == own_pid {
             return false;
         }
-        !matches!(class_of(h).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
+        !matches!(crate::win::class_name(h).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
     }
 }
 
@@ -422,10 +373,7 @@ fn scan(app: &AppHandle) {
             };
             let (aumid, exe) = if p.lnk.is_some() && !p.target.is_empty() { (aumid, p.target.clone()) } else { (aumid, exe) };
             if let Some((w, hgt, rgba)) = icon {
-                st.icons.insert(
-                    p.key.clone(),
-                    json!({ "w": w, "h": hgt, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) }),
-                );
+                st.icons.insert(p.key.clone(), super::rgba_json(w, hgt, &rgba));
                 icons_changed = true;
             }
             st.apps.insert(p.key.clone(), App { key: p.key.clone(), name, exe, aumid, lnk: None });
@@ -463,7 +411,7 @@ fn scan(app: &AppHandle) {
         DIRTY.store(true, Ordering::Relaxed);
     }
     for (z, &h) in listed.iter().enumerate() {
-        let (_, exe) = exe_of(h);
+        let exe = crate::win::process_path(crate::win::window_pid(h)).unwrap_or_default();
         let aumid = aumid_of(h);
         let mut key = aumid.clone().unwrap_or_else(|| exe.to_lowercase());
         if key.is_empty() {
@@ -478,10 +426,7 @@ fn scan(app: &AppHandle) {
         if !st.apps.contains_key(&key) {
             let (name, icon) = describe(aumid.as_deref(), &exe);
             if let Some((w, hgt, rgba)) = icon {
-                st.icons.insert(
-                    key.clone(),
-                    json!({ "w": w, "h": hgt, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) }),
-                );
+                st.icons.insert(key.clone(), super::rgba_json(w, hgt, &rgba));
                 icons_changed = true;
             }
             st.apps.insert(key.clone(), App { key: key.clone(), name, exe: exe.clone(), aumid: aumid.clone(), lnk: None });
@@ -493,7 +438,7 @@ fn scan(app: &AppHandle) {
         if !st.seen.contains(&id) {
             st.seen.push(id);
         }
-        windows.push((id, title_of(h), key, h == fg, unsafe { IsIconic(h).as_bool() }, monitor_of(h), z));
+        windows.push((id, crate::win::window_title(h), key, h == fg, unsafe { IsIconic(h).as_bool() }, monitor_of(h), z));
     }
     // Forget closed windows; an app without windows keeps its place for a few
     // seconds (a window being replaced or re-created), then goes (it comes back
@@ -581,45 +526,21 @@ pub(crate) fn item_icon(item: &IShellItem) -> Option<(u32, u32, Vec<u8>)> {
 
 /// A 32-bit (premultiplied) bitmap's pixels as straight RGBA.
 fn bitmap_rgba(bmp: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
-    unsafe {
-        let mut bm = BITMAP::default();
-        GetObjectW(HGDIOBJ(bmp.0), std::mem::size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _));
-        let (w, h) = (bm.bmWidth.max(0) as u32, bm.bmHeight.unsigned_abs());
-        if w == 0 || h == 0 || w > 512 || h > 512 {
-            return None;
-        }
-        let dc = CreateCompatibleDC(None);
-        let mut bi = BITMAPINFO::default();
-        bi.bmiHeader = BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: w as i32,
-            biHeight: -(h as i32),
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        };
-        let mut px = vec![0u8; (w * h * 4) as usize];
-        let lines = GetDIBits(dc, bmp, 0, h, Some(px.as_mut_ptr().cast()), &mut bi, DIB_RGB_COLORS);
-        let _ = DeleteDC(dc);
-        if lines == 0 {
-            return None;
-        }
-        let has_alpha = px.chunks_exact(4).any(|p| p[3] != 0);
-        for p in px.chunks_exact_mut(4) {
-            p.swap(0, 2); // BGRA -> RGBA
-            if !has_alpha {
-                p[3] = 255;
-            } else if p[3] > 0 && p[3] < 255 {
-                // Shell images are premultiplied.
-                let a = p[3] as u32;
-                for c in &mut p[..3] {
-                    *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
-                }
+    let (w, h, mut px) = crate::win::bitmap_bgra(bmp)?;
+    let has_alpha = px.as_chunks::<4>().0.iter().any(|p| p[3] != 0);
+    for p in px.as_chunks_mut::<4>().0 {
+        p.swap(0, 2); // BGRA -> RGBA
+        if !has_alpha {
+            p[3] = 255;
+        } else if p[3] > 0 && p[3] < 255 {
+            // Shell images are premultiplied.
+            let a = p[3] as u32;
+            for c in &mut p[..3] {
+                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
             }
         }
-        Some((w, h, px))
     }
+    Some((w, h, px))
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +600,7 @@ pub async fn task_activate(hwnd_id: isize, toggle: bool) -> Result<(), String> {
         } else {
             activate(h);
             if GetForegroundWindow() != h {
-                eprintln!("[statusnotch] tasks: couldn't bring {:#x} ('{}') to the front", hwnd_id, title_of(h));
+                eprintln!("[statusnotch] tasks: couldn't bring {:#x} ('{}') to the front", hwnd_id, crate::win::window_title(h));
             }
         }
     }

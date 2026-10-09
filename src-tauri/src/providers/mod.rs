@@ -52,6 +52,17 @@ fn widget_enabled(app: &AppHandle, name: &str) -> bool {
     app.state::<SharedConfig>().read().unwrap().widget_enabled(name)
 }
 
+/// Whether a widget of this type is on some bar (its provider only works then).
+pub fn placed(app: &AppHandle, ty: &str) -> bool {
+    app.state::<SharedConfig>().read().unwrap().widget_placed(ty)
+}
+
+/// An icon (width, height, straight RGBA) as the frontend takes it: `iconUrl()`.
+pub fn rgba_json(w: u32, h: u32, rgba: &[u8]) -> Value {
+    use base64::Engine;
+    json!({ "w": w, "h": h, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) })
+}
+
 /// `[widgets.<name>]` from the current config.
 fn widget_opts(app: &AppHandle, name: &str) -> toml::Table {
     let cfg = app.state::<SharedConfig>();

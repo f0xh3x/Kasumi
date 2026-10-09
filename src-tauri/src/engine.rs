@@ -700,7 +700,7 @@ impl Engine {
         // The outermost notch of each side, if it hugs the corner.
         let outermost = |side: Anchor| {
             let mut side_notches = visible.iter().filter(|n| n.anchor == side && n.auto_width);
-            let outer = if side == Anchor::Left { side_notches.next() } else { side_notches.last() };
+            let outer = if side == Anchor::Left { side_notches.next() } else { side_notches.next_back() };
             outer.filter(|n| n.dock && !moved.contains(&n.id)).map(|n| n.id.clone())
         };
         let (left_edge, right_edge) = (outermost(Anchor::Left), outermost(Anchor::Right));
@@ -1145,7 +1145,7 @@ impl Engine {
         let shrinks = |o: &Overlay| o.layout.mode == SurfaceMode::Dock && self.shrink_when_covered(&o.surface);
         let any_dockable = {
             let sh = self.shared.lock().unwrap();
-            sh.overlays.values().any(|o| shrinks(o) || o.defs.iter().any(|n| watched(n)))
+            sh.overlays.values().any(|o| shrinks(o) || o.defs.iter().any(&watched))
         };
         if !any_dockable {
             return;
@@ -1314,6 +1314,20 @@ impl Engine {
     }
 }
 
+/// Widget settings as the bars get them: without the tasks pin list, which the
+/// widget gets with its data (so pinning or reordering doesn't rebuild the bar).
+fn frontend_widgets(widgets: &toml::Table) -> toml::Table {
+    let mut out = widgets.clone();
+    for (name, opts) in out.iter_mut() {
+        if name == "tasks" || name.starts_with("tasks#") {
+            if let Some(t) = opts.as_table_mut() {
+                t.remove("pins");
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1359,18 +1373,4 @@ mod tests {
         assert_eq!(xs[3], 1000.0 - 150.0 - 120.0);
         assert_eq!(xs[2], xs[3] - spacing - 100.0);
     }
-}
-
-/// Widget settings as the bars get them: without the tasks pin list, which the
-/// widget gets with its data (so pinning or reordering doesn't rebuild the bar).
-fn frontend_widgets(widgets: &toml::Table) -> toml::Table {
-    let mut out = widgets.clone();
-    for (name, opts) in out.iter_mut() {
-        if name == "tasks" || name.starts_with("tasks#") {
-            if let Some(t) = opts.as_table_mut() {
-                t.remove("pins");
-            }
-        }
-    }
-    out
 }

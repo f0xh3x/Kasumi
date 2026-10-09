@@ -143,7 +143,7 @@ fn run() {
                             shown[i].1 = c.clone();
                         }
                     }
-                } else if ticks % 20 == 0 {
+                } else if ticks.is_multiple_of(20) {
                     // Stay above other topmost windows that came up since.
                     for (h, _) in &shown {
                         let _ = SetWindowPos(*h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);

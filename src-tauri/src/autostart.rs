@@ -10,7 +10,7 @@ const VALUE: PCWSTR = w!("StatusNotch");
 
 fn command() -> Vec<u16> {
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
-    format!("\"{exe}\"").encode_utf16().chain(std::iter::once(0)).collect()
+    crate::win::wide(&format!("\"{exe}\""))
 }
 
 pub fn is_enabled() -> bool {

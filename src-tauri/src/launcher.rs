@@ -3,7 +3,6 @@
 //! global hotkey (`[launcher] hotkey`) that opens it on the monitor under the
 //! cursor. The UI is a panel in a bar or dock (see engine::launcher_toggle).
 
-use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -110,7 +109,7 @@ pub async fn launcher_icon(id: String) -> Result<Value, String> {
     .map_err(|e| e.to_string())?
     .ok_or("no icon")?;
     let (w, h, rgba) = icon;
-    let v = json!({ "w": w, "h": h, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) });
+    let v = crate::providers::rgba_json(w, h, &rgba);
     ICONS.lock().unwrap().get_or_insert_with(HashMap::new).insert(id, v.clone());
     Ok(v)
 }

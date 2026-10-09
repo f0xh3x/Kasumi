@@ -67,7 +67,7 @@ export interface Frame {
 }
 
 const f = (n: number) => (Math.round(n * 100) / 100).toString();
-const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+export const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /**

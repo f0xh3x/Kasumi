@@ -89,6 +89,8 @@ struct VolumeCallback {
 impl IAudioEndpointVolumeCallback_Impl for VolumeCallback_Impl {
     fn OnNotify(&self, data: *mut AUDIO_VOLUME_NOTIFICATION_DATA) -> windows::core::Result<()> {
         if let Some(d) = unsafe { data.as_ref() } {
+            // Quick settings shows the volume too: it gets it from here.
+            crate::providers::system::volume_changed(Some((d.fMasterVolume, d.bMuted.as_bool())));
             super::show(&self.app, "volume", d.fMasterVolume, d.bMuted.as_bool());
         }
         Ok(())
@@ -122,6 +124,8 @@ fn bind(app: &AppHandle, enumerator: &IMMDeviceEnumerator, current: Option<Endpo
         let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None)?;
         let callback: IAudioEndpointVolumeCallback = VolumeCallback { app: app.clone() }.into();
         volume.RegisterControlChangeNotify(&callback)?;
+        // A new output device: quick settings starts from its current volume.
+        crate::providers::system::volume_changed(Some((volume.GetMasterVolumeLevelScalar()?, volume.GetMute()?.as_bool())));
         Ok(Endpoint { id, volume, callback })
     }
 }
@@ -179,6 +183,7 @@ fn run_audio(app: AppHandle, rx: Receiver<Key>) {
                 Ok(ep) => Some(ep),
                 Err(e) => {
                     eprintln!("[statusnotch] no default audio device: {e}");
+                    crate::providers::system::volume_changed(None);
                     None
                 }
             };

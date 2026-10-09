@@ -9,7 +9,7 @@ use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use windows::core::{s, w};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
@@ -183,12 +183,6 @@ fn seen() -> i64 {
 
 static LATEST: Mutex<Vec<(i64, i64)>> = Mutex::new(Vec::new());
 
-fn placed(app: &AppHandle) -> bool {
-    let cfg = app.state::<super::SharedConfig>();
-    let cfg = cfg.read().unwrap();
-    cfg.widget_placed("notifications")
-}
-
 fn publish(app: &AppHandle, notes: &[Note]) {
     let seen = seen();
     let items: Vec<Value> = notes
@@ -208,7 +202,7 @@ pub fn start(app: &AppHandle) {
             let wal = path.with_extension("db-wal");
             let mut last: Option<(Option<SystemTime>, Option<SystemTime>)> = None;
             loop {
-                if placed(&app) {
+                if super::placed(&app, "notifications") {
                     let stamp = (
                         std::fs::metadata(&path).and_then(|m| m.modified()).ok(),
                         std::fs::metadata(&wal).and_then(|m| m.modified()).ok(),

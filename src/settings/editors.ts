@@ -2,6 +2,7 @@
 // control (widget placement, notches, menu entries, monitors, lookups).
 import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
+import { $, glyph, iconButton, input, row, select, toggleSwitch } from "./dom";
 import type { Cfg, Path } from "./schema";
 
 export interface Op {
@@ -26,52 +27,7 @@ export interface EditorCtx {
 
 type Editor = (ctx: EditorCtx) => HTMLElement;
 
-// --- DOM helpers -------------------------------------------------------------
-
-const $ = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, ...kids: (Node | string)[]) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  e.append(...kids);
-  return e;
-};
-const glyph = (code: number) => $("span", "icon", String.fromCharCode(code));
-
-function input(value: string, placeholder = "", cls = "input"): HTMLInputElement {
-  const i = $("input", cls) as HTMLInputElement;
-  i.value = value;
-  i.placeholder = placeholder;
-  return i;
-}
-
-function select(options: [string, string][], value: string): HTMLSelectElement {
-  const s = $("select", "select") as HTMLSelectElement;
-  for (const [v, label] of options) s.append(new Option(label, v));
-  s.value = value;
-  return s;
-}
-
-function iconButton(code: number, title: string, onClick: () => void): HTMLButtonElement {
-  const b = $("button", "icon-button", glyph(code)) as HTMLButtonElement;
-  b.title = title;
-  b.addEventListener("click", onClick);
-  return b;
-}
-
-function sw(on: boolean, onChange: (on: boolean) => void): HTMLButtonElement {
-  const b = $("button", `switch${on ? " on" : ""}`) as HTMLButtonElement;
-  b.addEventListener("click", () => {
-    on = !on;
-    b.classList.toggle("on", on);
-    onChange(on);
-  });
-  return b;
-}
-
-function row(label: string, help: string | undefined, control: HTMLElement): HTMLElement {
-  const text = $("div", "row-text", $("div", "row-label", label));
-  if (help) text.append($("div", "row-help", help));
-  return $("div", "row", text, $("div", "row-control", control));
-}
+const sw = (on: boolean, onChange: (on: boolean) => void) => toggleSwitch(on, onChange).el;
 
 // --- Widgets & layout model ------------------------------------------------------
 //
@@ -186,7 +142,6 @@ export const surfaceLayout = (cfg: Cfg, id: string): LayoutCfg =>
 /** Which part of the Widgets page is being edited: a surface, globally or for one monitor. */
 export const scope: { monitor: string | null; surface: string } = { monitor: null, surface: "top" };
 
-export const globalLayout = (cfg: Cfg): LayoutCfg => surfaceLayout(cfg, scope.surface);
 let monitorsCache: MonitorInfo[] | null = null;
 
 interface MonitorInfo {

@@ -2,12 +2,16 @@
 //! panel brightness and the network connection, published as "system" while a
 //! quick settings widget is placed. Plus the commands its panel uses to change
 //! volume and brightness.
+//!
+//! The volume isn't polled: the OSD's Core Audio watcher (osd/volume.rs) already
+//! hears every change and hands it over (`volume_changed`), waking this loop.
 
 use super::publish;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use windows::core::GUID;
 use windows::Networking::Connectivity::{NetworkConnectivityLevel, NetworkInformation};
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
@@ -21,8 +25,29 @@ pub fn start(app: &AppHandle) {
     std::thread::Builder::new().name("statusnotch-system".into()).spawn(move || run(app)).expect("spawn system thread");
 }
 
-fn wanted(app: &AppHandle) -> bool {
-    app.state::<super::SharedConfig>().read().unwrap().widget_placed("quick")
+/// The output volume (level 0..=1, muted) as the OSD's audio watcher last saw it;
+/// None without an output device.
+static VOLUME: Mutex<Option<(f32, bool)>> = Mutex::new(None);
+/// Wakes the loop early (a new volume, a brightness the panel just set).
+static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+
+fn wake() {
+    *WAKE.0.lock().unwrap() = true;
+    WAKE.1.notify_one();
+}
+
+/// From the OSD's audio watcher: the default output's volume changed, or the
+/// default output did (None: there's none).
+pub fn volume_changed(volume: Option<(f32, bool)>) {
+    *VOLUME.lock().unwrap() = volume;
+    wake();
+}
+
+/// Waits up to `timeout`, or until woken.
+fn sleep(timeout: Duration) {
+    let woken = WAKE.0.lock().unwrap();
+    let (mut woken, _) = WAKE.1.wait_timeout_while(woken, timeout, |w| !*w).unwrap();
+    *woken = false;
 }
 
 /// Brightness the panel just set (WMI reads lag behind; don't snap back to them).
@@ -36,11 +61,8 @@ fn run(app: AppHandle) {
     let mut last_brightness = Instant::now() - Duration::from_secs(60);
     let mut slow = Instant::now() - Duration::from_secs(60);
     let (mut battery_v, mut network_v) = (Value::Null, Value::Null);
-    // The output device, re-bound every few seconds (headphones plugged in, etc.).
-    let mut endpoint: Option<(IAudioEndpointVolume, Instant)> = None;
     loop {
-        if !wanted(&app) {
-            endpoint = None;
+        if !super::placed(&app, "quick") {
             std::thread::sleep(Duration::from_secs(3));
             continue;
         }
@@ -58,12 +80,7 @@ fn run(app: AppHandle) {
             last_brightness = Instant::now();
             brightness = read_brightness();
         }
-        if endpoint.as_ref().is_none_or(|(_, at)| at.elapsed() >= Duration::from_secs(5)) {
-            endpoint = volume().ok().map(|v| (v, Instant::now()));
-        }
-        let v = endpoint
-            .as_ref()
-            .and_then(|(vol, _)| unsafe { Some((vol.GetMasterVolumeLevelScalar().ok()?, vol.GetMute().ok()?.as_bool())) });
+        let v = *VOLUME.lock().unwrap();
         // Published only when something changed (publish de-duplicates).
         publish(
             &app,
@@ -75,7 +92,8 @@ fn run(app: AppHandle) {
                 "network": network_v,
             }),
         );
-        std::thread::sleep(Duration::from_millis(150));
+        // Battery and network once a second; volume and a set brightness right away.
+        sleep(Duration::from_secs(1));
     }
 }
 
@@ -107,6 +125,7 @@ fn network() -> Value {
     })
 }
 
+/// The default output's volume control (for the panel's commands).
 fn volume() -> windows::core::Result<IAudioEndpointVolume> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -172,5 +191,6 @@ pub async fn brightness_set(level: u8) -> Result<(), String> {
     params.put_property("Brightness", level.min(100)).map_err(|e| e.to_string())?;
     con.exec_method(&target.path, "WmiSetBrightness", Some(&params)).map_err(|e| e.to_string())?;
     *BRIGHTNESS_SET.lock().unwrap() = Some((level.min(100), Instant::now()));
+    wake();
     Ok(())
 }

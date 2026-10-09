@@ -63,7 +63,8 @@ impl Monitor {
     }
 }
 
-fn wide_to_string(buf: &[u16]) -> String {
+/// A NUL-terminated UTF-16 buffer as a String.
+pub fn wide_to_string(buf: &[u16]) -> String {
     let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..len])
 }
@@ -377,20 +378,9 @@ const SHELL_PROCESSES: &[&str] = &[
 
 /// Lower-case executable name of the process owning `hwnd` ("" if unknown).
 pub fn window_process(hwnd: HWND) -> String {
-    unsafe {
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return String::new() };
-        let mut buf = [0u16; 512];
-        let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
-        let _ = CloseHandle(h);
-        if !ok {
-            return String::new();
-        }
-        let path = String::from_utf16_lossy(&buf[..len as usize]);
-        path.rsplit(['\\', '/']).next().unwrap_or_default().to_lowercase()
-    }
+    process_path(window_pid(hwnd))
+        .and_then(|p| p.rsplit(['\\', '/']).next().map(str::to_lowercase))
+        .unwrap_or_default()
 }
 
 /// If the foreground window is fullscreen (or a D3D exclusive / presentation app
@@ -458,8 +448,9 @@ pub fn fullscreen_monitor(ours: &[isize]) -> Option<(RECT, String)> {
     }
 }
 
-fn class_name(h: HWND) -> String {
-    let mut buf = [0u16; 64];
+/// A window's class name.
+pub fn class_name(h: HWND) -> String {
+    let mut buf = [0u16; 256];
     let n = unsafe { GetClassNameW(h, &mut buf) } as usize;
     String::from_utf16_lossy(&buf[..n])
 }
@@ -663,11 +654,34 @@ pub fn process_name(pid: u32) -> Option<String> {
     std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned())
 }
 
+/// The process that owns a window.
+pub fn window_pid(h: HWND) -> u32 {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+    pid
+}
+
+/// A window's title (any length).
+pub fn window_title(h: HWND) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
+    unsafe {
+        let len = GetWindowTextLengthW(h);
+        if len <= 0 {
+            return String::new();
+        }
+        let mut buf = vec![0u16; len as usize + 1];
+        let n = GetWindowTextW(h, &mut buf) as usize;
+        String::from_utf16_lossy(&buf[..n])
+    }
+}
+
+/// A NUL-terminated UTF-16 copy of `s`, for Win32 calls.
+pub fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 /// A process's program file (full path).
 pub fn process_path(pid: u32) -> Option<String> {
-    use windows::core::PWSTR;
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
     unsafe {
         let p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];
@@ -675,5 +689,39 @@ pub fn process_path(pid: u32) -> Option<String> {
         let ok = QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
         let _ = CloseHandle(p);
         ok.then(|| String::from_utf16_lossy(&buf[..len as usize]))
+    }
+}
+
+/// A bitmap's pixels as 32-bit BGRA rows, top-down (as GetDIBits gives them);
+/// None for empty or implausibly large ones. Callers fix up alpha their own way
+/// (shell images are premultiplied, old icons have a separate mask).
+pub fn bitmap_bgra(bmp: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, DeleteDC, GetDIBits, GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+    };
+    unsafe {
+        let mut bm = BITMAP::default();
+        GetObjectW(HGDIOBJ(bmp.0), std::mem::size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _));
+        let (w, h) = (bm.bmWidth.max(0) as u32, bm.bmHeight.unsigned_abs());
+        if w == 0 || h == 0 || w > 512 || h > 512 {
+            return None;
+        }
+        let mut bi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: -(h as i32), // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        let dc = CreateCompatibleDC(None);
+        let lines = GetDIBits(dc, bmp, 0, h, Some(px.as_mut_ptr().cast()), &mut bi, DIB_RGB_COLORS);
+        let _ = DeleteDC(dc);
+        (lines != 0).then_some((w, h, px))
     }
 }

@@ -4,11 +4,10 @@
 //! thumbnails); in memory only, never saved; cleared when the widget is removed.
 //! Copies marked "not for history" (password managers do this) are skipped.
 
-use base64::Engine;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::{
@@ -56,12 +55,6 @@ fn opts(app: &AppHandle) -> (usize, bool) {
     (size, images)
 }
 
-fn placed(app: &AppHandle) -> bool {
-    let cfg = app.state::<super::SharedConfig>();
-    let cfg = cfg.read().unwrap();
-    cfg.widget_placed("clipboard")
-}
-
 pub fn start(app: &AppHandle) {
     let _ = APP.set(app.clone());
     std::thread::Builder::new().name("statusnotch-clipboard".into()).spawn(run).expect("spawn clipboard thread");
@@ -92,7 +85,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     let Some(app) = APP.get() else { return DefWindowProcW(hwnd, msg, wparam, lparam) };
     match msg {
         WM_TIMER => {
-            let want = placed(app);
+            let want = super::placed(app, "clipboard");
             if want != LISTENING.load(Ordering::Relaxed) {
                 LISTENING.store(want, Ordering::Relaxed);
                 if want {
@@ -154,7 +147,7 @@ fn capture(app: &AppHandle, hwnd: HWND) {
             None
         } else if IsClipboardFormatAvailable(CF_UNICODETEXT).is_ok() {
             read_global(CF_UNICODETEXT).and_then(|bytes| {
-                let wide: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                let wide: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
                 let end = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
                 let text = String::from_utf16_lossy(&wide[..end]);
                 (!text.trim().is_empty()).then_some(Content::Text(text))
@@ -245,7 +238,6 @@ fn thumbnail(dib: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 
 fn publish(app: &AppHandle) {
     let h = HISTORY.lock().unwrap();
-    let b64 = base64::engine::general_purpose::STANDARD;
     let items: Vec<serde_json::Value> = h
         .items
         .iter()
@@ -253,7 +245,7 @@ fn publish(app: &AppHandle) {
             Content::Text(t) => json!({ "id": i.id, "time": i.time, "kind": "text", "text": t.chars().take(600).collect::<String>() }),
             Content::Image { thumb, dib } => json!({
                 "id": i.id, "time": i.time, "kind": "image", "bytes": dib.len(),
-                "thumb": thumb.as_ref().map(|(w, h, rgba)| json!({ "w": w, "h": h, "rgba": b64.encode(rgba) })),
+                "thumb": thumb.as_ref().map(|(w, h, rgba)| super::rgba_json(*w, *h, rgba)),
             }),
         })
         .collect();

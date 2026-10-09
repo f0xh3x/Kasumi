@@ -35,7 +35,14 @@ type Options = Record<string, unknown>;
 type Factory = (opts: Options) => Widget;
 type PanelFactory = (opts: Options, ctx: PanelContext) => Widget;
 
-const g = (code: number) => String.fromCharCode(code);
+/**
+ * A Segoe Fluent Icons glyph by its codepoint. A function declaration, not a
+ * const: widget modules this file imports call it while they load, before a
+ * const here would exist (that stopped the whole page once).
+ */
+export function g(code: number): string {
+  return String.fromCharCode(code);
+}
 
 /** Segoe Fluent Icons glyphs, the same codepoints as the YASB config. */
 export const Glyph = {
@@ -129,4 +136,20 @@ export function panelFor(name: string): string | null {
   const type = widgetType(name);
   if (type === "clock") return name.replace(/^clock/, "calendar");
   return type in panels ? name : null;
+}
+
+/** An icon from Rust ({ w, h, rgba: base64 RGBA }) as a PNG data URL, cached per pixel payload. */
+const urls = new Map<string, string>();
+export function iconUrl(i: { w: number; h: number; rgba: string }): string {
+  const cached = urls.get(i.rgba);
+  if (cached) return cached;
+  const bytes = Uint8ClampedArray.from(atob(i.rgba), (c) => c.charCodeAt(0));
+  const canvas = document.createElement("canvas");
+  canvas.width = i.w;
+  canvas.height = i.h;
+  canvas.getContext("2d")!.putImageData(new ImageData(bytes, i.w, i.h), 0, 0);
+  const url = canvas.toDataURL();
+  if (urls.size > 200) urls.clear();
+  urls.set(i.rgba, url);
+  return url;
 }

@@ -17,8 +17,7 @@ use tauri::{AppHandle, Manager};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER,
-    BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ,
+    DeleteObject, HGDIOBJ,
 };
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -84,7 +83,7 @@ fn u32_at(b: &[u8], off: usize) -> u32 {
 
 fn wstr_at(b: &[u8], off: usize, chars: usize) -> String {
     let Some(s) = b.get(off..off + chars * 2) else { return String::new() };
-    let units: Vec<u16> = s.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&u| u != 0).collect();
+    let units: Vec<u16> = s.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&u| u != 0).collect();
     String::from_utf16_lossy(&units)
 }
 
@@ -168,44 +167,18 @@ fn icon_rgba(icon: HICON) -> Option<(u32, u32, Vec<u8>)> {
     unsafe {
         let mut info = ICONINFO::default();
         GetIconInfo(icon, &mut info).ok()?;
-        let cleanup = |info: &ICONINFO| {
-            let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
-            let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
-        };
-        if info.hbmColor.is_invalid() {
-            cleanup(&info);
+        let color = (!info.hbmColor.is_invalid()).then(|| crate::win::bitmap_bgra(info.hbmColor)).flatten();
+        let mask = crate::win::bitmap_bgra(info.hbmMask);
+        let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
+        let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+        let (w, h, mut px) = color?;
+        if w > 256 || h > 256 {
             return None;
         }
-        let mut bm = BITMAP::default();
-        GetObjectW(HGDIOBJ(info.hbmColor.0), std::mem::size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _));
-        let (w, h) = (bm.bmWidth.max(0) as u32, bm.bmHeight.max(0) as u32);
-        if w == 0 || h == 0 || w > 256 || h > 256 {
-            cleanup(&info);
-            return None;
-        }
-        let dc = CreateCompatibleDC(None);
-        let read = |bmp: HBITMAP| -> Option<Vec<u8>> {
-            let mut bi = BITMAPINFO::default();
-            bi.bmiHeader = BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: w as i32,
-                biHeight: -(h as i32), // top-down
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
-                ..Default::default()
-            };
-            let mut buf = vec![0u8; (w * h * 4) as usize];
-            let lines = GetDIBits(dc, bmp, 0, h, Some(buf.as_mut_ptr().cast()), &mut bi, DIB_RGB_COLORS);
-            (lines != 0).then_some(buf)
-        };
-        let color = read(info.hbmColor);
-        let mask = read(info.hbmMask);
-        let _ = DeleteDC(dc);
-        cleanup(&info);
-        let mut px = color?;
-        let has_alpha = px.chunks_exact(4).any(|p| p[3] != 0);
-        for (i, p) in px.chunks_exact_mut(4).enumerate() {
+        // The mask only counts when it's the same size (color icons' masks are).
+        let mask = mask.filter(|(mw, mh, _)| (*mw, *mh) == (w, h)).map(|(_, _, m)| m);
+        let has_alpha = px.as_chunks::<4>().0.iter().any(|p| p[3] != 0);
+        for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             p.swap(0, 2); // BGRA -> RGBA
             if !has_alpha {
                 let transparent = mask.as_ref().is_some_and(|m| m[i * 4] != 0);

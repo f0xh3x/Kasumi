@@ -15,18 +15,12 @@ import {
   scope,
   type Op,
 } from "./editors";
+import { $, glyph, row, toggleSwitch } from "./dom";
 import { pages, type Cfg, type Field, type Page, type Path } from "./schema";
 
 let cfg: Cfg = {};
 let current = pages[0].id;
 
-const $ = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, ...kids: (Node | string)[]) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  e.append(...kids);
-  return e;
-};
-const glyph = (code: number) => $("span", "icon", String.fromCharCode(code));
 
 function getIn(obj: any, path: Path): unknown {
   return path.reduce((o, k) => (o == null ? undefined : o[k as any]), obj);
@@ -92,11 +86,7 @@ async function saveMany(ops: Op[]): Promise<void> {
 
 // --- Controls --------------------------------------------------------------------
 
-function row(f: { label: string; help?: string }, control: HTMLElement): HTMLElement {
-  const text = $("div", "row-text", $("div", "row-label", f.label));
-  if (f.help) text.append($("div", "row-help", f.help));
-  return $("div", "row", text, $("div", "row-control", control));
-}
+const fieldRow = (f: { label: string; help?: string }, control: HTMLElement) => row(f.label, f.help, control);
 
 function control(f: Field): HTMLElement | null {
   if (f.kind === "custom") {
@@ -125,7 +115,7 @@ function control(f: Field): HTMLElement | null {
       }
     });
     invoke<boolean>("autostart_get").then((on) => sw.set(on));
-    return row(f, sw.el);
+    return fieldRow(f, sw.el);
   }
   if (f.kind === "action") {
     const b = $("button", "button", f.button);
@@ -154,7 +144,7 @@ function control(f: Field): HTMLElement | null {
         toast(String(e), true);
       }
     });
-    return row(f, b);
+    return fieldRow(f, b);
   }
 
   const path = typeof f.path === "function" ? f.path(cfg) : f.path;
@@ -165,7 +155,7 @@ function control(f: Field): HTMLElement | null {
   switch (f.kind) {
     case "toggle": {
       const sw = toggleSwitch(Boolean(value), (on) => save(path, on));
-      return row(f, sw.el);
+      return fieldRow(f, sw.el);
     }
     case "slider": {
       const input = $("input", "slider") as HTMLInputElement;
@@ -181,7 +171,7 @@ function control(f: Field): HTMLElement | null {
         fill();
       });
       input.addEventListener("change", () => save(path, Number(input.value)));
-      return row(f, $("div", "slider-wrap", input, out));
+      return fieldRow(f, $("div", "slider-wrap", input, out));
     }
     case "number": {
       const input = $("input", "input number") as HTMLInputElement;
@@ -196,14 +186,14 @@ function control(f: Field): HTMLElement | null {
       });
       const wrap = $("div", "number-wrap", input);
       if (f.unit) wrap.append($("span", "unit", f.unit));
-      return row(f, wrap);
+      return fieldRow(f, wrap);
     }
     case "text": {
       const input = $("input", "input") as HTMLInputElement;
       input.value = String(value ?? "");
       if (f.placeholder) input.placeholder = f.placeholder;
       input.addEventListener("change", () => save(path, input.value));
-      return row(f, input);
+      return fieldRow(f, input);
     }
     case "list": {
       const input = $("input", "input") as HTMLInputElement;
@@ -218,14 +208,14 @@ function control(f: Field): HTMLElement | null {
             .filter(Boolean),
         ),
       );
-      return row(f, input);
+      return fieldRow(f, input);
     }
     case "select": {
       const select = $("select", "select") as HTMLSelectElement;
       for (const o of f.options) select.append(new Option(o.label, o.value));
       select.value = String(value);
       select.addEventListener("change", () => save(path, select.value));
-      return row(f, select);
+      return fieldRow(f, select);
     }
     case "color": {
       const input = $("input", "color") as HTMLInputElement;
@@ -234,26 +224,11 @@ function control(f: Field): HTMLElement | null {
       const hex = $("span", "color-hex", String(value));
       input.addEventListener("input", () => (hex.textContent = input.value));
       input.addEventListener("change", () => save(path, input.value));
-      return row(f, $("label", "color-wrap", input, hex));
+      return fieldRow(f, $("label", "color-wrap", input, hex));
     }
   }
 }
 
-function toggleSwitch(on: boolean, onChange: (on: boolean) => void) {
-  const el = $("button", "switch") as HTMLButtonElement;
-  el.setAttribute("role", "switch");
-  const set = (v: boolean) => {
-    on = v;
-    el.classList.toggle("on", v);
-    el.setAttribute("aria-checked", String(v));
-  };
-  set(on);
-  el.addEventListener("click", () => {
-    set(!on);
-    onChange(on);
-  });
-  return { el, set };
-}
 
 // --- Pages -----------------------------------------------------------------------
 

@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const KEEP: i64 = 8 * 24 * 3600;
 const WINDOW: i64 = 5 * 3600;
@@ -181,12 +181,6 @@ impl State {
     }
 }
 
-fn placed(app: &AppHandle) -> bool {
-    let cfg = app.state::<super::SharedConfig>();
-    let cfg = cfg.read().unwrap();
-    cfg.widget_placed("claude")
-}
-
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
@@ -196,7 +190,7 @@ pub fn start(app: &AppHandle) {
             let mut last_scan = Instant::now() - Duration::from_secs(60);
             let mut last_busy = false;
             loop {
-                if !placed(&app) {
+                if !super::placed(&app, "claude") {
                     // Not on any bar: drop what was read (it's read again if placed later).
                     state = None;
                     std::thread::sleep(Duration::from_secs(2));

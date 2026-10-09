@@ -1,9 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../data";
-import { el, icon, type PanelContext, type Widget } from "./index";
-import { iconUrl } from "./tray";
+import { iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
 
-const g = (c: number) => String.fromCharCode(c);
 
 /** The window in front: its title, its app's name, or both. */
 export function focus(opts: Record<string, unknown>): Widget {

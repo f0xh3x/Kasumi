@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe, type Media } from "../data";
-import { el, Glyph, icon, type PanelContext, type Widget } from "./index";
+import { g, el, Glyph, icon, type PanelContext, type Widget } from "./index";
 
 const fmt = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -99,7 +99,7 @@ export function mediaPanel(_opts: Record<string, unknown>, _ctx: PanelContext): 
     if (!m) {
       title.textContent = "Nothing playing";
       artist.textContent = "";
-      art.replaceChildren(icon(String.fromCharCode(0xe8d6)));
+      art.replaceChildren(icon(g(0xe8d6)));
       art.style.backgroundImage = "";
       seek.hidden = true;
       return;
@@ -112,7 +112,7 @@ export function mediaPanel(_opts: Record<string, unknown>, _ctx: PanelContext): 
       art.style.backgroundImage = `url("${m.art}")`;
     } else {
       art.style.backgroundImage = "";
-      art.replaceChildren(icon(String.fromCharCode(0xe8d6))); // music note
+      art.replaceChildren(icon(g(0xe8d6))); // music note
     }
     seek.hidden = m.durationMs <= 0;
     seek.classList.toggle("disabled", !m.canSeek);

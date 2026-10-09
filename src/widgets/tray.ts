@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { subscribe, type TrayIcon } from "../data";
-import { el, icon, type PanelContext, type Widget } from "./index";
+import { subscribe } from "../data";
+import { iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
 
-const CHEVRON_DOWN = String.fromCharCode(0xe70d);
+const CHEVRON_DOWN = g(0xe70d);
 
 /**
  * The tray: a chevron that drops the tray panel (`mode` = "collapsed", default),
@@ -23,21 +23,6 @@ export function trayButton(opts: Record<string, unknown> = {}): Widget {
   return { el: root, dispose: unsubscribe };
 }
 
-/** RGBA from Rust → PNG data URL, cached per pixel payload. */
-const urls = new Map<string, string>();
-export function iconUrl(i: Pick<TrayIcon, "w" | "h" | "rgba">): string {
-  const cached = urls.get(i.rgba);
-  if (cached) return cached;
-  const bytes = Uint8ClampedArray.from(atob(i.rgba), (c) => c.charCodeAt(0));
-  const canvas = document.createElement("canvas");
-  canvas.width = i.w;
-  canvas.height = i.h;
-  canvas.getContext("2d")!.putImageData(new ImageData(bytes, i.w, i.h), 0, 0);
-  const url = canvas.toDataURL();
-  if (urls.size > 200) urls.clear();
-  urls.set(i.rgba, url);
-  return url;
-}
 
 /** Grid of hosted notification-area icons; clicks go to the owning app. */
 export function trayPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {

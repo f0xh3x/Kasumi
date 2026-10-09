@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { el, icon, type Widget } from "./index";
+import { g, el, icon, type Widget } from "./index";
 
 /**
  * A row of icon buttons with the same actions as menu items (`items`: icon,
@@ -19,7 +19,7 @@ export function buttons(opts: Record<string, unknown>): Widget {
   const root = el("widget buttons");
   for (const it of items) {
     if (!it.action) continue;
-    const b = el("btn", icon(it.icon ?? String.fromCharCode(0xe8b7)));
+    const b = el("btn", icon(it.icon ?? g(0xe8b7)));
     b.title = it.label ?? it.action;
     let armed = 0;
     b.addEventListener("click", (e) => {

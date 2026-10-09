@@ -70,7 +70,7 @@ pub async fn audio_set_output(id: String) -> Result<(), String> {
         let set: SetDefault = std::mem::transmute(*vtbl.add(SET_DEFAULT_ENDPOINT));
         type Release = unsafe extern "system" fn(*mut c_void) -> u32;
         let release: Release = std::mem::transmute(*vtbl.add(2));
-        let wide: Vec<u16> = id.encode_utf16().chain([0]).collect();
+        let wide = crate::win::wide(&id);
         let mut result = Ok(());
         for role in [eConsole, eMultimedia, eCommunications] {
             if let Err(e) = set(p, PCWSTR(wide.as_ptr()), role.0).ok() {
@@ -120,7 +120,6 @@ pub async fn audio_session_set(pid: u32, level: Option<f32>, muted: Option<bool>
 
 /// A program's icon for the per-app list, extracted once per program.
 fn app_icon(path: &str) -> Value {
-    use base64::Engine;
     static CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Value>>> = std::sync::Mutex::new(None);
     if path.is_empty() {
         return Value::Null;
@@ -130,7 +129,7 @@ fn app_icon(path: &str) -> Value {
     map.entry(path.to_lowercase())
         .or_insert_with(|| {
             super::tasks::exe_icon(path)
-                .map(|(w, h, rgba)| json!({ "w": w, "h": h, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) }))
+                .map(|(w, h, rgba)| super::rgba_json(w, h, &rgba))
                 .unwrap_or(Value::Null)
         })
         .clone()
