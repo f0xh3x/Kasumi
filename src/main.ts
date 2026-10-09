@@ -999,16 +999,6 @@ class Overlay {
         regions.push({ x: bf.left - r, y: H - 1, width: bf.right - bf.left + 2 * r, height: bf.depth - H + 1 });
       });
     }
-    // Cards beside a panel (quick settings' lists) are interactive too, with the
-    // gap to the panel bridged so moving over to them doesn't count as leaving.
-    if (this.expanded) {
-      for (const c of document.querySelectorAll<HTMLElement>(".float-card.open")) {
-        if (getComputedStyle(c).visibility === "hidden") continue;
-        const r = c.getBoundingClientRect();
-        const y = L.edge === "bottom" ? window.innerHeight - r.bottom : r.top;
-        regions.push({ x: r.left - 34, y: y - 8, width: r.width + 68, height: r.height + 16 });
-      }
-    }
     const key = JSON.stringify(regions);
     if (key === this.lastRegions) return;
     this.lastRegions = key;

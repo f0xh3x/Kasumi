@@ -90,10 +90,12 @@ pub async fn audio_sessions() -> Result<Value, String> {
         if out.iter().any(|v| v["pid"] == pid) {
             return;
         }
-        let name = crate::win::process_name(pid).unwrap_or_else(|| format!("App {pid}"));
+        let path = crate::win::process_path(pid).unwrap_or_default();
+        let name = std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| format!("App {pid}"));
+        let icon = app_icon(&path);
         let level = unsafe { vol.GetMasterVolume() }.unwrap_or(1.0);
         let muted = unsafe { vol.GetMute() }.map(|m| m.as_bool()).unwrap_or(false);
-        out.push(json!({ "pid": pid, "name": name, "level": (level as f64 * 100.0).round() / 100.0, "muted": muted }));
+        out.push(json!({ "pid": pid, "name": name, "icon": icon, "level": (level as f64 * 100.0).round() / 100.0, "muted": muted }));
     })?;
     out.sort_by(|a, b| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()));
     Ok(json!(out))
@@ -114,6 +116,24 @@ pub async fn audio_session_set(pid: u32, level: Option<f32>, muted: Option<bool>
             }
         }
     })
+}
+
+/// A program's icon for the per-app list, extracted once per program.
+fn app_icon(path: &str) -> Value {
+    use base64::Engine;
+    static CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Value>>> = std::sync::Mutex::new(None);
+    if path.is_empty() {
+        return Value::Null;
+    }
+    let mut cache = CACHE.lock().unwrap();
+    let map = cache.get_or_insert_with(Default::default);
+    map.entry(path.to_lowercase())
+        .or_insert_with(|| {
+            super::tasks::exe_icon(path)
+                .map(|(w, h, rgba)| json!({ "w": w, "h": h, "rgba": base64::engine::general_purpose::STANDARD.encode(rgba) }))
+                .unwrap_or(Value::Null)
+        })
+        .clone()
 }
 
 /// Calls `f` with each live app session (not the system sounds) on the default output.

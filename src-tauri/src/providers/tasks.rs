@@ -564,6 +564,11 @@ fn shell_item(path: &str) -> Option<IShellItem> {
     unsafe { SHCreateItemFromParsingName(&HSTRING::from(path), None).ok() }
 }
 
+/// A program's icon (RGBA), as Tasks shows it.
+pub(crate) fn exe_icon(path: &str) -> Option<(u32, u32, Vec<u8>)> {
+    shell_item(path).and_then(|i| item_icon(&i))
+}
+
 pub(crate) fn item_icon(item: &IShellItem) -> Option<(u32, u32, Vec<u8>)> {
     unsafe {
         let factory: IShellItemImageFactory = item.cast().ok()?;
