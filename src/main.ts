@@ -874,10 +874,14 @@ class Overlay {
     const o = clamp01(this.osd.value);
     drops.forEach((d, i) => {
       const bf = frame.bumps[i];
+      // The notch row's depth in whole pixels: content is centered in it, and the
+      // spring's last tiny wobble around the final depth would otherwise move an
+      // item whose centered position sits on a half pixel back and forth by 1 px.
+      const row = Math.round(bf.rowDepth);
       if (d.slot) {
         // Docks: the slot follows the notch's current (morphing) width.
         const w = dock ? bumps[i].width : d.width;
-        d.slot.style.height = `${bf.rowDepth}px`;
+        d.slot.style.height = `${row}px`;
         d.slot.style.transform = `translateX(${bf.anchorCx - w / 2}px)`;
         if (dock) d.slot.style.width = `${w}px`;
         // Cross-fade the notch's own content with the OSD; a tiny dock handle hides it.
@@ -887,14 +891,14 @@ class Overlay {
       }
       if (d === this.peekDrop) {
         const k = clamp01(this.peek.value);
-        this.peekEl.style.transform = `translate(${bf.cx}px, ${(away * bf.rowDepth) / 2}px) translate(-50%, ${-away * 50}%)`;
+        this.peekEl.style.transform = `translate(${bf.cx}px, ${(away * row) / 2}px) translate(-50%, ${-away * 50}%)`;
         this.peekEl.style.opacity = String(clamp01(k * 1.8 - 0.5) * (1 - clamp01(this.expand.value)));
         this.peekEl.style.visibility = k > 0.01 ? "visible" : "hidden";
       }
       if (d === od) {
         const inner = L.osd.width - 2 * L.geometry.notchCornerRadius - 8;
         this.osdEl.style.width = `${inner}px`;
-        this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${(away * bf.rowDepth) / 2}px) translateY(${-away * 50}%)`;
+        this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${(away * row) / 2}px) translateY(${-away * 50}%)`;
         this.osdEl.style.opacity = String(clamp01(o * 1.8 - 0.5));
         this.osdEl.style.visibility = o > 0.01 ? "visible" : "hidden";
       }
