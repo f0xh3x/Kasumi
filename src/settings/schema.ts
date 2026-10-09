@@ -286,11 +286,33 @@ export const pages: Page[] = [
             ],
           },
           {
+            kind: "select",
+            label: "Keys position",
+            path: (cfg) => ((cfg.widgets?.media?.keys ?? "off") === "off" || cfg.widgets?.media?.keys === false ? null : ["widgets", "media", "keys_side"]),
+            default: "left",
+            options: [
+              { value: "left", label: "Left of the title" },
+              { value: "right", label: "Right of the title" },
+            ],
+          },
+          {
             kind: "toggle",
             label: "Fixed title width",
             help: "The title always takes the full title width, so its notch keeps one size whatever plays.",
             path: ["widgets", "media", "fixed_width"],
             default: false,
+          },
+          {
+            kind: "select",
+            label: "Title alignment",
+            help: "Where a title shorter than the title width sits.",
+            path: (cfg) => (cfg.widgets?.media?.fixed_width ? ["widgets", "media", "title_align"] : null),
+            default: "center",
+            options: [
+              { value: "left", label: "Left" },
+              { value: "center", label: "Center" },
+              { value: "right", label: "Right" },
+            ],
           },
           { kind: "slider", label: "Title width", path: ["widgets", "media", "max_width"], default: 240, min: 100, max: 500, step: 10, unit: "px" },
           {

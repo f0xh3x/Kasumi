@@ -46,7 +46,13 @@ export function media(opts: Record<string, unknown>): Widget {
   const keys = opts.keys === true ? "always" : typeof opts.keys === "string" ? opts.keys : "off";
   if (keys === "off") root.classList.add("compact");
   else if (keys === "open" || keys === "closed") root.classList.add(`keys-${keys}`);
-  if (opts.fixed_width === true) root.classList.add("fixed");
+  // The keys and the title are two parts the user arranges: keys on either side,
+  // a fixed-width title aligned within its box.
+  if (opts.keys_side === "right") root.classList.add("keys-right");
+  if (opts.fixed_width === true) {
+    const align = opts.title_align === "left" || opts.title_align === "right" ? opts.title_align : "center";
+    root.classList.add("fixed", `align-${align}`);
+  }
   root.hidden = true;
 
   let marquee: Animation | null = null;

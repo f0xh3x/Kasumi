@@ -357,8 +357,12 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
 /* Keys only while the bar is open / only while it's closed. */
 html:not(.bar-open) .widget.media.keys-open .media-controls,
 html.bar-open .widget.media.keys-closed .media-controls { display: none; }
-/* Fixed title width: shorter titles sit in the middle of it (scrolling ones start at the left). */
-.widget.media.fixed .media-text { text-align: center; }
+/* Keys after the title instead of before it. */
+.widget.media.keys-right { flex-direction: row-reverse; }
+.widget.media.keys-right .media-text { margin-left: 0; margin-right: 2px; }
+/* Fixed title width: shorter titles aligned in it (scrolling ones start at the left). */
+.widget.media.fixed.align-center .media-text { text-align: center; }
+.widget.media.fixed.align-right .media-text { text-align: right; }
 .widget.media.fixed .media-text.scrolling { text-align: left; }
 .widget.media.compact .media-text { margin-left: 0; }
 /* The bar copy's keys fade in as a notch's media widget arrives. */
