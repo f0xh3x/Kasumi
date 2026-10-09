@@ -120,9 +120,14 @@ function slide(wrap: HTMLElement, open: boolean, ctx: PanelContext, done?: () =>
   const gapTo = open ? gap : 0;
   const fade = wasHidden || !open;
   wrap.style.overflow = "hidden";
+  // Whole pixels only: on a bottom bar the content is mirrored around the panel's
+  // height, so a fractional one redraws all of its text at sub-pixel offsets each
+  // frame (a shimmer).
   const at = (e: number) => {
-    wrap.style.height = `${from + (to - from) * e}px`;
-    wrap.style.marginBottom = `${gapFrom + (gapTo - gapFrom) * e - gap}px`;
+    const h = Math.round(from + (to - from) * e);
+    const total = Math.round(from + gapFrom + (to + gapTo - from - gapFrom) * e);
+    wrap.style.height = `${h}px`;
+    wrap.style.marginBottom = `${total - h - gap}px`;
     if (fade) wrap.style.opacity = String(open ? e : 1 - e);
   };
   at(0);
@@ -280,8 +285,24 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
   tiles.style.gridTemplateColumns = `repeat(${Math.max(1, chosen.length)}, minmax(0, 1fr))`;
   tiles.classList.toggle("pills", chosen.length <= 3);
   tiles.hidden = chosen.length === 0;
-  const outputs = opts.outputs === true ? outputPicker(ctx) : null;
-  const apps = opts.apps === true ? appVolumes(ctx) : null;
+  // Volume and brightness can be turned off (an audio interface's own knob, a
+  // desktop monitor); the other one then takes the whole row.
+  const showVolume = opts.volume !== false;
+  const showBrightness = opts.brightness !== false;
+  const outputs = showVolume && opts.outputs === true ? outputPicker(ctx) : null;
+  const apps = showVolume && opts.apps === true ? appVolumes(ctx) : null;
+  if (showBrightness && opts.display === true) {
+    // A button before the brightness slider opens Windows' display settings.
+    const display = icon(g(0xe7f4));
+    display.classList.add("quick-expand", "clickable");
+    display.title = "Display settings";
+    display.addEventListener("click", (e) => {
+      e.stopPropagation();
+      invoke("run_action", { action: "open", target: "ms-settings:display" }).catch(console.error);
+      ctx.close();
+    });
+    brightness.row.prepend(display);
+  }
 
   // The box the lists open in (one at a time; the same icon again closes it).
   const box = el("quick-more-box");
@@ -307,8 +328,9 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
         slide(more, true, ctx);
       });
     });
-    volume.row.append(d.button);
   }
+  // Before the volume slider: the per-app chevron, then the output devices.
+  for (const d of [...drops].reverse()) volume.row.prepend(d.button);
 
   const grid = el("quick-grid", volume.row, brightness.row, battery, network);
   const root = el("quick-panel", more, grid, tiles);
@@ -333,9 +355,9 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
   }, 1000);
   let shape = "";
   const off = subscribe("system", (s) => {
-    volume.row.hidden = !s?.volume;
+    volume.row.hidden = !showVolume || !s?.volume;
     if (s?.volume) volume.set(s.volume.muted ? 0 : s.volume.level * 100, volumeGlyph(s.volume.level, s.volume.muted));
-    brightness.row.hidden = s?.brightness == null;
+    brightness.row.hidden = !showBrightness || s?.brightness == null;
     if (s?.brightness != null) brightness.set(s.brightness, g(0xe706));
     const b = s?.battery;
     battery.hidden = !b;
