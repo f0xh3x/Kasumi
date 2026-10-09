@@ -103,30 +103,40 @@ function slider(onInput: (v: number) => void, onIcon?: () => void) {
 }
 
 /**
- * Slides a dropdown list open or shut (height and fade); the panel's shape follows
- * every frame. `done` runs when it's settled.
+ * Slides a dropdown list open or shut (height, its gap in the panel, and a fade);
+ * the panel's shape follows every frame.
  */
 function slide(list: HTMLElement, open: boolean, ctx: PanelContext): void {
-  const from = list.hidden ? 0 : list.offsetHeight;
+  // A hidden list takes no gap in the panel, one at height 0 would: the gap grows
+  // and shrinks with it (a negative margin cancels what isn't there yet).
+  const gap = parseFloat(getComputedStyle(list.parentElement!).rowGap) || 0;
+  const wasHidden = list.hidden;
+  const from = wasHidden ? 0 : list.getBoundingClientRect().height;
+  const gapFrom = wasHidden ? 0 : gap;
   list.hidden = false;
-  list.style.height = "";
-  const to = open ? list.scrollHeight : 0;
+  list.style.height = "auto";
+  // Exact (fractional) natural height: the last frame lands on it, no snap after.
+  const to = open ? list.getBoundingClientRect().height : 0;
+  const gapTo = open ? gap : 0;
   list.style.overflow = "hidden";
+  const at = (e: number) => {
+    list.style.height = `${from + (to - from) * e}px`;
+    list.style.marginBottom = `${gapFrom + (gapTo - gapFrom) * e - gap}px`;
+    list.style.opacity = String(open ? e : 1 - e);
+  };
   // Start where it is (no flash of the full list before the first frame).
-  list.style.height = `${from}px`;
-  list.style.opacity = open ? "0" : "1";
+  at(0);
+  ctx.resize();
   const start = performance.now();
   const step = (now: number) => {
     const k = Math.min(1, (now - start) / 180);
-    const e = 1 - (1 - k) ** 3;
-    list.style.height = `${from + (to - from) * e}px`;
-    list.style.opacity = String(open ? e : 1 - e);
-    ctx.resize();
+    at(1 - (1 - k) ** 3);
     if (k < 1) {
+      ctx.resize();
       requestAnimationFrame(step);
       return;
     }
-    list.style.height = list.style.overflow = list.style.opacity = "";
+    list.style.height = list.style.overflow = list.style.opacity = list.style.marginBottom = "";
     list.hidden = !open;
     ctx.resize();
   };
@@ -169,8 +179,9 @@ function outputPicker(ctx: PanelContext) {
     if (open === state.open) return;
     state.open = open;
     button.classList.toggle("open", open);
-    if (open) refresh();
-    slide(list, open, ctx);
+    // Opening: fetch first, then slide to the real height (no jump when data lands).
+    if (open) refresh().finally(() => state.open && slide(list, true, ctx));
+    else slide(list, false, ctx);
   };
   return { list, button, refresh, toggle, state };
 }
@@ -240,8 +251,9 @@ function appVolumes(ctx: PanelContext) {
     if (open === state.open) return;
     state.open = open;
     chevron.classList.toggle("open", open);
-    if (open) refresh();
-    slide(list, open, ctx);
+    // Opening: fetch first, then slide to the real height (no jump when data lands).
+    if (open) refresh().finally(() => state.open && slide(list, true, ctx));
+    else slide(list, false, ctx);
   };
   return { list, button: chevron, refresh, toggle, state };
 }
