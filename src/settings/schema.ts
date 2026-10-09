@@ -412,6 +412,26 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Notifications",
+        collapsible: true,
+        icon: 0xea8f,
+        help: "Windows' notifications. They can be read but not answered or dismissed from here: Notification Center does that. Windows keeps none while notifications are switched off in its settings.",
+        fields: [
+          {
+            kind: "select",
+            label: "Click shows",
+            path: ["widgets", "notifications", "mode"],
+            default: "list",
+            options: [
+              { value: "list", label: "A list of recent notifications" },
+              { value: "count", label: "Notification Center (just a count here)" },
+            ],
+          },
+          { kind: "toggle", label: "Count", help: "How many notifications there are, beside the bell.", path: ["widgets", "notifications", "count"], default: true },
+          { kind: "color", label: "New notifications", help: "The bell's color while there's something you haven't looked at.", path: ["widgets", "notifications", "color"], default: "#4cc2ff" },
+        ],
+      },
+      {
         title: "Clipboard",
         collapsible: true,
         icon: 0xe77f,

@@ -170,3 +170,73 @@ export function clipboardPanel(_opts: Record<string, unknown>, ctx: PanelContext
   });
   return { el: root, dispose: off };
 }
+
+const ago = (unix: number) => {
+  const s = Math.max(0, Date.now() / 1000 - unix);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h`;
+  return new Date(unix * 1000).toLocaleDateString([], { day: "numeric", month: "short" });
+};
+
+/**
+ * Notifications: a bell (+ count) in a color of its own while something is new.
+ * mode "list": its panel lists them; "count": a click opens Notification Center.
+ */
+export function notifications(opts: Record<string, unknown>): Widget {
+  const listMode = opts.mode !== "count";
+  const count = el("note-count");
+  const bell = icon(g(0xea8f));
+  const root = el("widget notifications clickable", bell, ...(opts.count !== false ? [count] : []));
+  if (typeof opts.color === "string") root.style.setProperty("--new", opts.color);
+  root.addEventListener("click", () => {
+    invoke("notifications_seen").catch(console.error);
+    if (!listMode) invoke("notifications_center").catch(console.error);
+  });
+  const off = subscribe("notifications", (n) => {
+    const total = n?.count ?? 0;
+    count.textContent = total ? String(total) : "";
+    root.classList.toggle("new", (n?.unseen ?? 0) > 0);
+    root.title = total ? `${total} notification${total === 1 ? "" : "s"}` : "No notifications";
+  });
+  // "count" mode handles its own click (no panel).
+  return { el: root, dispose: off, ...(listMode ? {} : { panelTrigger: "event" as const }) };
+}
+
+export function notificationsPanel(_opts: Record<string, unknown>, ctx: PanelContext): Widget {
+  const list = el("note-list");
+  const action = (label: string, run: () => void) => {
+    const b = el("note-action", label);
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      ctx.close();
+      run();
+    });
+    return b;
+  };
+  const actions = el(
+    "note-actions",
+    action("Notification Center", () => invoke("notifications_center").catch(console.error)),
+    action("Do not disturb…", () => invoke("run_action", { action: "open", target: "ms-settings:notifications" }).catch(console.error)),
+  );
+  const root = el("note-panel", list, actions);
+  const off = subscribe("notifications", (n) => {
+    const rows = (n?.items ?? []).map((it) => {
+      const row = el(
+        "note-row",
+        el("note-head", el("note-app", it.app), el("note-time", ago(it.time))),
+        ...(it.title ? [el("note-title", it.title)] : []),
+        ...(it.body ? [el("note-body", it.body)] : []),
+      );
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        ctx.close();
+        invoke("notifications_center").catch(console.error);
+      });
+      return row;
+    });
+    list.replaceChildren(...(rows.length ? rows : [el("note-empty", "No notifications.")]));
+    ctx.resize();
+  });
+  return { el: root, dispose: off };
+}

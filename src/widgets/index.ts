@@ -12,7 +12,7 @@ import { tasks, tasksPanel } from "./tasks";
 import { quick, quickPanel } from "./quick";
 import { buttons } from "./buttons";
 import { launcher, launcherPanel } from "./launcher";
-import { clipboard, clipboardPanel, focus, netspeed, privacy, privacyPanel, recycle } from "./extras";
+import { clipboard, clipboardPanel, focus, netspeed, notifications, notificationsPanel, privacy, privacyPanel, recycle } from "./extras";
 import { claude, claudePanel } from "./claude";
 import { subscribe } from "../data";
 
@@ -80,6 +80,7 @@ const widgets: Record<string, Factory> = {
   privacy,
   claude,
   clipboard,
+  notifications,
   language: () => {
     // Click to switch the window you're typing in to the next keyboard layout.
     const root = el("widget language clickable");
@@ -104,6 +105,7 @@ const panels: Record<string, PanelFactory> = {
   privacy: privacyPanel,
   claude: claudePanel,
   clipboard: clipboardPanel,
+  notifications: notificationsPanel,
 };
 
 /**

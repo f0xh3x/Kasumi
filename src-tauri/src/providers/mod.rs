@@ -7,6 +7,7 @@ pub mod claude;
 pub mod clipboard;
 pub mod extras;
 pub mod media;
+pub mod notifications;
 pub mod systray;
 pub mod system;
 pub mod tasks;
@@ -94,4 +95,5 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     extras::start(app);
     claude::start(app);
     clipboard::start(app);
+    notifications::start(app);
 }
