@@ -276,9 +276,9 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
       return t;
     }),
   );
-  // One row filling the width; with two or fewer they're slim pills, not blocks.
+  // One row filling the width; with three or fewer they're slim pills, not blocks.
   tiles.style.gridTemplateColumns = `repeat(${Math.max(1, chosen.length)}, minmax(0, 1fr))`;
-  tiles.classList.toggle("pills", chosen.length <= 2);
+  tiles.classList.toggle("pills", chosen.length <= 3);
   tiles.hidden = chosen.length === 0;
   const outputs = opts.outputs === true ? outputPicker(ctx) : null;
   const apps = opts.apps === true ? appVolumes(ctx) : null;

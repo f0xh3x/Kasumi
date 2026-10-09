@@ -1362,7 +1362,7 @@ const quickTiles: Editor = (ctx) => {
   return $(
     "div",
     "stack-tight",
-    row("Tiles", `Shortcuts in one row at the bottom of the panel, in this order (up to ${MAX_TILES}; two or fewer show as slim pills).`, $("span")),
+    row("Tiles", `Shortcuts in one row at the bottom of the panel, in this order (up to ${MAX_TILES}; three or fewer show as slim pills).`, $("span")),
     picked,
     ...(rest.children.length ? [$("p", "card-help", full ? `Add (remove one first: ${MAX_TILES} is the most):` : "Add:"), rest] : []),
   );

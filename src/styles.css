@@ -646,6 +646,6 @@ html:not(.edge-bottom) .quick-tiles { order: 2; }
 html:not(.edge-bottom) .quick-expand.chevron { transform: rotate(180deg); }
 html:not(.edge-bottom) .quick-expand.chevron.open { transform: none; }
 .quick-apps-empty { grid-column: 1 / -1; color: var(--fg-dim); font-size: 12px; }
-/* Two or fewer tiles: slim pills (icon beside the label) rather than blocks. */
+/* Three or fewer tiles: slim pills (icon beside the label) rather than blocks. */
 .quick-tiles.pills .quick-tile { flex-direction: row; justify-content: center; gap: 8px; padding: 8px 12px; border-radius: 999px; }
 .quick-tiles.pills .quick-tile-label { font-size: 12px; color: var(--fg); }
