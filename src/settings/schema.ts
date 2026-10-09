@@ -408,10 +408,10 @@ export const pages: Page[] = [
         fields: [{ kind: "toggle", label: "Item count", help: "How many items are in it, beside the icon.", path: ["widgets", "recycle", "count"], default: false }],
       },
       {
-        title: "Mic / camera / location",
+        title: "Privacy",
         collapsible: true,
         icon: 0xe720,
-        help: "Shows only while an app uses one of them; click for which apps.",
+        help: "Shows only while an app uses your microphone, camera or location; click for which apps.",
         fields: [
           { kind: "toggle", label: "Microphone", path: ["widgets", "privacy", "mic"], default: true },
           { kind: "toggle", label: "Camera", path: ["widgets", "privacy", "camera"], default: true },
