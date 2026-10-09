@@ -378,7 +378,9 @@ class Overlay {
         // Around a middle notch: widgets listed before its widgets sit left of it, the rest right.
         const before = L.bar.center.slice(0, first).filter((n) => !notched.has(n));
         const after = L.bar.center.slice(first).filter((n) => !notched.has(n));
-        this.centerSplit = [addGroup("center split before", before), addGroup("center split after", after)];
+        // Not ".center": that pins it to the middle grid column, which would then be
+        // its containing block (left/right would count from the column, not the bar).
+        this.centerSplit = [addGroup("split before", before), addGroup("split after", after)];
         this.groups.center = undefined;
         continue;
       }

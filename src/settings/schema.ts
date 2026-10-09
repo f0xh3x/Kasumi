@@ -2,7 +2,7 @@
 // listed once, with where it lives in config.toml, its control and default.
 // Adding a feature's settings = adding entries here.
 
-import { scope } from "./editors";
+import { ownsLayout, scope } from "./editors";
 
 export type Path = (string | number)[];
 export type Cfg = Record<string, any>;
@@ -62,6 +62,8 @@ export interface Section {
   scope?: "global" | "monitor";
   /** A collapsible section shown inside the card before it (not in its own group). */
   attach?: boolean;
+  /** A small tag beside the title, e.g. what the settings apply to. */
+  badge?: (cfg: Cfg) => string | null;
 }
 
 export interface Page {
@@ -151,6 +153,7 @@ export const pages: Page[] = [
       {
         title: "Bar",
         scope: "global",
+        badge: () => "All monitors",
         fields: [{ kind: "custom", editor: "surfaceManager" }],
       },
       {
@@ -212,8 +215,14 @@ export const pages: Page[] = [
           { kind: "slider", label: "Edge zone size", help: "How close to the edge counts.", path: surfacePath("hot_edge_size", "notched"), default: 2, min: 1, max: 30, step: 1, unit: "px" },
         ],
       },
-      { title: "This monitor", scope: "monitor", fields: [{ kind: "custom", editor: "monitorToggles" }] },
-      { title: "Placement", fields: [{ kind: "custom", editor: "placement" }] },
+      { title: "This monitor", scope: "monitor", badge: () => `${scope.monitor} only`, fields: [{ kind: "custom", editor: "monitorToggles" }] },
+      {
+        title: "Placement",
+        // Which layout this edits: the global one, or the selected monitor's own.
+        badge: (cfg) =>
+          !scope.monitor ? "Global layout" : ownsLayout(cfg, scope.monitor) ? `${scope.monitor}'s own layout` : "Global layout · a change here gives it its own",
+        fields: [{ kind: "custom", editor: "placement" }],
+      },
     ],
   },
   {

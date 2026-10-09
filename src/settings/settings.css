@@ -416,3 +416,25 @@ body.maximized { border: 0; border-radius: 0; }
 /* Placement chips also open their widget's settings. */
 .chip { cursor: pointer; }
 .chip:hover { background: #262626; }
+
+/* What a card's settings apply to (all monitors / one monitor / its own layout). */
+.card-badge {
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--dim);
+}
+.scope-own {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.scope-chip.active .scope-own { background: rgba(0, 0, 0, 0.15); }

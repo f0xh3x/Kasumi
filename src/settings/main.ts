@@ -281,7 +281,10 @@ function renderPage(page: Page): HTMLElement {
       continue;
     }
     group = null;
-    const card = $("section", "card", $("h2", "card-title", s.title));
+    const title = $("h2", "card-title", s.title);
+    const badge = s.badge?.(cfg);
+    if (badge) title.append($("span", "card-badge", badge));
+    const card = $("section", "card", title);
     if (s.help) card.append($("p", "card-help", s.help));
     card.append(...rows);
     content.append(card);

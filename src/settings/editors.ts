@@ -210,6 +210,13 @@ function monitorLayout(cfg: Cfg, name: string, surface = scope.surface): LayoutC
   return surfaceLayout(cfg, surface);
 }
 
+/** Whether a monitor has its own layout of a bar (else it follows the global one). */
+export function ownsLayout(cfg: Cfg, name: string, surface = scope.surface): boolean {
+  const m = monitorsCache?.find((x) => x.name === name);
+  const r = m ? ruleFor(cfg, m) : ownRule(cfg, name)?.[1];
+  return hasLists(r?.surfaces?.[surface]);
+}
+
 /** A surface's layout in the current scope (global, or the selected monitor's). */
 const scopedLayout = (cfg: Cfg, surface: string): LayoutCfg =>
   scope.monitor ? monitorLayout(cfg, scope.monitor, surface) : surfaceLayout(cfg, surface);
@@ -311,7 +318,15 @@ const scopeSelector: Editor = (ctx) => {
       bar.append(b);
     };
     chip("Global", null, 0xe774);
-    for (const m of list) chip(m.primary ? `${m.name} · primary` : m.name, m.name, 0xe7f4);
+    for (const m of list) {
+      chip(m.primary ? `${m.name} · primary` : m.name, m.name, 0xe7f4);
+      // Monitors with their own layout of the selected bar are marked.
+      if (ownsLayout(ctx.cfg, m.name)) {
+        const b = bar.lastElementChild as HTMLElement;
+        b.append($("span", "scope-own", "own layout"));
+        b.title = `${m.name} has its own layout of this bar`;
+      }
+    }
   };
   if (monitorsCache) draw(monitorsCache);
   else
