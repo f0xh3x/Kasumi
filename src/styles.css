@@ -83,9 +83,11 @@ html.edge-bottom :is(.group, .slot, .osd > *, .peek > *, .panel > *) { scale: 1 
   white-space: nowrap;
 }
 /* Shrink-to-fit so main.ts can measure a group and shift it clear of notches. */
-.group.left { justify-self: start; }
-.group.center { justify-self: center; }
-.group.right { justify-self: end; }
+.group.left { grid-column: 1; justify-self: start; }
+.group.center { grid-column: 2; justify-self: center; }
+.group.right { grid-column: 3; justify-self: end; }
+/* Center widgets around a middle notch (main.ts places them beside it). */
+.group.split { position: absolute; top: 0; bottom: 0; }
 
 .slot {
   position: absolute;

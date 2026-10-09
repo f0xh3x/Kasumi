@@ -107,6 +107,8 @@ class Overlay {
   private openLauncher: (() => void) | null = null;
   private bar = div("bar");
   private groups: Partial<Record<"left" | "center" | "right", HTMLDivElement>> = {};
+  /** Center widgets around a middle notch: [before it, after it]. */
+  private centerSplit: [HTMLDivElement, HTMLDivElement] | null = null;
   // Notch widths follow their content: measured here, positioned by Rust.
   private notchObserver = new ResizeObserver(() => this.scheduleMeasure());
   // And now and then regardless: a missed resize would leave a notch the wrong
@@ -152,6 +154,7 @@ class Overlay {
     svg.setAttribute("viewBox", `0 0 ${layout.width} 2000`);
     this.requestedHeight = 0;
     this.buildDom(layout, prevSprings, prevX);
+    this.layoutBar();
     this.notchObserver.disconnect();
     for (const d of this.drops) for (const c of d.slot?.children ?? []) this.notchObserver.observe(c);
     this.scheduleMeasure();
@@ -163,6 +166,7 @@ class Overlay {
 
   setExpanded(expanded: boolean): void {
     this.expanded = expanded;
+    this.layoutBar();
     this.expand.target = expanded ? 1 : 0;
     this.spread.target = this.spreadTarget();
     if (!expanded) for (const d of this.drops) d.spring.target = 0;
@@ -191,8 +195,43 @@ class Overlay {
       if (d) d.notch = n;
       this.markHidden(n);
     }
+    this.layoutBar();
     this.kick();
     this.sendRegions();
+  }
+
+  /**
+   * Bars: notch widgets stay where they are when the bar opens, so the bar's own
+   * widgets make room: a side's group starts beside its notch (on the inner side),
+   * center widgets sit before / after a middle notch.
+   */
+  private layoutBar(): void {
+    const L = this.layout;
+    if (!L || L.mode === "dock") return;
+    // A notch's content edge: past its flare and padding.
+    const inset = L.geometry.notchCornerRadius + NOTCH_PAD;
+    const gap = L.bar.gap;
+    const pad = L.bar.padding;
+    const sideOf = (n: NotchLayout) => (["left", "center", "right"] as const).find((s) => n.widgets.some((w) => L.bar[s].includes(w)));
+    let leftEnd = 0;
+    let rightStart = L.width;
+    let middle: NotchLayout | null = null;
+    for (const n of L.notches) {
+      if (n.hidden || !n.widgets.length) continue;
+      const side = sideOf(n);
+      if (side === "left") leftEnd = Math.max(leftEnd, n.x + n.width - inset);
+      else if (side === "right") rightStart = Math.min(rightStart, n.x + inset);
+      else if (side === "center") middle = n;
+    }
+    if (this.groups.left) this.groups.left.style.marginLeft = leftEnd ? `${Math.max(0, leftEnd + gap - pad)}px` : "";
+    if (this.groups.right) this.groups.right.style.marginRight = rightStart < L.width ? `${Math.max(0, L.width - rightStart + gap - pad)}px` : "";
+    if (this.centerSplit) {
+      const [before, after] = this.centerSplit;
+      const x0 = middle ? middle.x + inset : L.width / 2;
+      const x1 = middle ? middle.x + middle.width - inset : L.width / 2;
+      before.style.right = `${L.width - x0 + gap}px`;
+      after.style.left = `${x1 + gap}px`;
+    }
   }
 
   /** "drop" keeps the bar full width so it slides out of the top edge; "spread" grows it sideways. */
@@ -285,43 +324,63 @@ class Overlay {
     this.bar.style.height = `${L.geometry.expandedHeight}px`;
     this.bar.style.padding = `0 ${L.bar.padding}px`;
     content.append(this.bar);
-    for (const side of ["left", "center", "right"] as const) {
-      const group = div(`group ${side}`);
+    // A widget with a panel of the same name gets a dropdown under it in the open bar.
+    const dropdown = (name: string, w: Widget) => {
+      const panelName = panelFor(name);
+      if (widgetType(name) === "launcher") this.openLauncher = () => w.el.dispatchEvent(new CustomEvent("notch:panel"));
+      if (!panelName) return;
+      const drop: Drop = {
+        key: `bar:${name}`,
+        x: 0,
+        width: 0,
+        height: 0,
+        inHull: false,
+        panelWidth: 0,
+        panelHeight: 0,
+        hasPanel: true,
+        spring: spring(`bar:${name}`),
+        xs: null,
+        slot: null,
+        panelEl: mountPanel(panelName, Number(opts(name).width) || undefined),
+        anchor: w.el,
+      };
+      if (w.panelTrigger !== "event") {
+        w.el.classList.add("clickable");
+        w.el.addEventListener("click", () => this.toggleDrop(drop));
+      }
+      w.el.addEventListener("notch:panel", () => this.toggleDrop(drop, true));
+      this.drops.push(drop);
+    };
+    // Bars: a notch widget stays in its notch when the bar opens (one copy, no
+    // hand-over); the bar row holds the rest and makes room for it (layoutBar).
+    const notched = new Set(dock ? [] : L.notches.flatMap((n) => n.widgets));
+    const addGroup = (cls: string, names: string[]) => {
+      const group = div(`group ${cls}`);
       group.style.gap = `${L.bar.gap}px`;
       this.bar.append(group);
-      this.groups[side] = group;
-      for (const name of L.bar[side]) {
+      for (const name of names) {
         const w = createWidget(name, opts(name));
         this.widgets.push(w);
         group.append(w.el);
         this.barEls.set(name, w.el);
         if (name === "language") this.langEl = w.el;
-        if (widgetType(name) === "launcher") this.openLauncher = () => w.el.dispatchEvent(new CustomEvent("notch:panel"));
-        const panelName = panelFor(name);
-        if (!panelName) continue;
-        // A bar widget with a panel of the same name gets a dropdown.
-        const drop: Drop = {
-          key: `bar:${name}`,
-          x: 0,
-          width: 0,
-          height: 0,
-          inHull: false,
-          panelWidth: 0,
-          panelHeight: 0,
-          hasPanel: true,
-          spring: spring(`bar:${name}`),
-          xs: null,
-          slot: null,
-          panelEl: mountPanel(panelName, Number(opts(name).width) || undefined),
-          anchor: w.el,
-        };
-        if (w.panelTrigger !== "event") {
-          w.el.classList.add("clickable");
-          w.el.addEventListener("click", () => this.toggleDrop(drop));
-        }
-        w.el.addEventListener("notch:panel", () => this.toggleDrop(drop, true));
-        this.drops.push(drop);
+        dropdown(name, w);
       }
+      return group;
+    };
+    this.centerSplit = null;
+    for (const side of ["left", "center", "right"] as const) {
+      const names = L.bar[side].filter((n) => !notched.has(n));
+      const first = L.bar[side].findIndex((n) => notched.has(n));
+      if (side === "center" && first >= 0) {
+        // Around a middle notch: widgets listed before its widgets sit left of it, the rest right.
+        const before = L.bar.center.slice(0, first).filter((n) => !notched.has(n));
+        const after = L.bar.center.slice(first).filter((n) => !notched.has(n));
+        this.centerSplit = [addGroup("center split before", before), addGroup("center split after", after)];
+        this.groups.center = undefined;
+        continue;
+      }
+      this.groups[side] = addGroup(side, names);
     }
 
     // Notches, with their optional panels.
@@ -341,9 +400,14 @@ class Overlay {
         this.widgets.push(w);
         slot.append(w.el);
         this.notchEls.push({ slot, name, el: w.el });
-        if (name === "language" && dock) this.langEl = w.el;
-        if (dock && widgetType(name) === "launcher") this.openLauncher = () => w.el.dispatchEvent(new CustomEvent("notch:panel"));
-        const panelName = dock ? panelFor(name) : null;
+        if (name === "language") this.langEl = w.el;
+        if (!dock) {
+          dropdown(name, w);
+          if (panelFor(name) || widgetType(name) === "launcher") slot.classList.add("clickable");
+          continue;
+        }
+        if (widgetType(name) === "launcher") this.openLauncher = () => w.el.dispatchEvent(new CustomEvent("notch:panel"));
+        const panelName = panelFor(name);
         if (panelName) {
           const panel = mountPanel(panelName, Number(opts(name).width) || undefined);
           panel.style.visibility = "hidden";
@@ -400,9 +464,9 @@ class Overlay {
           middle.panels.set("launcher", panel);
           this.openLauncher = () => this.toggleDockPanel(middle, "launcher", true);
         }
-      } else if (this.groups.center) {
+      } else {
         const anchor = div("launcher-anchor");
-        this.groups.center.append(anchor);
+        this.bar.append(anchor);
         const drop: Drop = {
           key: "bar:launcher",
           x: 0,
