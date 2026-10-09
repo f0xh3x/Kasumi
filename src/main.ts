@@ -650,14 +650,17 @@ class Overlay {
           d.panelWidth = rowWidth;
           d.panelEl.style.width = `${rowWidth}px`;
         }
+        // Fractional, like the content: whole-pixel heights made the shape and the
+        // content round apart by up to a pixel each frame (a tremble while resizing).
         d.panelEl.style.height = "auto";
-        d.panelHeight = d.panelEl.offsetHeight;
+        d.panelHeight = d.panelEl.getBoundingClientRect().height;
         d.panelEl.style.height = `${d.panelHeight}px`;
         tallest = Math.max(tallest, d.panelHeight + this.growRoom(d.panelEl));
         continue;
       }
-      d.panelWidth = d.panelEl.offsetWidth;
-      d.panelHeight = d.panelEl.offsetHeight;
+      const size = d.panelEl.getBoundingClientRect();
+      d.panelWidth = size.width;
+      d.panelHeight = size.height;
       // Dropdowns have zero collapsed width, so x is the panel's center.
       const anchorBox = d.anchor.getBoundingClientRect();
       const panelBox = d.panelEl.getBoundingClientRect();
