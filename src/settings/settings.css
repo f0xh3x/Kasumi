@@ -333,7 +333,6 @@ body.maximized { border: 0; border-radius: 0; }
 .menu-row .input { width: 160px; }
 .menu-row .select { width: 190px; }
 .menu-row .input:nth-of-type(2) { width: 200px; }
-.menu-row .icon-select { width: 64px; font-family: "Segoe Fluent Icons", "Inter", sans-serif; }
 .menu-row-actions { display: flex; margin-left: auto; }
 .sep-row { padding: 6px 0; }
 .sep-line { flex: 1; height: 1px; background: var(--line); }
@@ -438,3 +437,45 @@ body.maximized { border: 0; border-radius: 0; }
   background: rgba(255, 255, 255, 0.14);
 }
 .scope-chip.active .scope-own { background: rgba(0, 0, 0, 0.15); }
+
+/* Icon picker: a button with the icon, opening a grid of icons under its row. */
+.icon-picker {
+  width: 34px;
+  height: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #2a2a2a;
+  color: var(--fg);
+  cursor: pointer;
+}
+.icon-picker:hover { border-color: rgba(255, 255, 255, 0.3); }
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 34px);
+  gap: 4px;
+  padding: 8px;
+  margin: 2px 0 6px;
+  border-radius: 10px;
+  background: #161616;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.icon-grid[hidden] { display: none; }
+.icon-cell {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.icon-cell .icon { font-size: 16px; }
+.icon-cell:hover { background: rgba(255, 255, 255, 0.1); }
+.icon-cell.on { background: var(--fg); color: var(--bg); }

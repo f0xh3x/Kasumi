@@ -48,6 +48,8 @@ export function quick(opts: Record<string, unknown>): Widget {
     } else if (show === "network") {
       glyph.textContent = networkGlyph(s?.network ?? null);
       root.title = s?.network?.connected ? s.network.name : "Not connected";
+    } else if (show === "custom" && typeof opts.custom_icon === "string" && opts.custom_icon) {
+      glyph.textContent = opts.custom_icon;
     } else {
       glyph.textContent = g(0xe713);
     }

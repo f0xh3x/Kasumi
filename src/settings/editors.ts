@@ -924,20 +924,55 @@ const ACTIONS: [string, string][] = [
   ["open_config", "Open config file"],
 ];
 const ICONS: [number, string][] = [
-  [0xe8b7, "Folder"],
-  [0xe7f4, "This PC"],
-  [0xe896, "Downloads"],
-  [0xe8a5, "Document"],
-  [0xeb9f, "Picture"],
-  [0xe74d, "Trash"],
-  [0xe713, "Settings"],
-  [0xe72e, "Lock"],
-  [0xe708, "Moon"],
-  [0xe777, "Restart"],
-  [0xe7e8, "Power"],
-  [0xe8f8, "Sign out"],
-  [0xe7c3, "Page"],
+  [0xe8b7, "Folder"], [0xe838, "Folder open"], [0xe7f4, "This PC"], [0xe896, "Downloads"],
+  [0xe898, "Upload"], [0xe8a5, "Document"], [0xe7c3, "Page"], [0xeb9f, "Picture"],
+  [0xe8f1, "Library"], [0xe74d, "Trash"], [0xe80f, "Home"], [0xe71d, "Apps"],
+  [0xe721, "Search"], [0xe713, "Settings"], [0xe771, "Personalize"], [0xe790, "Color"],
+  [0xe72e, "Lock"], [0xe708, "Moon"], [0xe706, "Brightness"], [0xea80, "Lightbulb"],
+  [0xe777, "Restart"], [0xe7e8, "Power"], [0xe8f8, "Sign out"], [0xe72c, "Refresh"],
+  [0xe895, "Sync"], [0xe774, "Globe"], [0xe71b, "Link"], [0xe753, "Cloud"],
+  [0xe715, "Mail"], [0xe8bd, "Chat"], [0xe717, "Phone"], [0xe716, "People"],
+  [0xe787, "Calendar"], [0xe823, "Clock"], [0xe8d6, "Music"], [0xe714, "Video"],
+  [0xe722, "Camera"], [0xe7fc, "Game"], [0xe7f6, "Headphones"], [0xe720, "Microphone"],
+  [0xe767, "Volume"], [0xe74f, "Mute"], [0xe701, "Wi-Fi"], [0xe702, "Bluetooth"],
+  [0xe709, "Airplane"], [0xe765, "Keyboard"], [0xe962, "Mouse"], [0xe943, "Code"],
+  [0xe756, "Terminal"], [0xe8ef, "Calculator"], [0xe7bf, "Shopping"], [0xe734, "Star"],
+  [0xeb51, "Heart"], [0xe718, "Pin"], [0xe7c1, "Flag"], [0xe8ec, "Tag"],
+  [0xe70f, "Edit"], [0xe8c8, "Copy"], [0xe74e, "Save"], [0xe749, "Print"],
+  [0xe72d, "Share"], [0xea18, "Shield"], [0xe7ef, "Admin"], [0xe946, "Info"],
+  [0xe897, "Help"], [0xe7ba, "Warning"],
 ];
+
+/**
+ * An icon button that opens a grid of icons below `row` (names only as tooltips).
+ * Returns the button and the grid; the grid goes right after the row it belongs
+ * to (inline, so a collapsible section can't clip it).
+ */
+function iconPicker(current: string, onPick: (glyph: string) => void): [HTMLElement, HTMLElement] {
+  const btn = $("button", "icon-picker", $("span", "icon", current || String.fromCharCode(0xe8b7)));
+  btn.title = "Choose an icon";
+  const grid = $("div", "icon-grid");
+  grid.hidden = true;
+  for (const [code, name] of ICONS) {
+    const ch = String.fromCharCode(code);
+    const cell = $("button", `icon-cell${ch === current ? " on" : ""}`, glyph(code));
+    cell.title = name;
+    cell.addEventListener("click", () => {
+      grid.querySelectorAll(".icon-cell.on").forEach((c) => c.classList.remove("on"));
+      cell.classList.add("on");
+      btn.replaceChildren($("span", "icon", ch));
+      grid.hidden = true;
+      onPick(ch);
+    });
+    grid.append(cell);
+  }
+  btn.addEventListener("click", () => {
+    const open = grid.hidden;
+    document.querySelectorAll<HTMLElement>(".icon-grid").forEach((g) => (g.hidden = true));
+    grid.hidden = !open;
+  });
+  return [btn, grid];
+}
 const DEFAULT_ICON: Record<string, number> = {
   open: 0xe8b7,
   settings: 0xe713,
@@ -984,13 +1019,8 @@ const itemsEditor = (widget: string, separators = true): Editor => (ctx) => {
         list.append($("div", "menu-row sep-row", $("div", "sep-line"), controls));
         return;
       }
-      const iconSel = select(
-        ICONS.map(([c, name]) => [String.fromCharCode(c), `${String.fromCharCode(c)}  ${name}`]),
-        it.icon ?? String.fromCharCode(DEFAULT_ICON[it.action] ?? 0xe8b7),
-      );
-      iconSel.classList.add("icon-select");
-      iconSel.addEventListener("change", () => {
-        it.icon = iconSel.value;
+      const [iconBtn, iconGrid] = iconPicker(it.icon ?? String.fromCharCode(DEFAULT_ICON[it.action] ?? 0xe8b7), (ch) => {
+        it.icon = ch;
         save();
       });
       const label = input(it.label ?? "", "Label");
@@ -1012,12 +1042,12 @@ const itemsEditor = (widget: string, separators = true): Editor => (ctx) => {
         if (DESTRUCTIVE.has(action.value)) it.confirm = true;
         else delete it.confirm;
         it.icon = String.fromCharCode(DEFAULT_ICON[action.value] ?? 0xe8b7);
-        iconSel.value = it.icon;
+        iconBtn.replaceChildren($("span", "icon", it.icon));
         if (!it.label) it.label = ACTIONS.find(([v]) => v === action.value)?.[1] ?? "";
         label.value = it.label;
         save();
       });
-      list.append($("div", "menu-row", iconSel, label, action, target, controls));
+      list.append($("div", "menu-row", iconBtn, label, action, target, controls), iconGrid);
     });
   };
   render();
@@ -1268,7 +1298,37 @@ function presets(ctx: EditorCtx): HTMLElement {
   return $("div", "presets", saveRow, list);
 }
 
+/** Quick settings: what its icon shows, and a custom icon to pick. */
+const quickIcon: Editor = (ctx) => {
+  const o = ctx.cfg.widgets?.quick ?? {};
+  const mode = typeof o.icon === "string" ? o.icon : "auto";
+  const sel = select(
+    [
+      ["auto", "Battery on laptops, else a settings icon"],
+      ["battery", "Battery"],
+      ["settings", "Settings icon"],
+      ["volume", "Volume"],
+      ["network", "Network"],
+      ["custom", "Custom icon"],
+    ],
+    mode,
+  );
+  sel.addEventListener("change", () => {
+    ctx.save(["widgets", "quick", "icon"], sel.value);
+    ctx.rerender();
+  });
+  const box = $("div", "stack-tight", row("Shows", undefined, sel));
+  if (mode === "custom") {
+    const [btn, grid] = iconPicker(typeof o.custom_icon === "string" ? o.custom_icon : String.fromCharCode(0xe713), (ch) =>
+      ctx.save(["widgets", "quick", "custom_icon"], ch),
+    );
+    box.append(row("Icon", undefined, btn), grid);
+  }
+  return box;
+};
+
 export const editors: Record<string, Editor> = {
+  quickIcon,
   presets,
   surfaceManager,
   surfaceStyle,

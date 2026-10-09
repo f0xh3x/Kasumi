@@ -67,6 +67,8 @@ pub struct Layout {
     pub widgets: toml::Table,
     pub osd: config::Osd,
     pub theme: config::Theme,
+    /// Tooltips on widgets.
+    pub tooltips: bool,
     /// The app launcher is switched on.
     pub launcher: bool,
     /// Draw notches that would touch or overlap as one.
@@ -792,6 +794,7 @@ impl Engine {
             widgets: frontend_widgets(&self.cfg.widgets),
             osd: self.cfg.osd.clone(),
             theme: self.cfg.theme.clone(),
+            tooltips: self.cfg.general.tooltips,
             launcher: self.cfg.launcher.enabled,
             combine_notches: self.cfg.notch.combine_overlapping,
             expanded: false,

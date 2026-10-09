@@ -12,6 +12,7 @@ hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
 rounded_corners = false   # round the monitors' corners
 corner_radius = 10        # px
 corners_attached = true   # part of the bars (their tint, opacity, animations) | false: black, fixed
+tooltips = true           # hints when hovering widgets
 
 [shell]
 hide_taskbar = true       # hide the Windows taskbar while StatusNotch runs (restored on quit)

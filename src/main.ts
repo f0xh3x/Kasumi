@@ -128,6 +128,8 @@ class Overlay {
     const prevX = new Map(this.drops.flatMap((d) => (d.xs ? [[d.key, d.xs] as const] : [])));
     this.layout = layout;
     applyTheme(layout.theme);
+    tooltips = layout.tooltips !== false;
+    if (!tooltips) stripTitles(document.body);
     const html = document.documentElement;
     html.classList.toggle("edge-bottom", layout.edge === "bottom");
     html.classList.toggle("mode-dock", layout.mode === "dock");
@@ -977,6 +979,18 @@ class Overlay {
 
 // Surface frontend errors in the app log (the overlay has no visible devtools).
 const report = (message: string) => invoke("fe_log", { message }).catch(() => {});
+
+// Tooltips ([general] tooltips): widgets set `title`s; with tooltips off they're
+// taken away as soon as they're set (native tooltips can't be styled away).
+let tooltips = true;
+const stripTitles = (root: Element) => root.querySelectorAll("[title]").forEach((e) => e.removeAttribute("title"));
+new MutationObserver((records) => {
+  if (tooltips) return;
+  for (const r of records) {
+    if (r.type === "attributes") (r.target as Element).removeAttribute("title");
+    else r.addedNodes.forEach((n) => n instanceof Element && (n.removeAttribute("title"), stripTitles(n)));
+  }
+}).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["title"] });
 
 // Files dropped on a bar are for the tasks widget (if any): never open them as a page.
 for (const type of ["dragover", "drop"]) document.addEventListener(type, (e) => e.preventDefault());

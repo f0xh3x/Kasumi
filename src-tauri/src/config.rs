@@ -160,11 +160,13 @@ pub struct General {
     /// Part of the bars (following their animations, tint and opacity), or
     /// detached: pure black, fixed in the screen corners.
     pub corners_attached: bool,
+    /// Tooltips when hovering widgets.
+    pub tooltips: bool,
 }
 
 impl Default for General {
     fn default() -> Self {
-        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0, corners_attached: true }
+        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0, corners_attached: true, tooltips: true }
     }
 }
 

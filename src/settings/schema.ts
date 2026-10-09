@@ -94,6 +94,7 @@ export const pages: Page[] = [
             path: ["general", "hide_in_fullscreen"],
             default: true,
           },
+          { kind: "toggle", label: "Tooltips", help: "Show a hint when hovering widgets in the bars.", path: ["general", "tooltips"], default: true },
           {
             kind: "toggle",
             label: "Hide the Windows taskbar",
@@ -349,19 +350,7 @@ export const pages: Page[] = [
         icon: 0xe713,
         help: "Its panel has volume and brightness, battery and network, and shortcuts to Windows settings.",
         fields: [
-          {
-            kind: "select",
-            label: "Shows",
-            path: ["widgets", "quick", "icon"],
-            default: "auto",
-            options: [
-              { value: "auto", label: "Battery on laptops, else a settings icon" },
-              { value: "battery", label: "Battery" },
-              { value: "settings", label: "Settings icon" },
-              { value: "volume", label: "Volume" },
-              { value: "network", label: "Network" },
-            ],
-          },
+          { kind: "custom", editor: "quickIcon" },
         ],
       },
       {

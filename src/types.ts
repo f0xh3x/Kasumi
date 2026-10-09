@@ -102,6 +102,8 @@ export interface Layout {
   widgets: Record<string, Record<string, unknown>>;
   osd: Osd;
   theme: Theme;
+  /** Tooltips on widgets ([general] tooltips). */
+  tooltips: boolean;
   /** The app launcher is switched on. */
   launcher: boolean;
   /** Rounded screen corners drawn with the shape (0: off). */
