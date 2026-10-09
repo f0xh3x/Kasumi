@@ -65,6 +65,7 @@ replace_volume_keys = true   # take over the volume keys; the Windows volume fly
 brightness = true            # built-in panel brightness (Fn keys)
 keyboard = true              # pop a small notch at the language widget when the keyboard layout changes
 keyboard_width = 120
+caps_lock = false            # pop the OSD when Caps Lock is switched on / off
 
 # Bar spacing (widgets in the open bar).
 [bar]

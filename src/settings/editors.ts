@@ -92,6 +92,10 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "quick", label: "Quick settings", icon: 0xe713 },
   { id: "buttons", label: "Buttons", icon: 0xe7e8 },
   { id: "launcher", label: "Launcher", icon: 0xe721 },
+  { id: "focus", label: "Focused app", icon: 0xe7c4 },
+  { id: "netspeed", label: "Network speed", icon: 0xe74b },
+  { id: "recycle", label: "Recycle bin", icon: 0xe74d },
+  { id: "privacy", label: "Mic / camera / location", icon: 0xe720 },
 ];
 
 /** The Widgets page section holding a widget's settings. */
@@ -107,6 +111,10 @@ const SECTION: Record<string, string> = {
   quick: "Quick settings",
   buttons: "Buttons",
   launcher: "Launcher",
+  focus: "Focused app",
+  netspeed: "Network speed",
+  recycle: "Recycle bin",
+  privacy: "Mic / camera / location",
 };
 const widgetSection = (id: string) => SECTION[id.split("#")[0]] ?? "";
 

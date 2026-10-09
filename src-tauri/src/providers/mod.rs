@@ -2,6 +2,7 @@
 //! it to every overlay. Each value lives under a key ("temps", "media",
 //! "weather"); the latest one is kept so a freshly loaded page can catch up.
 
+pub mod extras;
 pub mod media;
 pub mod systray;
 pub mod system;
@@ -87,4 +88,5 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     systray::start(app);
     tasks::start(app);
     system::start(app);
+    extras::start(app);
 }

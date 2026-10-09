@@ -123,6 +123,10 @@ interface DataMap {
   weather: Weather | null;
   tray: TrayIcon[] | null;
   keyboard: Keyboard | null;
+  focus: { title: string; app: string } | null;
+  netspeed: { down: number; up: number } | null;
+  recycle: { items: number; bytes: number } | null;
+  privacy: { mic: string[]; camera: string[]; location: string[] } | null;
 }
 
 type Key = keyof DataMap;

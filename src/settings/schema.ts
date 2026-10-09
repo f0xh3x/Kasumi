@@ -345,6 +345,73 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Focused app",
+        collapsible: true,
+        icon: 0xe7c4,
+        help: "The window in front: its title, its app's name, or both.",
+        fields: [
+          {
+            kind: "select",
+            label: "Shows",
+            path: ["widgets", "focus", "show"],
+            default: "title",
+            options: [
+              { value: "title", label: "Window title" },
+              { value: "app", label: "App name" },
+              { value: "both", label: "App name — window title" },
+            ],
+          },
+          { kind: "slider", label: "Width", help: "Longer titles end in “…”.", path: ["widgets", "focus", "max_width"], default: 300, min: 100, max: 800, step: 10, unit: "px" },
+        ],
+      },
+      {
+        title: "Network speed",
+        collapsible: true,
+        icon: 0xe74b,
+        help: "Live download and upload speed of your network adapters.",
+        fields: [
+          {
+            kind: "select",
+            label: "Shows",
+            path: ["widgets", "netspeed", "show"],
+            default: "both",
+            options: [
+              { value: "both", label: "Download and upload" },
+              { value: "down", label: "Download" },
+              { value: "up", label: "Upload" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Units",
+            path: ["widgets", "netspeed", "units"],
+            default: "bytes",
+            options: [
+              { value: "bytes", label: "Bytes (MB/s)" },
+              { value: "bits", label: "Bits (Mb/s)" },
+            ],
+          },
+        ],
+      },
+      {
+        title: "Recycle bin",
+        collapsible: true,
+        icon: 0xe74d,
+        help: "Click to open it, right-click to empty it (Windows asks first).",
+        fields: [{ kind: "toggle", label: "Item count", help: "How many items are in it, beside the icon.", path: ["widgets", "recycle", "count"], default: false }],
+      },
+      {
+        title: "Mic / camera / location",
+        collapsible: true,
+        icon: 0xe720,
+        help: "Shows only while an app uses one of them; click for which apps.",
+        fields: [
+          { kind: "toggle", label: "Microphone", path: ["widgets", "privacy", "mic"], default: true },
+          { kind: "toggle", label: "Camera", path: ["widgets", "privacy", "camera"], default: true },
+          { kind: "toggle", label: "Location", path: ["widgets", "privacy", "location"], default: true },
+        ],
+      },
+      {
         title: "Quick settings",
         collapsible: true,
         icon: 0xe713,
@@ -698,6 +765,7 @@ export const pages: Page[] = [
         fields: [
           { kind: "toggle", label: "Brightness (Fn keys)", path: ["osd", "brightness"], default: true },
           { kind: "toggle", label: "Keyboard language", path: ["osd", "keyboard"], default: true },
+          { kind: "toggle", label: "Caps Lock", help: "Shows when Caps Lock is switched on or off.", path: ["osd", "caps_lock"], default: false },
           { kind: "slider", label: "Language pop width", path: ["osd", "keyboard_width"], default: 120, min: 80, max: 200, step: 5, unit: "px" },
         ],
       },

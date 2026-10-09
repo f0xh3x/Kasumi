@@ -243,6 +243,8 @@ pub struct Osd {
     pub keyboard: bool,
     /// Width of that keyboard-layout peek notch.
     pub keyboard_width: f64,
+    /// Pop the OSD when Caps Lock is switched on or off.
+    pub caps_lock: bool,
     /// The surface (bar) whose notch grows into the pill: "top" or "bottom".
     pub surface: String,
 }
@@ -260,6 +262,7 @@ impl Default for Osd {
             brightness: true,
             keyboard: true,
             keyboard_width: 120.0,
+            caps_lock: false,
             surface: "top".into(),
         }
     }

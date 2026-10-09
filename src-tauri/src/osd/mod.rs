@@ -43,10 +43,42 @@ pub fn show(app: &AppHandle, kind: &str, level: f32, muted: bool) {
 #[derive(Default)]
 pub struct KeyboardWatch {
     last: Option<(isize, u16)>,
+    caps: Option<bool>,
 }
 
 impl KeyboardWatch {
     pub fn tick(&mut self, app: &AppHandle) {
+        self.tick_caps(app);
+        self.tick_layout(app);
+    }
+
+    /// Caps Lock switched on / off: the OSD says so ([osd] caps_lock).
+    fn tick_caps(&mut self, app: &AppHandle) {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL};
+        let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) } & 1 != 0;
+        let prev = self.caps.replace(on);
+        if prev.is_none_or(|p| p == on) {
+            return;
+        }
+        let enabled = {
+            let cfg = app.state::<SharedConfig>();
+            let cfg = cfg.read().unwrap();
+            cfg.osd.enabled && cfg.osd.caps_lock
+        };
+        if !enabled {
+            return;
+        }
+        if let Some(label) = crate::engine::osd_target(app) {
+            let text = if on { "Caps Lock on" } else { "Caps Lock off" };
+            let _ = app.emit_to(
+                EventTarget::WebviewWindow { label },
+                "notch://osd",
+                json!({ "kind": "caps", "level": if on { 1.0 } else { 0.0 }, "muted": !on, "text": text }),
+            );
+        }
+    }
+
+    fn tick_layout(&mut self, app: &AppHandle) {
         let Some((fg, lang)) = crate::win::foreground_layout() else { return };
         let prev = self.last.replace((fg, lang));
         if prev.is_some_and(|(_, l)| l == lang) {

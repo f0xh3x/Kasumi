@@ -26,6 +26,8 @@ version = "0.61"
 features = [
   "Foundation",
   "Networking_Connectivity",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
   "Media_Control",
   "Storage_Streams",
   "Win32_Media_Audio",
@@ -39,6 +41,7 @@ features = [
   "Win32_System_Shutdown",
   "Win32_Security",
   "Win32_System_DataExchange",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_LibraryLoader",
