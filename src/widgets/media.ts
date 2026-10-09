@@ -37,11 +37,16 @@ export function media(opts: Record<string, unknown>): Widget {
   // Where a notch copy glides to/from (see Overlay.glide).
   text.dataset.glide = "";
   text.style.maxWidth = `${maxWidth}px`;
+  // Fixed: always the full title width, so the notch keeps one size whatever plays.
+  if (opts.fixed_width === true) text.style.width = `${maxWidth}px`;
   const root = el("widget media", el("media-controls", prev, playPause, next), text);
-  // Playback keys beside the title are optional ([widgets.media] keys); the
-  // media panel always has them. In a closed notch they can't be clicked (the
-  // overlay is click-through), once the bar opens they can.
-  if (opts.keys !== true) root.classList.add("compact");
+  // Playback keys beside the title ([widgets.media] keys): off | always | open
+  // (only while the bar is open) | closed (only while it's closed). The media panel
+  // always has them. In a closed notch they can't be clicked (click-through).
+  const keys = opts.keys === true ? "always" : typeof opts.keys === "string" ? opts.keys : "off";
+  if (keys === "off") root.classList.add("compact");
+  else if (keys === "open" || keys === "closed") root.classList.add(`keys-${keys}`);
+  if (opts.fixed_width === true) root.classList.add("fixed");
   root.hidden = true;
 
   let marquee: Animation | null = null;

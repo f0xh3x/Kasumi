@@ -142,6 +142,7 @@ class Overlay {
 
     if (first) {
       this.expanded = layout.expanded;
+      document.documentElement.classList.toggle("bar-open", layout.expanded);
       this.expand.target = layout.expanded ? 1 : 0;
       this.expand.snap();
     }
@@ -166,6 +167,7 @@ class Overlay {
 
   setExpanded(expanded: boolean): void {
     this.expanded = expanded;
+    document.documentElement.classList.toggle("bar-open", expanded);
     this.layoutBar();
     this.expand.target = expanded ? 1 : 0;
     this.spread.target = this.spreadTarget();
