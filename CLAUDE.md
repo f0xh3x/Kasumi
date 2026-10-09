@@ -42,7 +42,7 @@ apps (Premiere, Illustrator) while you work: see "Testing without the user".
 
 | Where | What |
 |---|---|
-| `widgets/index.ts` | `el(cls, ...kids)` (div), `icon(glyph)` (span.icon), `g(code)` glyph char, `Glyph.*` common glyphs, `iconUrl({w,h,rgba})` Rust icon → cached PNG data URL, `createWidget` / `createPanel` / `panelFor` / `widgetType` (`"buttons#2"` → `"buttons"`), types `Widget`, `PanelContext` |
+| `widgets/index.ts` | `el(cls, ...kids)` (div), `icon(glyph)` (span.icon), `g(code)` glyph char, `Glyph.*` common glyphs, `iconUrl({w,h,rgba})` Rust icon → cached PNG data URL, `meter(kind, length)` small bar / ring for a 0..1 share (.high = warning colour), `formatBytes` (as Explorer), `languageCode`, `confirmClick` (second click for destructive actions), `createWidget` / `createPanel` / `panelFor` / `widgetType` (`"buttons#2"` → `"buttons"`), types `Widget`, `PanelContext` |
 | `data.ts` | `subscribe(key, cb)` → unsubscribe (call it in `dispose`). Typed `DataMap`: system, tasks, taskIcons, temps, media, weather, tray, keyboard, focus, netspeed, recycle, privacy, claude, notifications, clipboard |
 | `geometry.ts` | `computeFrame` (the one SVG path), `lerp`, `mirrorPath` (bottom surfaces' clip path; M/L/C/Z only) |
 | `spring.ts` | `Spring`: every animation |
@@ -64,8 +64,8 @@ Tooltips are plain `title`s (stripped globally when `[general] tooltips = false`
 
 | Where | What |
 |---|---|
-| `providers/mod.rs` | `publish(app, key, json)` (dedupes, broadcasts `notch://data`), `placed(app, ty)`, `widget_enabled`, `widget_opts`, `opt_str`, `opt_f64`, `http_agent` + `get_json` (5 s timeout), `rgba_json(w, h, rgba)` (icon for `iconUrl`), `SharedConfig` |
-| `win.rs` | `wide(s)` / `wide_to_string(buf)`, `window_pid`, `window_title`, `class_name`, `process_path(pid)`, `process_name(pid)`, `window_process(h)` (lower-case exe name), `bitmap_bgra(hbitmap)`, `monitors()`, `cursor_pos`, `app_windows`, `fullscreen_monitor`, foreground/focus helpers, keyboard-layout helpers, `short_time_pattern` |
+| `providers/mod.rs` | `publish(app, key, json)` (dedupes, broadcasts `notch://data`), `placed(app, ty)`, `widget_enabled`, `widget_opts`, `opt_str`, `opt_f64`, `http_agent` + `get_json` (5 s timeout), `rgba_json(w, h, rgba)` (icon for `iconUrl`), `data_url(mime, bytes)` (pictures for <img>), `SharedConfig` |
+| `win.rs` | `wide(s)` / `wide_to_string(buf)`, `reg_string(root, path, name)`, `user_sid()`, `window_pid`, `window_title`, `class_name`, `process_path(pid)`, `process_name(pid)`, `window_process(h)` (lower-case exe name), `bitmap_bgra(hbitmap)`, `monitors()`, `cursor_pos`, `app_windows`, `fullscreen_monitor`, foreground/focus helpers, keyboard-layout helpers, `short_time_pattern` |
 | `providers/tasks.rs` | `exe_icon(path)`, `item_icon(shell item)`: program icons as RGBA |
 | `providers/system.rs` | `volume_changed(Some((level, muted)))`: fed by `osd/volume.rs` |
 | `osd/mod.rs` | `show(app, kind, level, muted)`, `quiet_volume(duration)` (no OSD while a slider drags) |
