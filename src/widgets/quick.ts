@@ -102,26 +102,55 @@ function slider(onInput: (v: number) => void, onIcon?: () => void) {
   };
 }
 
-/** Output devices: the default one, and the list to switch to (opened on click). */
+/**
+ * Slides a dropdown list open or shut (height and fade); the panel's shape follows
+ * every frame. `done` runs when it's settled.
+ */
+function slide(list: HTMLElement, open: boolean, ctx: PanelContext): void {
+  const from = list.hidden ? 0 : list.offsetHeight;
+  list.hidden = false;
+  list.style.height = "";
+  const to = open ? list.scrollHeight : 0;
+  list.style.overflow = "hidden";
+  // Start where it is (no flash of the full list before the first frame).
+  list.style.height = `${from}px`;
+  list.style.opacity = open ? "0" : "1";
+  const start = performance.now();
+  const step = (now: number) => {
+    const k = Math.min(1, (now - start) / 180);
+    const e = 1 - (1 - k) ** 3;
+    list.style.height = `${from + (to - from) * e}px`;
+    list.style.opacity = String(open ? e : 1 - e);
+    ctx.resize();
+    if (k < 1) {
+      requestAnimationFrame(step);
+      return;
+    }
+    list.style.height = list.style.overflow = list.style.opacity = "";
+    list.hidden = !open;
+    ctx.resize();
+  };
+  requestAnimationFrame(step);
+}
+
+/** Output devices: the list to switch to, opened from an icon in the volume row. */
 function outputPicker(ctx: PanelContext) {
-  const name = el("quick-output-name");
-  const head = el("quick-output clickable", icon(g(0xe7f5)), name, icon(g(0xe70d)));
-  const list = el("quick-output-list");
+  const list = el("quick-drop quick-output-list");
   list.hidden = true;
-  const root = el("quick-outputs", head, list);
+  const button = icon(g(0xe7f5));
+  button.classList.add("quick-expand", "clickable");
   let devices: { id: string; name: string; default: boolean }[] = [];
+  const state = { open: false };
   const draw = () => {
-    name.textContent = devices.find((d) => d.default)?.name ?? "No output device";
+    button.title = `Output: ${devices.find((d) => d.default)?.name ?? "none"}`;
     list.replaceChildren(
       ...devices.map((d) => {
-        const row = el(`quick-output-item${d.default ? " on" : ""}`, el("", d.name));
+        const row = el(`quick-output-item${d.default ? " on" : ""}`, icon(g(d.default ? 0xe73e : 0xe7f5)), el("", d.name));
         row.addEventListener("click", (e) => {
           e.stopPropagation();
           invoke("audio_set_output", { id: d.id })
             .then(refresh)
             .catch(console.error);
-          list.hidden = true;
-          ctx.resize();
         });
         return row;
       }),
@@ -133,21 +162,23 @@ function outputPicker(ctx: PanelContext) {
         if (JSON.stringify(d) === JSON.stringify(devices)) return;
         devices = d;
         draw();
-        ctx.resize();
+        if (state.open) ctx.resize();
       })
       .catch(console.error);
-  head.addEventListener("click", (e) => {
-    e.stopPropagation();
-    list.hidden = !list.hidden;
-    ctx.resize();
-  });
-  return { el: root, refresh };
+  const toggle = (open = !state.open) => {
+    if (open === state.open) return;
+    state.open = open;
+    button.classList.toggle("open", open);
+    if (open) refresh();
+    slide(list, open, ctx);
+  };
+  return { list, button, refresh, toggle, state };
 }
 
 /** Per-app volume: a slider per app playing on the default output, in a list
  *  that opens from the volume row's chevron (closed by default). */
 function appVolumes(ctx: PanelContext) {
-  const list = el("quick-apps");
+  const list = el("quick-drop quick-apps");
   const empty = el("quick-apps-empty", "No apps are playing sound.");
   list.append(empty);
   list.hidden = true;
@@ -199,16 +230,20 @@ function appVolumes(ctx: PanelContext) {
           r.mute.textContent = g(a.muted ? 0xe74f : 0xe767);
         }
         empty.hidden = rows.size > 0;
-        if (changed) ctx.resize();
+        if (changed && state.open) ctx.resize();
       })
       .catch(console.error);
-  const toggle = () => {
-    state.open = !state.open;
-    list.hidden = !state.open;
-    if (state.open) refresh();
-    ctx.resize();
+  const chevron = icon(g(0xe70d));
+  chevron.classList.add("quick-expand", "chevron", "clickable");
+  chevron.title = "Apps";
+  const toggle = (open = !state.open) => {
+    if (open === state.open) return;
+    state.open = open;
+    chevron.classList.toggle("open", open);
+    if (open) refresh();
+    slide(list, open, ctx);
   };
-  return { el: list, refresh, toggle, state };
+  return { list, button: chevron, refresh, toggle, state };
 }
 
 export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
@@ -235,23 +270,23 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
   tiles.hidden = chosen.length === 0;
   const outputs = opts.outputs === true ? outputPicker(ctx) : null;
   const apps = opts.apps === true ? appVolumes(ctx) : null;
-  if (apps) {
-    // A chevron at the end of the volume row opens the per-app list.
-    const chevron = icon(g(0xe70d));
-    chevron.classList.add("quick-expand", "clickable");
-    chevron.title = "Apps";
-    chevron.addEventListener("click", (e) => {
+  // Icons at the end of the volume row open their lists, one at a time. The lists
+  // open toward the screen edge (CSS: above the row on a bottom bar), so the row
+  // stays under the cursor while the panel grows and shrinks.
+  const drops = [outputs, apps].filter((d) => d !== null);
+  for (const d of drops) {
+    d.button.addEventListener("click", (e) => {
       e.stopPropagation();
-      apps.toggle();
-      chevron.classList.toggle("open", apps.state.open);
+      const open = !d.state.open;
+      for (const o of drops) if (o !== d) o.toggle(false);
+      d.toggle(open);
     });
-    volume.row.append(chevron);
+    volume.row.append(d.button);
   }
   const root = el(
     "quick-panel",
     volume.row,
-    ...(outputs ? [outputs.el] : []),
-    ...(apps ? [apps.el] : []),
+    ...drops.map((d) => d.list),
     brightness.row,
     battery,
     network,
