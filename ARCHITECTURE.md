@@ -110,7 +110,10 @@ open = "medium"
 center = ["tasks", "tray", "quick"]
 ```
 
-* **Surfaces** are drawn the same way; bottom ones are mirrored. `mode = "always"`
+* **Surfaces** are drawn the same way. Positions are distances from the surface's
+  edge; a bottom surface lays its content out from the window's bottom (only the
+  SVG shape is mirrored, and the clip path via `mirrorPath`): never mirror boxes
+  with text in them, they shimmer when their height changes. `mode = "always"`
   keeps a bar shown (optionally `reserve_space`). Hot zones (`hot_left/right/edge`,
   sizes) are per surface. Widget instances (`buttons#2`) let one widget type appear
   several times.
