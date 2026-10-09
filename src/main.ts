@@ -74,6 +74,8 @@ interface Drop {
 
 /** Space between a notch's content and the start of its curves, each side. */
 const NOTCH_PAD = 10;
+/** Room a bottom bar's window keeps for its panels from the start (see measureBarDrops). */
+const BOTTOM_PANEL_ROOM = 640;
 
 class Overlay {
   private layout: Layout | null = null;
@@ -682,6 +684,10 @@ class Overlay {
         if (p !== d.panelEl) tallest = Math.max(tallest, p.offsetHeight + this.growRoom(p));
       }
     }
+    // A bottom bar's window grows upward: Windows moves its top edge and the page is
+    // drawn at the old spot for a frame or two (the whole bar jumps). So it starts
+    // with generous room (panels measured before their content arrives come out short).
+    if (L.edge === "bottom" && this.drops.some((d) => d.panelEl || d.panels?.size)) tallest = Math.max(tallest + 80, BOTTOM_PANEL_ROOM);
     // Rust sizes the window for notch panels only; ask for room for dropdowns too.
     const needed = (L.mode === "dock" ? L.openHeight : L.geometry.expandedHeight) + tallest;
     if (needed > this.requestedHeight) {
