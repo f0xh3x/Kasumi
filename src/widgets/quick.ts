@@ -103,54 +103,48 @@ function slider(onInput: (v: number) => void, onIcon?: () => void) {
 }
 
 /**
- * Slides a dropdown list open or shut (height, its gap in the panel, and a fade);
- * the panel's shape follows every frame.
+ * A card beside the panel that slides out from behind it, showing one list at a
+ * time (output devices, per-app volume). The panel itself never changes size, so
+ * its shape doesn't resize and the window never has to grow.
  */
-function slide(list: HTMLElement, open: boolean, ctx: PanelContext): void {
-  // A hidden list takes no gap in the panel, one at height 0 would: the gap grows
-  // and shrinks with it (a negative margin cancels what isn't there yet).
-  const gap = parseFloat(getComputedStyle(list.parentElement!).rowGap) || 0;
-  const wasHidden = list.hidden;
-  const from = wasHidden ? 0 : list.getBoundingClientRect().height;
-  const gapFrom = wasHidden ? 0 : gap;
-  list.hidden = false;
-  list.style.height = "auto";
-  // Exact (fractional) natural height: the last frame lands on it, no snap after.
-  const to = open ? list.getBoundingClientRect().height : 0;
-  const gapTo = open ? gap : 0;
-  list.style.overflow = "hidden";
-  const at = (e: number) => {
-    list.style.height = `${from + (to - from) * e}px`;
-    list.style.marginBottom = `${gapFrom + (gapTo - gapFrom) * e - gap}px`;
-    list.style.opacity = String(open ? e : 1 - e);
-  };
-  // Start where it is (no flash of the full list before the first frame).
-  at(0);
-  ctx.resize();
-  const start = performance.now();
-  const step = (now: number) => {
-    const k = Math.min(1, (now - start) / 180);
-    at(1 - (1 - k) ** 3);
-    if (k < 1) {
-      ctx.resize();
-      requestAnimationFrame(step);
-      return;
+function sideCard(anchor: HTMLElement, ctx: PanelContext) {
+  const card = el("float-card");
+  card.hidden = true;
+  let current: string | null = null;
+  let hideTimer = 0;
+  const show = (name: string, content: HTMLElement) => {
+    clearTimeout(hideTimer);
+    current = name;
+    card.replaceChildren(content);
+    if (!card.classList.contains("open")) {
+      card.hidden = false;
+      // Toward the middle of the screen: on the left when there's no room on the right.
+      const r = anchor.getBoundingClientRect();
+      card.classList.toggle("left", r.right + 300 > window.innerWidth);
+      void card.offsetWidth; // start from the closed state, then transition
+      card.classList.add("open");
     }
-    list.style.height = list.style.overflow = list.style.opacity = list.style.marginBottom = "";
-    list.hidden = !open;
     ctx.resize();
   };
-  requestAnimationFrame(step);
+  const hide = () => {
+    current = null;
+    card.classList.remove("open");
+    clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => {
+      card.hidden = true;
+      ctx.resize();
+    }, 200);
+    ctx.resize();
+  };
+  return { card, show, hide, current: () => current };
 }
 
 /** Output devices: the list to switch to, opened from an icon in the volume row. */
 function outputPicker(ctx: PanelContext) {
   const list = el("quick-drop quick-output-list");
-  list.hidden = true;
   const button = icon(g(0xe7f5));
   button.classList.add("quick-expand", "clickable");
   let devices: { id: string; name: string; default: boolean }[] = [];
-  const state = { open: false };
   const draw = () => {
     button.title = `Output: ${devices.find((d) => d.default)?.name ?? "none"}`;
     list.replaceChildren(
@@ -172,18 +166,10 @@ function outputPicker(ctx: PanelContext) {
         if (JSON.stringify(d) === JSON.stringify(devices)) return;
         devices = d;
         draw();
-        if (state.open) ctx.resize();
+        ctx.resize();
       })
       .catch(console.error);
-  const toggle = (open = !state.open) => {
-    if (open === state.open) return;
-    state.open = open;
-    button.classList.toggle("open", open);
-    // Opening: fetch first, then slide to the real height (no jump when data lands).
-    if (open) refresh().finally(() => state.open && slide(list, true, ctx));
-    else slide(list, false, ctx);
-  };
-  return { list, button, refresh, toggle, state };
+  return { name: "outputs", list, button, refresh };
 }
 
 /** Per-app volume: a slider per app playing on the default output, in a list
@@ -192,8 +178,6 @@ function appVolumes(ctx: PanelContext) {
   const list = el("quick-drop quick-apps");
   const empty = el("quick-apps-empty", "No apps are playing sound.");
   list.append(empty);
-  list.hidden = true;
-  const state = { open: false };
   const rows = new Map<number, { row: HTMLElement; input: HTMLInputElement; mute: HTMLElement; dragging: boolean }>();
   const refresh = () =>
     invoke<{ pid: number; name: string; level: number; muted: boolean }[]>("audio_sessions")
@@ -241,21 +225,13 @@ function appVolumes(ctx: PanelContext) {
           r.mute.textContent = g(a.muted ? 0xe74f : 0xe767);
         }
         empty.hidden = rows.size > 0;
-        if (changed && state.open) ctx.resize();
+        if (changed) ctx.resize();
       })
       .catch(console.error);
-  const chevron = icon(g(0xe70d));
+  const chevron = icon(g(0xe76c));
   chevron.classList.add("quick-expand", "chevron", "clickable");
   chevron.title = "Apps";
-  const toggle = (open = !state.open) => {
-    if (open === state.open) return;
-    state.open = open;
-    chevron.classList.toggle("open", open);
-    // Opening: fetch first, then slide to the real height (no jump when data lands).
-    if (open) refresh().finally(() => state.open && slide(list, true, ctx));
-    else slide(list, false, ctx);
-  };
-  return { list, button: chevron, refresh, toggle, state };
+  return { name: "apps", list, button: chevron, refresh };
 }
 
 export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
@@ -282,23 +258,28 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
   tiles.hidden = chosen.length === 0;
   const outputs = opts.outputs === true ? outputPicker(ctx) : null;
   const apps = opts.apps === true ? appVolumes(ctx) : null;
-  // Icons at the end of the volume row open their lists, one at a time. The lists
-  // open toward the screen edge (CSS: above the row on a bottom bar), so the row
-  // stays under the cursor while the panel grows and shrinks.
+  // Icons at the end of the volume row open their list in a card beside the panel
+  // (one at a time; the same icon again closes it).
   const drops = [outputs, apps].filter((d) => d !== null);
+  const side = sideCard(volume.row, ctx);
   for (const d of drops) {
     d.button.addEventListener("click", (e) => {
       e.stopPropagation();
-      const open = !d.state.open;
-      for (const o of drops) if (o !== d) o.toggle(false);
-      d.toggle(open);
+      const open = side.current() !== d.name;
+      for (const o of drops) o.button.classList.toggle("open", open && o === d);
+      if (!open) {
+        side.hide();
+        return;
+      }
+      // Fetch first, so the card opens with its content.
+      d.refresh().finally(() => side.show(d.name, d.list));
     });
     volume.row.append(d.button);
   }
   const root = el(
     "quick-panel",
     volume.row,
-    ...drops.map((d) => d.list),
+    side.card,
     brightness.row,
     battery,
     network,
@@ -313,10 +294,15 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
   const poll = window.setInterval(() => {
     if (!shown()) {
       tick = 0;
+      // The panel closed: its card goes with it.
+      if (side.current()) {
+        side.hide();
+        for (const d of drops) d.button.classList.remove("open");
+      }
       return;
     }
-    if (tick % 3 === 0) outputs?.refresh();
-    if (apps?.state.open) apps.refresh();
+    if (side.current() === "outputs") outputs?.refresh();
+    if (side.current() === "apps") apps?.refresh();
     tick++;
   }, 1000);
   let shape = "";
