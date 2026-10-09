@@ -1,6 +1,7 @@
 // Structured editors for the settings window: things richer than a single
 // control (widget placement, notches, menu entries, monitors, lookups).
 import { invoke } from "@tauri-apps/api/core";
+import { POWER_ACTIONS } from "../power-actions";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
 import { $, glyph, iconButton, input, row, select, toggleSwitch } from "./dom";
 import type { Cfg, Path } from "./schema";
@@ -1269,6 +1270,32 @@ function presets(ctx: EditorCtx): HTMLElement {
 }
 
 /** Quick settings tiles: the chosen ones in order (move, remove), the rest to add. */
+// --- Launcher power buttons ----------------------------------------------------------
+
+/** Which power buttons the launcher shows: chips to switch on / off (bright = on). */
+const launcherPower: Editor = (ctx) => {
+  const saved = ctx.cfg.widgets?.launcher?.power;
+  const on = new Set<string>(Array.isArray(saved) ? saved : []);
+  const chips = $("div", "tile-row");
+  for (const [id, [label, code]] of Object.entries(POWER_ACTIONS)) {
+    const chip = $("div", `tile-chip toggle${on.has(id) ? "" : " add"}`, glyph(code), $("span", "", label));
+    chip.title = on.has(id) ? "Shown: click to hide" : "Click to show";
+    chip.addEventListener("click", () => {
+      if (on.has(id)) on.delete(id);
+      else on.add(id);
+      // Saved in display order.
+      ctx.saveMany([{ path: ["widgets", "launcher", "power"], value: Object.keys(POWER_ACTIONS).filter((p) => on.has(p)) }]);
+    });
+    chips.append(chip);
+  }
+  return $(
+    "div",
+    "stack-tight",
+    row("Power buttons", "Shown at the end of the launcher, like a start menu's. Restart, shut down and sign out need a second click.", $("span")),
+    chips,
+  );
+};
+
 const quickTiles: Editor = (ctx) => {
   const saved = ctx.cfg.widgets?.quick?.tiles;
   const chosen: string[] = (Array.isArray(saved) ? saved.filter((t: string) => t in QUICK_TILES) : [...DEFAULT_TILES]).slice(0, MAX_TILES);
@@ -1355,6 +1382,7 @@ const quickIcon: Editor = (ctx) => {
 export const editors: Record<string, Editor> = {
   quickIcon,
   quickTiles,
+  launcherPower,
   presets,
   surfaceManager,
   surfaceStyle,

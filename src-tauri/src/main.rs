@@ -8,6 +8,7 @@ mod corners;
 mod config_edit;
 mod engine;
 mod instance;
+mod keyhook;
 mod launcher;
 mod logfile;
 mod osd;
@@ -37,6 +38,7 @@ fn main() {
             launcher::start(app.handle());
             engine::start(app.handle());
             osd::start(app.handle());
+            keyhook::start();
             autostart::refresh();
             tray::setup(app)?;
             Ok(())

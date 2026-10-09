@@ -153,3 +153,30 @@ export function iconUrl(i: { w: number; h: number; rgba: string }): string {
   urls.set(i.rgba, url);
   return url;
 }
+
+/**
+ * Runs `run` on click; with `confirm`, only on a second click within 3 s (the
+ * first one arms it: `armed(true)`, and `armed(false)` when it runs or times
+ * out). For destructive actions (restart, shut down). Returns a dispose.
+ */
+export function confirmClick(target: HTMLElement, confirm: boolean, run: () => void, armed: (on: boolean) => void = () => {}): () => void {
+  let timer = 0;
+  const disarm = () => {
+    clearTimeout(timer);
+    timer = 0;
+    target.classList.remove("armed");
+    armed(false);
+  };
+  target.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (confirm && !timer) {
+      target.classList.add("armed");
+      armed(true);
+      timer = window.setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    run();
+  });
+  return () => clearTimeout(timer);
+}

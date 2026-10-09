@@ -18,10 +18,12 @@ tooltips = true           # hints when hovering widgets
 hide_taskbar = true       # hide the Windows taskbar while StatusNotch runs (restored on quit)
 
 # App launcher: opens from the launcher widget, or with the hotkey (from the
-# middle of the dock / bar when no launcher widget is placed).
+# middle of the dock / bar when no launcher widget is placed). hotkey = "" for
+# none; start_menu = true: the Windows key opens it instead of the Start menu.
 [launcher]
 enabled = true
 hotkey = "Win+Alt+Space"
+start_menu = false
 
 [theme]
 background = "#000000"

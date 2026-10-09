@@ -556,15 +556,28 @@ fn press_layout_hotkey() {
         "3" | "4" => (VK_LWIN, VK_SPACE),
         _ => (VK_LMENU, VK_LSHIFT),
     };
-    let input = |vk: VIRTUAL_KEY, up: bool| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT { wVk: vk, dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, ..Default::default() },
-        },
-    };
-    let seq = [input(modifier, false), input(key, false), input(key, true), input(modifier, true)];
+    send_keys(&[(modifier, false), (key, false), (key, true), (modifier, true)], 0);
+}
+
+/// Sends key presses / releases (`(key, up)`), tagged with `mark` (the hook can
+/// recognise our own keys by it).
+pub fn send_keys(keys: &[(VIRTUAL_KEY, bool)], mark: usize) {
+    let inputs: Vec<INPUT> = keys
+        .iter()
+        .map(|&(vk, up)| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                    dwExtraInfo: mark,
+                    ..Default::default()
+                },
+            },
+        })
+        .collect();
     unsafe {
-        SendInput(&seq, std::mem::size_of::<INPUT>() as i32);
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
 }
 

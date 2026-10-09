@@ -183,13 +183,15 @@ pub struct Shell {
 #[serde(default)]
 pub struct LauncherCfg {
     pub enabled: bool,
-    /// Global hotkey, e.g. "Win+Alt+Space".
+    /// Global hotkey, e.g. "Win+Alt+Space"; empty for none.
     pub hotkey: String,
+    /// The Windows key alone opens the launcher instead of the Start menu.
+    pub start_menu: bool,
 }
 
 impl Default for LauncherCfg {
     fn default() -> Self {
-        Self { enabled: true, hotkey: "Win+Alt+Space".into() }
+        Self { enabled: true, hotkey: "Win+Alt+Space".into(), start_menu: false }
     }
 }
 

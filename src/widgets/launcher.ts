@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
+import { POWER_ACTIONS } from "../power-actions";
+import { confirmClick, iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
 
 /**
  * The app launcher. The widget is a search icon that morphs into a text field
@@ -170,7 +171,34 @@ export function launcherPanel(opts: Record<string, unknown>, ctx: PanelContext):
     bindField(own);
     parts.push(el("launcher-own", icon(g(0xe721)), own));
   }
-  const root = el("launcher-panel", ...parts, list, hint);
+  // Power buttons ([widgets.launcher] power), at the end away from the bar, like
+  // a start menu's; restart / shut down / sign out need a second click.
+  const chosen = Array.isArray(opts.power) ? (opts.power as unknown[]).filter((p): p is string => typeof p === "string" && p in POWER_ACTIONS) : [];
+  const disposers: (() => void)[] = [];
+  const power = el("launcher-power");
+  if (chosen.length) {
+    const note = el("launcher-power-note");
+    power.append(note);
+    for (const id of Object.keys(POWER_ACTIONS).filter((p) => chosen.includes(p))) {
+      const [label, glyph, confirm] = POWER_ACTIONS[id];
+      const b = el("launcher-power-button clickable", icon(g(glyph)));
+      b.title = label;
+      disposers.push(
+        confirmClick(
+          b,
+          confirm,
+          () => {
+            invoke("run_action", { action: id, target: null }).catch(console.error);
+            close(false);
+          },
+          (on) => (note.textContent = on ? `Click again to ${label.toLowerCase()}` : ""),
+        ),
+      );
+      power.append(b);
+    }
+  }
+  power.hidden = !chosen.length;
+  const root = el("launcher-panel", ...parts, list, hint, power);
   let rows = -1;
   const render = () => {
     hint.textContent = S.query.trim() && !S.results.length ? "No apps found" : "";
@@ -213,6 +241,7 @@ export function launcherPanel(opts: Record<string, unknown>, ctx: PanelContext):
     dispose: () => {
       S.listeners.delete(render);
       if (own) S.fields.delete(own);
+      disposers.forEach((d) => d());
     },
   };
 }

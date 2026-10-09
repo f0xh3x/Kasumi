@@ -2,7 +2,7 @@
 //! OSD notch into a pill for a moment; the overlay stays click-through.
 
 mod brightness;
-mod volume;
+pub(crate) mod volume;
 
 use crate::providers::SharedConfig;
 use serde_json::json;

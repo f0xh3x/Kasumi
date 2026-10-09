@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { icon, type PanelContext, type Widget } from "./index";
+import { confirmClick, icon, type PanelContext, type Widget } from "./index";
 
 interface MenuItem {
   label?: string;
@@ -10,15 +10,13 @@ interface MenuItem {
   separator?: boolean;
 }
 
-const CONFIRM_MS = 3000;
-
 /** Hamburger dropdown: items from `[widgets.menu] items`, actions run in Rust. */
 export function menu(opts: Record<string, unknown>, ctx: PanelContext): Widget {
   const items = Array.isArray(opts.items) ? (opts.items as MenuItem[]) : [];
   const el = document.createElement("div");
   el.className = "menu-list";
   el.dataset.align = "icon";
-  const timers: number[] = [];
+  const disposers: (() => void)[] = [];
 
   for (const item of items) {
     if (item.separator) {
@@ -32,31 +30,20 @@ export function menu(opts: Record<string, unknown>, ctx: PanelContext): Widget {
     label.textContent = item.label ?? item.action ?? "?";
     row.append(icon(item.icon ?? ""), label);
 
-    let armed = 0;
-    row.addEventListener("click", () => {
-      // Destructive items need a second click while armed.
-      if (item.confirm && !armed) {
-        row.classList.add("armed");
-        label.textContent = `Click again to ${(item.label ?? "confirm").toLowerCase()}`;
-        armed = window.setTimeout(() => {
-          armed = 0;
-          row.classList.remove("armed");
-          label.textContent = item.label ?? "";
-        }, CONFIRM_MS);
-        timers.push(armed);
-        return;
-      }
-      clearTimeout(armed);
-      armed = 0;
-      row.classList.remove("armed");
-      label.textContent = item.label ?? "";
-      invoke("run_action", { action: item.action, target: item.target ?? null }).catch((e) =>
-        console.error("run_action", e),
-      );
-      ctx.close();
-    });
+    // Destructive items need a second click while armed.
+    disposers.push(
+      confirmClick(
+        row,
+        !!item.confirm,
+        () => {
+          invoke("run_action", { action: item.action, target: item.target ?? null }).catch((e) => console.error("run_action", e));
+          ctx.close();
+        },
+        (on) => (label.textContent = on ? `Click again to ${(item.label ?? "confirm").toLowerCase()}` : (item.label ?? "")),
+      ),
+    );
     el.append(row);
   }
 
-  return { el, dispose: () => timers.forEach(clearTimeout) };
+  return { el, dispose: () => disposers.forEach((d) => d()) };
 }

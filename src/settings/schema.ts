@@ -130,16 +130,23 @@ export const pages: Page[] = [
       },
       {
         title: "Launcher",
-        help: "Search and start apps. With the Launcher widget placed it opens from there; without it the hotkey opens it from the middle of the bottom (or top) bar.",
+        help: "Search and start apps. With the Launcher widget placed it opens from there; without it, from the middle of the bottom (or top) bar.",
         fields: [
           { kind: "toggle", label: "Launcher", path: ["launcher", "enabled"], default: true },
           {
+            kind: "toggle",
+            label: "Replace the Start menu",
+            help: "The Windows key opens the launcher instead of Start. Win + other keys (Win+E, Win+D...) work as usual.",
+            path: (cfg) => (cfg.launcher?.enabled === false ? null : ["launcher", "start_menu"]),
+            default: false,
+          },
+          {
             kind: "text",
             label: "Hotkey",
-            help: "Like Win+Alt+Space or Ctrl+Alt+K. If the launcher doesn't open, another app has the combination (the log says so). The Win key alone stays Windows' Start menu.",
-            path: ["launcher", "hotkey"],
+            help: "Like Win+Alt+Space or Ctrl+Alt+K; empty for none (the Windows key can open it instead). If it doesn't work, another app has the combination (the log says so).",
+            path: (cfg) => (cfg.launcher?.enabled === false ? null : ["launcher", "hotkey"]),
             default: "Win+Alt+Space",
-            placeholder: "Win+Alt+Space",
+            placeholder: "None",
           },
         ],
       },
@@ -338,10 +345,10 @@ export const pages: Page[] = [
         title: "Launcher",
         collapsible: true,
         icon: 0xe721,
-        help: "A search icon that becomes the launcher's search field. The launcher can be switched off under General.",
+        help: "A search icon that becomes the launcher's search field. These settings are for the launcher however it opens; its hotkey and the Start menu option are under General.",
         fields: [
           { kind: "slider", label: "Results shown", help: "How many apps the search lists at most.", path: ["widgets", "launcher", "results"], default: 8, min: 3, max: 20, step: 1 },
-          { kind: "text", label: "Hotkey", help: "Like Win+Alt+Space or Ctrl+Alt+K (also under General).", path: ["launcher", "hotkey"], default: "Win+Alt+Space", placeholder: "Win+Alt+Space" },
+          { kind: "custom", editor: "launcherPower" },
         ],
       },
       {

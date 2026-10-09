@@ -487,3 +487,4 @@ body.maximized { border: 0; border-radius: 0; }
 .tile-chip.add { cursor: pointer; opacity: 0.6; padding-right: 10px; }
 .tile-chip.add:hover { opacity: 1; }
 .tile-chip.add.full { opacity: 0.25; cursor: default; }
+.tile-chip.toggle { cursor: pointer; padding-right: 10px; }

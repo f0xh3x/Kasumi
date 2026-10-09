@@ -1,5 +1,5 @@
-//! Volume: a low-level keyboard hook takes over the volume keys (so the Windows
-//! flyout never appears) and an audio thread applies them through Core Audio.
+//! Volume: the keyboard hook (keyhook.rs) takes over the volume keys (so the
+//! Windows flyout never appears) and an audio thread applies them through Core Audio.
 //! A Core Audio volume callback shows the OSD for every master-volume change,
 //! whatever caused it.
 
@@ -10,7 +10,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use windows::core::{implement, GUID};
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::Media::Audio::Endpoints::{
     IAudioEndpointVolume, IAudioEndpointVolumeCallback, IAudioEndpointVolumeCallback_Impl,
 };
@@ -18,12 +17,7 @@ use windows::Win32::Media::Audio::{
     eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator, AUDIO_VOLUME_NOTIFICATION_DATA,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP};
-use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, HC_ACTION, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
-    WM_SYSKEYDOWN,
-};
 
 #[derive(Clone, Copy)]
 enum Key {
@@ -41,44 +35,26 @@ pub fn start(app: &AppHandle) {
     let _ = KEY_TX.set(Mutex::new(tx));
     let a = app.clone();
     std::thread::Builder::new().name("statusnotch-audio".into()).spawn(move || run_audio(a, rx)).expect("spawn audio");
-    std::thread::Builder::new().name("statusnotch-keyhook".into()).spawn(run_hook).expect("spawn key hook");
 }
 
-/// Swallows volume keys (when enabled) and hands them to the audio thread.
-/// Must return quickly: Windows drops hooks that stall.
-unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code == HC_ACTION as i32 && REPLACE_KEYS.load(Ordering::Relaxed) {
-        let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        let key = match info.vkCode as u16 {
-            v if v == VK_VOLUME_UP.0 => Some(Key::Up),
-            v if v == VK_VOLUME_DOWN.0 => Some(Key::Down),
-            v if v == VK_VOLUME_MUTE.0 => Some(Key::Mute),
-            _ => None,
-        };
-        if let Some(key) = key {
-            let msg = wparam.0 as u32;
-            if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
-                if let Some(tx) = KEY_TX.get() {
-                    let _ = tx.lock().unwrap().send(key);
-                }
-            }
-            return LRESULT(1);
+/// From the keyboard hook (keyhook.rs): swallows the volume keys while we handle
+/// them (`[osd] replace_volume_keys`) and hands presses to the audio thread.
+pub(crate) fn on_key(vk: u32, down: bool) -> bool {
+    if !REPLACE_KEYS.load(Ordering::Relaxed) {
+        return false;
+    }
+    let key = match vk as u16 {
+        v if v == VK_VOLUME_UP.0 => Key::Up,
+        v if v == VK_VOLUME_DOWN.0 => Key::Down,
+        v if v == VK_VOLUME_MUTE.0 => Key::Mute,
+        _ => return false,
+    };
+    if down {
+        if let Some(tx) = KEY_TX.get() {
+            let _ = tx.lock().unwrap().send(key);
         }
     }
-    CallNextHookEx(None, code, wparam, lparam)
-}
-
-fn run_hook() {
-    unsafe {
-        let module = GetModuleHandleW(None).ok();
-        if let Err(e) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module.map(Into::into), 0) {
-            eprintln!("[statusnotch] volume key hook failed: {e}");
-            return;
-        }
-        // Low-level hooks are called through this thread's message loop.
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
-    }
+    true
 }
 
 #[implement(IAudioEndpointVolumeCallback)]
