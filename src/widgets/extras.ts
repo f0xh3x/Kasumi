@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../data";
 import { el, icon, type PanelContext, type Widget } from "./index";
+import { iconUrl } from "./tray";
 
 const g = (c: number) => String.fromCharCode(c);
 
@@ -112,6 +113,59 @@ export function privacyPanel(_opts: Record<string, unknown>, ctx: PanelContext):
       (p?.[key] ?? []).map((app) => el("privacy-row", icon(g(glyph)), el("privacy-app", app), el("privacy-what", label))),
     );
     root.replaceChildren(...(rows.length ? rows : [el("privacy-none", "Nothing is using the microphone, camera or location.")]));
+    ctx.resize();
+  });
+  return { el: root, dispose: off };
+}
+
+/** Clipboard history: the icon (+ count); its panel lists recent copies to paste again. */
+export function clipboard(opts: Record<string, unknown>): Widget {
+  const count = el("clip-count");
+  const root = el("widget clipboard", icon(g(0xe77f)), ...(opts.count === true ? [count] : []));
+  const off = subscribe("clipboard", (items) => {
+    count.textContent = items?.length ? String(items.length) : "";
+    root.title = "Clipboard history";
+  });
+  return { el: root, dispose: off };
+}
+
+export function clipboardPanel(_opts: Record<string, unknown>, ctx: PanelContext): Widget {
+  const list = el("clip-list");
+  const clear = el("clip-clear", "Clear");
+  clear.addEventListener("click", (e) => {
+    e.stopPropagation();
+    invoke("clipboard_clear").catch(console.error);
+  });
+  const root = el("clip-panel", list, clear);
+  const off = subscribe("clipboard", (items) => {
+    const rows = (items ?? []).map((it) => {
+      const body =
+        it.kind === "image"
+          ? it.thumb
+            ? (() => {
+                const img = document.createElement("img");
+                img.src = iconUrl(it.thumb);
+                img.draggable = false;
+                return el("clip-image", img);
+              })()
+            : el("clip-text dim", "Image")
+          : el("clip-text", it.text ?? "");
+      const remove = el("clip-remove", icon(g(0xe711)));
+      remove.title = "Remove";
+      remove.addEventListener("click", (e) => {
+        e.stopPropagation();
+        invoke("clipboard_remove", { id: it.id }).catch(console.error);
+      });
+      const row = el("clip-row", body, remove);
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        ctx.close();
+        invoke("clipboard_paste", { id: it.id }).catch(console.error);
+      });
+      return row;
+    });
+    list.replaceChildren(...(rows.length ? rows : [el("clip-empty", "Copy something and it shows up here.")]));
+    clear.hidden = !rows.length;
     ctx.resize();
   });
   return { el: root, dispose: off };

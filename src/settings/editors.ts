@@ -97,6 +97,7 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "recycle", label: "Recycle bin", icon: 0xe74d },
   { id: "privacy", label: "Mic / camera / location", icon: 0xe720 },
   { id: "claude", label: "Claude Code", icon: 0xe8bd },
+  { id: "clipboard", label: "Clipboard", icon: 0xe77f },
 ];
 
 /** The Widgets page section holding a widget's settings. */
@@ -117,6 +118,7 @@ const SECTION: Record<string, string> = {
   recycle: "Recycle bin",
   privacy: "Mic / camera / location",
   claude: "Claude Code",
+  clipboard: "Clipboard",
 };
 const widgetSection = (id: string) => SECTION[id.split("#")[0]] ?? "";
 

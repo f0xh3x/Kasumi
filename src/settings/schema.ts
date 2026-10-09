@@ -412,6 +412,17 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Clipboard",
+        collapsible: true,
+        icon: 0xe77f,
+        help: "Recent copies, to paste again: click one and it's pasted into the app you're in. Kept in memory only (never saved), and copies apps mark as private (passwords) are left out.",
+        fields: [
+          { kind: "slider", label: "Remembers", path: ["widgets", "clipboard", "size"], default: 20, min: 5, max: 100, step: 5, unit: " items" },
+          { kind: "toggle", label: "Images", help: "Also keep copied images (up to 8).", path: ["widgets", "clipboard", "images"], default: true },
+          { kind: "toggle", label: "Item count", path: ["widgets", "clipboard", "count"], default: false },
+        ],
+      },
+      {
         title: "Claude Code",
         collapsible: true,
         icon: 0xe8bd,
