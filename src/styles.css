@@ -112,7 +112,7 @@ html.edge-bottom :is(.bar, .slot, .panel, .osd, .peek) { top: auto; bottom: 0; }
 .slot { pointer-events: none; }
 /* Notch content is never the click target: closed, the overlay is click-through;
    open, the bar's copy of each widget takes clicks. (Legacy notch panels excepted.) */
-.slot > * { pointer-events: none; will-change: transform; }
+.slot > * { pointer-events: none; }
 .slot.clickable > * { pointer-events: auto; }
 
 /* Panels' padding toward the bar (near) and away from it (far): on a bottom
