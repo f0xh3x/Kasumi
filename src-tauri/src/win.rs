@@ -25,7 +25,7 @@ use windows::core::w;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardLayout, GetKeyboardLayoutList, SendInput, HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_SPACE,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RWIN, VK_SPACE,
 };
 use windows::Win32::UI::Shell::{
     DefSubclassProc, SetWindowSubclass, SHQueryUserNotificationState, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
@@ -215,11 +215,14 @@ pub fn foreground() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
 }
 
-/// Gives the foreground back (closing the launcher without launching anything).
-pub fn restore_foreground(h: isize) {
-    if h != 0 {
+/// Gives the foreground back to `h` (the app that had it before the launcher), or,
+/// when that's gone or no longer an app window someone works in (hidden Search,
+/// minimized...), to the front-most app window. Never to one of `ours`.
+pub fn restore_foreground(h: isize, ours: &[isize]) {
+    let target = Some(hwnd(h)).filter(|&w| is_app_window(w, ours)).or_else(|| top_app_window(ours));
+    if let Some(w) = target {
         unsafe {
-            let _ = SetForegroundWindow(hwnd(h));
+            let _ = SetForegroundWindow(w);
         }
     }
 }
@@ -455,8 +458,46 @@ pub fn class_name(h: HWND) -> String {
     String::from_utf16_lossy(&buf[..n])
 }
 
-/// Visible application windows (title bar or resizable frame; not minimized,
-/// cloaked, tool/overlay windows or the shell), as (class, rect) in physical px.
+/// An application window someone could be working in: visible, not minimized or
+/// cloaked, with a title bar or resizable frame and a title; not a tool / overlay
+/// window, the shell (desktop, taskbar) or one of `ours`.
+fn is_app_window(h: HWND, ours: &[isize]) -> bool {
+    unsafe {
+        if h.is_invalid() || ours.contains(&(h.0 as isize)) || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+            return false;
+        }
+        let style = GetWindowLongW(h, GWL_STYLE) as u32;
+        let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
+        if style & (WS_CAPTION.0 | WS_THICKFRAME.0) == 0
+            || ex & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0
+            || GetWindowTextLengthW(h) == 0
+        {
+            return false;
+        }
+        let mut cloaked = 0u32;
+        let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4);
+        cloaked == 0 && !matches!(class_name(h).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
+    }
+}
+
+/// The front-most application window (z-order), if any.
+fn top_app_window(ours: &[isize]) -> Option<HWND> {
+    unsafe extern "system" fn proc(h: HWND, data: LPARAM) -> BOOL {
+        let (ours, found) = &mut *(data.0 as *mut (&[isize], Option<HWND>));
+        if is_app_window(h, ours) {
+            *found = Some(h);
+            return BOOL(0); // stop: EnumWindows goes front to back
+        }
+        BOOL(1)
+    }
+    let mut state: (&[isize], Option<HWND>) = (ours, None);
+    unsafe {
+        let _ = EnumWindows(Some(proc), LPARAM(&mut state as *mut _ as isize));
+    }
+    state.1
+}
+
+/// Visible application windows (see `is_app_window`), as (class, rect) in physical px.
 pub fn app_windows(ours: &[isize]) -> Vec<(String, RECT)> {
     unsafe extern "system" fn proc(h: HWND, data: LPARAM) -> BOOL {
         let list = &mut *(data.0 as *mut Vec<HWND>);
@@ -470,26 +511,10 @@ pub fn app_windows(ours: &[isize]) -> Vec<(String, RECT)> {
     let mut out = Vec::new();
     for h in all {
         unsafe {
-            if ours.contains(&(h.0 as isize)) || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
-                continue;
-            }
-            let style = GetWindowLongW(h, GWL_STYLE) as u32;
-            let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
-            if style & (WS_CAPTION.0 | WS_THICKFRAME.0) == 0
-                || ex & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0
-                || GetWindowTextLengthW(h) == 0
-            {
-                continue;
-            }
-            let mut cloaked = 0u32;
-            let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4);
-            if cloaked != 0 {
+            if !is_app_window(h, ours) {
                 continue;
             }
             let class = class_name(h);
-            if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
-                continue;
-            }
             // Visible bounds: GetWindowRect includes invisible resize borders, which on a
             // maximized window reach ~8px into the neighbouring monitor.
             let mut r = RECT::default();
@@ -556,20 +581,38 @@ fn press_layout_hotkey() {
         "3" | "4" => (VK_LWIN, VK_SPACE),
         _ => (VK_LMENU, VK_LSHIFT),
     };
-    send_keys(&[(modifier, false), (key, false), (key, true), (modifier, true)], 0);
+    send_keys(&[KeyEvent::key(modifier, false), KeyEvent::key(key, false), KeyEvent::key(key, true), KeyEvent::key(modifier, true)], 0);
 }
 
-/// Sends key presses / releases (`(key, up)`), tagged with `mark` (the hook can
-/// recognise our own keys by it).
-pub fn send_keys(keys: &[(VIRTUAL_KEY, bool)], mark: usize) {
+/// One key event to send. `scan` 0 lets Windows derive it from `vk`.
+#[derive(Clone, Copy)]
+pub struct KeyEvent {
+    pub vk: u16,
+    pub scan: u16,
+    pub up: bool,
+    pub extended: bool,
+}
+
+impl KeyEvent {
+    /// A press (`up` false) or release of `vk`; the Windows keys are extended keys.
+    pub fn key(vk: VIRTUAL_KEY, up: bool) -> Self {
+        Self { vk: vk.0, scan: 0, up, extended: vk == VK_LWIN || vk == VK_RWIN }
+    }
+}
+
+/// Sends key events, tagged with `mark` (a keyboard hook can recognise our own
+/// keys by it; keep its low bits clear, PowerToys tags its own keys with those).
+pub fn send_keys(keys: &[KeyEvent], mark: usize) {
     let inputs: Vec<INPUT> = keys
         .iter()
-        .map(|&(vk, up)| INPUT {
+        .map(|k| INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: vk,
-                    dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                    wVk: VIRTUAL_KEY(k.vk),
+                    wScan: k.scan,
+                    dwFlags: (if k.up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) })
+                        | (if k.extended { KEYEVENTF_EXTENDEDKEY } else { KEYBD_EVENT_FLAGS(0) }),
                     dwExtraInfo: mark,
                     ..Default::default()
                 },

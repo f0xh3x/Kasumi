@@ -2,7 +2,7 @@
 //! OSD notch into a pill for a moment; the overlay stays click-through.
 
 mod brightness;
-pub(crate) mod volume;
+mod volume;
 
 use crate::providers::SharedConfig;
 use serde_json::json;
@@ -105,6 +105,11 @@ impl KeyboardWatch {
 #[tauri::command]
 pub async fn switch_keyboard_layout() -> Result<(), String> {
     crate::win::next_keyboard_layout()
+}
+
+/// A volume key the keyboard helper took over (keyhook.rs).
+pub fn volume_key(key: crate::keyhook::VolumeKey) {
+    volume::key(key);
 }
 
 pub fn start(app: &AppHandle) {

@@ -330,12 +330,12 @@ static LAUNCHER_FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 /// overlay to use (its launcher widget was clicked); without one: on the monitor
 /// under the cursor, the surface with a launcher widget, else the dock, else the
 /// top bar.
-pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool>) {
+pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool>, refocus: bool) {
     if !app.state::<SharedConfig>().read().unwrap().launcher.enabled {
         return;
     }
     let state = app.state::<SharedState>();
-    let (label, hwnd, opening) = {
+    let (label, hwnd, opening, ours) = {
         let mut sh = state.lock().unwrap();
         let label = match label {
             Some(l) => l,
@@ -347,6 +347,11 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
                 }
             }
         };
+        // Where focus goes back to on close: the app in front, never one of ours
+        // (opened while a bar had focus: keep the app from before).
+        let front = win::foreground();
+        let ours: Vec<isize> = sh.overlays.values().filter_map(|o| o.hwnd).collect();
+        let front_is_ours = ours.contains(&front);
         let Some(o) = sh.overlays.get_mut(&label) else { return };
         let opening = open.unwrap_or(!o.pinned);
         if opening == o.pinned {
@@ -361,12 +366,13 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
                 crate::webmem::set_low(&w, false);
             }
         }
-        (label, o.hwnd, opening)
+        if opening && !front_is_ours {
+            LAUNCHER_PREV.store(front, std::sync::atomic::Ordering::Relaxed);
+        }
+        (label, o.hwnd, opening, ours)
     };
     let Some(hwnd) = hwnd else { return };
-    if opening {
-        LAUNCHER_PREV.store(win::foreground(), std::sync::atomic::Ordering::Relaxed);
-    }
+    let prev = LAUNCHER_PREV.load(std::sync::atomic::Ordering::Relaxed);
     LAUNCHER_FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
     let handle = app.clone();
     let l = label.clone();
@@ -378,6 +384,10 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             win::raise_topmost(hwnd);
             win::focus(hwnd);
             let _ = w.set_focus();
+        } else if refocus && ours.contains(&win::foreground()) {
+            // Closed from the keyboard (Esc, the hotkey, the Windows key): back to the
+            // app that had focus, not left on a bar that can't take typing.
+            win::restore_foreground(prev, &ours);
         }
     });
     let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://launcher", serde_json::json!({ "open": opening }));
@@ -404,17 +414,14 @@ fn launcher_target(sh: &Shared) -> Option<String> {
 /// The launcher widget was clicked: open the launcher on this overlay.
 #[tauri::command]
 pub async fn launcher_open(window: tauri::WebviewWindow) {
-    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(true));
+    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(true), false);
 }
 
 /// The launcher closed (Esc, an app launched, focus lost). `refocus`: give the
 /// foreground back to the window that had it.
 #[tauri::command]
 pub async fn launcher_close(window: tauri::WebviewWindow, refocus: bool) {
-    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(false));
-    if refocus {
-        win::restore_foreground(LAUNCHER_PREV.load(std::sync::atomic::Ordering::Relaxed));
-    }
+    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(false), refocus);
 }
 
 /// Frontend console errors, forwarded to the app log.
@@ -961,17 +968,27 @@ impl Engine {
 
     /// The launcher closes when the focus moves elsewhere (Alt+Tab, Win+E, Start,
     /// a click on another app...), even where the page doesn't see that happen.
+    /// And without the launcher open, no bar keeps the focus: closing Start or
+    /// Search hands it back to the window before, which can be a bar that can't
+    /// take typing (keys then went astray: hotkeys, the Windows key). It goes
+    /// back to the app instead.
     fn close_launcher_on_focus_loss(&self) {
         use std::sync::atomic::Ordering;
-        let open = {
+        let (open, ours) = {
             let sh = self.shared.lock().unwrap();
-            sh.overlays.iter().find(|(_, o)| o.pinned).and_then(|(l, o)| Some((l.clone(), o.hwnd?)))
+            let open = sh.overlays.iter().find(|(_, o)| o.pinned).and_then(|(l, o)| Some((l.clone(), o.hwnd?)));
+            (open, sh.overlays.values().filter_map(|o| o.hwnd).collect::<Vec<isize>>())
         };
-        let Some((label, hwnd)) = open else { return };
+        let Some((label, hwnd)) = open else {
+            if ours.contains(&win::foreground()) {
+                win::restore_foreground(LAUNCHER_PREV.load(Ordering::Relaxed), &ours);
+            }
+            return;
+        };
         if win::foreground() == hwnd {
             LAUNCHER_FOCUSED.store(true, Ordering::Relaxed);
         } else if LAUNCHER_FOCUSED.swap(false, Ordering::Relaxed) {
-            launcher_toggle(&self.app, Some(label), Some(false));
+            launcher_toggle(&self.app, Some(label), Some(false), false);
         }
     }
 

@@ -21,6 +21,12 @@ mod webmem;
 mod win;
 
 fn main() {
+    // The keyboard hook's helper process (keyhook.rs): nothing else of the app.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--keyhook") {
+        keyhook::helper(args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(0));
+        return;
+    }
     logfile::init();
     instance::claim();
     // A panic must never leave the Windows taskbar hidden.
@@ -38,7 +44,7 @@ fn main() {
             launcher::start(app.handle());
             engine::start(app.handle());
             osd::start(app.handle());
-            keyhook::start();
+            keyhook::start(osd::volume_key);
             autostart::refresh();
             tray::setup(app)?;
             Ok(())

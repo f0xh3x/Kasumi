@@ -69,6 +69,8 @@ Tooltips are plain `title`s (stripped globally when `[general] tooltips = false`
 | `providers/tasks.rs` | `exe_icon(path)`, `item_icon(shell item)`: program icons as RGBA |
 | `providers/system.rs` | `volume_changed(Some((level, muted)))`: fed by `osd/volume.rs` |
 | `osd/mod.rs` | `show(app, kind, level, muted)`, `quiet_volume(duration)` (no OSD while a slider drags) |
+| `keyhook.rs` | The keyboard hook (helper process): `set_replace_volume`, `set_start_key`, `START_HOTKEY`. Any new global key handling goes here, never a hook inside the app (§4) |
+| `win.rs` `send_keys` | Simulated key presses (`KeyEvent`, with a mark so a hook can recognise its own) |
 | `engine.rs` | `to_screen`, `osd_target`, `overlay_for`, `launcher_toggle`, command `fe_log` |
 | `config.rs` | `widget_enabled`, `widget_placed`, `widget_hides_when_maximized`, `surface_list`, `resolve_surface` |
 | `config_edit.rs` | `config_write` / `config_write_many`: comment-preserving, validated |
@@ -106,6 +108,8 @@ New commands must be listed in `main.rs`'s `generate_handler!`.
 | Keep the inline error catcher first in `index.html` / `settings.html` | It logs a page that fails to load; the page's own reporting dies with it |
 | A panel's content change → `ctx.resize()` (redraws the shape synchronously) | Otherwise content pokes out of the shape for a frame |
 | The tray host must stay quiet (no z-order churn) | A noisy host once cost Explorer ~50% CPU |
+| No low-level keyboard hook inside the app: it lives in the `--keyhook` helper process | Windows didn't run an in-app hook (or the hooks after it) while our window had the focus: the Windows key opened Start, PowerToys shortcuts died in our windows |
+| Our windows never keep the focus without the open launcher (`close_launcher_on_focus_loss` hands it back) | A bar holding focus it can't use swallowed keys |
 
 ## 5. Build, install, check
 
@@ -136,6 +140,12 @@ Installer: `npx tauri build`; silent test install
   `tools/hover-capture.ps1 -monitor <n>`, then `frames.py changes` (what moved,
   when) and `frames.py track` (sub-pixel position of one item). Some glitches
   only show without a screen recorder running.
+* **Key presses** (ask first): `tools/keys.ps1 -steps "LWin LWin Escape"` sends
+  combos and reports the window in front after each, flagging the Start menu.
+  `-physical` makes the keyboard helper treat them as real presses (it ignores
+  simulated Win presses otherwise). Leftover state from a failed run (an
+  invisible Search window holding focus) poisons the next one: check `before:`.
+  Never Caps Lock, Win+D or Alt+F4 combos.
 * **The user's recordings:** `frames.py extract <video> <dir>`, then the same
   analysis. Measure: a 1 px jump is invisible in a zoomed screenshot and obvious
   in numbers.

@@ -1,10 +1,9 @@
-//! Volume: the keyboard hook (keyhook.rs) takes over the volume keys (so the
+//! Volume: the keyboard helper (keyhook.rs) takes over the volume keys (so the
 //! Windows flyout never appears) and an audio thread applies them through Core Audio.
 //! A Core Audio volume callback shows the OSD for every master-volume change,
 //! whatever caused it.
 
 use crate::providers::SharedConfig;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -17,7 +16,6 @@ use windows::Win32::Media::Audio::{
     eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator, AUDIO_VOLUME_NOTIFICATION_DATA,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP};
 
 #[derive(Clone, Copy)]
 enum Key {
@@ -26,8 +24,6 @@ enum Key {
     Mute,
 }
 
-/// Read by the hook on every key event, so it must be lock-free.
-static REPLACE_KEYS: AtomicBool = AtomicBool::new(false);
 static KEY_TX: OnceLock<Mutex<Sender<Key>>> = OnceLock::new();
 
 pub fn start(app: &AppHandle) {
@@ -37,24 +33,17 @@ pub fn start(app: &AppHandle) {
     std::thread::Builder::new().name("statusnotch-audio".into()).spawn(move || run_audio(a, rx)).expect("spawn audio");
 }
 
-/// From the keyboard hook (keyhook.rs): swallows the volume keys while we handle
-/// them (`[osd] replace_volume_keys`) and hands presses to the audio thread.
-pub(crate) fn on_key(vk: u32, down: bool) -> bool {
-    if !REPLACE_KEYS.load(Ordering::Relaxed) {
-        return false;
-    }
-    let key = match vk as u16 {
-        v if v == VK_VOLUME_UP.0 => Key::Up,
-        v if v == VK_VOLUME_DOWN.0 => Key::Down,
-        v if v == VK_VOLUME_MUTE.0 => Key::Mute,
-        _ => return false,
+/// A volume key press from the keyboard helper (keyhook.rs), for the audio thread.
+pub(super) fn key(key: crate::keyhook::VolumeKey) {
+    use crate::keyhook::VolumeKey;
+    let key = match key {
+        VolumeKey::Up => Key::Up,
+        VolumeKey::Down => Key::Down,
+        VolumeKey::Mute => Key::Mute,
     };
-    if down {
-        if let Some(tx) = KEY_TX.get() {
-            let _ = tx.lock().unwrap().send(key);
-        }
+    if let Some(tx) = KEY_TX.get() {
+        let _ = tx.lock().unwrap().send(key);
     }
-    true
 }
 
 #[implement(IAudioEndpointVolumeCallback)]
@@ -150,7 +139,7 @@ fn run_audio(app: AppHandle, rx: Receiver<Key>) {
             let cfg = cfg.read().unwrap();
             (cfg.osd.enabled && cfg.osd.replace_volume_keys, cfg.osd.volume_step)
         };
-        REPLACE_KEYS.store(replace && endpoint.is_some(), Ordering::Relaxed);
+        crate::keyhook::set_replace_volume(replace && endpoint.is_some());
 
         // Follow default-device changes (headphones plugged in, etc.).
         if last_bind.elapsed() >= Duration::from_secs(2) {

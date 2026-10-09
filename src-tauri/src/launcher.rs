@@ -5,22 +5,19 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use windows::core::HSTRING;
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY, VK_LWIN, VK_RWIN,
+    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
 };
 use windows::Win32::UI::Shell::{
     BHID_EnumItems, IEnumShellItems, IShellItem, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING,
 };
-use windows::Win32::Foundation::{LPARAM, WPARAM};
-use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, PostThreadMessageW, SetTimer, KBDLLHOOKSTRUCT, MSG, WM_APP, WM_HOTKEY, WM_TIMER,
+    DispatchMessageW, GetMessageW, SetTimer, MSG, WM_HOTKEY, WM_TIMER,
 };
 
 struct Index {
@@ -153,52 +150,9 @@ pub fn parse_hotkey(s: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     key.map(|k| (mods, k))
 }
 
-// --- [launcher] start_menu: the Windows key opens the launcher ---------------------
-
-/// Read by the keyboard hook on every key: lock-free.
-static START_KEY: AtomicBool = AtomicBool::new(false);
-static WIN_DOWN: AtomicBool = AtomicBool::new(false);
-/// Another key went down while Win was held: a Win+ shortcut, not Start.
-static WIN_USED: AtomicBool = AtomicBool::new(false);
-/// The launcher thread: it opens the launcher (the hook mustn't wait for that).
-static THREAD: AtomicU32 = AtomicU32::new(0);
-const WM_START_KEY: u32 = WM_APP + 1;
-/// Tags the keys we send, so the hook lets them through.
-const OURS: usize = 0x534E_5354;
-
-/// From the keyboard hook (keyhook.rs). Win pressed and released on its own would
-/// open Start: then a key that does nothing (0xE8 is unassigned) goes in between,
-/// so Windows sees a shortcut and doesn't, and the launcher opens instead. Win+
-/// shortcuts are untouched.
-pub(crate) fn on_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
-    if info.dwExtraInfo == OURS {
-        return false;
-    }
-    let vk = info.vkCode as u16;
-    if vk != VK_LWIN.0 && vk != VK_RWIN.0 {
-        if down && WIN_DOWN.load(Ordering::Relaxed) {
-            WIN_USED.store(true, Ordering::Relaxed);
-        }
-        return false;
-    }
-    if down {
-        if !WIN_DOWN.swap(true, Ordering::Relaxed) {
-            WIN_USED.store(false, Ordering::Relaxed);
-        }
-        return false;
-    }
-    let alone = WIN_DOWN.swap(false, Ordering::Relaxed) && !WIN_USED.load(Ordering::Relaxed);
-    if !alone || !START_KEY.load(Ordering::Relaxed) {
-        return false;
-    }
-    // Swallow this release and send it again after the masking key.
-    let mask = VIRTUAL_KEY(0xE8);
-    crate::win::send_keys(&[(mask, false), (mask, true), (VIRTUAL_KEY(vk), true)], OURS);
-    unsafe {
-        let _ = PostThreadMessageW(THREAD.load(Ordering::Relaxed), WM_START_KEY, WPARAM(0), LPARAM(0));
-    }
-    true
-}
+/// [launcher] start_menu: the keyboard helper (keyhook.rs) presses this hotkey on
+/// a lone Windows key press.
+const START_HOTKEY_ID: i32 = 2;
 
 /// Keeps the configured hotkey registered and opens / closes the launcher on it
 /// (and on the Windows key, with `start_menu`).
@@ -211,20 +165,32 @@ pub fn start(app: &AppHandle) {
             let _ = std::thread::spawn(|| {
                 let _ = apps();
             });
-            THREAD.store(GetCurrentThreadId(), Ordering::Relaxed);
             SetTimer(None, 0, 500, None);
             let mut registered: Option<String> = None;
+            let mut start_registered = false;
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                if msg.message == WM_HOTKEY || msg.message == WM_START_KEY {
-                    crate::engine::launcher_toggle(&app, None, None);
+                if msg.message == WM_HOTKEY {
+                    crate::engine::launcher_toggle(&app, None, None, true);
                     continue;
                 }
                 if msg.message == WM_TIMER && msg.hwnd.is_invalid() {
                     let want = {
                         let cfg = app.state::<crate::providers::SharedConfig>();
                         let cfg = cfg.read().unwrap();
-                        START_KEY.store(cfg.launcher.enabled && cfg.launcher.start_menu, Ordering::Relaxed);
+                        let start = cfg.launcher.enabled && cfg.launcher.start_menu;
+                        if start != start_registered {
+                            start_registered = start;
+                            if start {
+                                let (mods, vk) = crate::keyhook::START_HOTKEY;
+                                if let Err(e) = RegisterHotKey(None, START_HOTKEY_ID, mods | MOD_NOREPEAT, vk.0 as u32) {
+                                    eprintln!("[statusnotch] Windows key for the launcher unavailable: {e}");
+                                }
+                            } else {
+                                let _ = UnregisterHotKey(None, START_HOTKEY_ID);
+                            }
+                        }
+                        crate::keyhook::set_start_key(start);
                         let hotkey = cfg.launcher.hotkey.trim();
                         (cfg.launcher.enabled && !hotkey.is_empty()).then(|| hotkey.to_string())
                     };

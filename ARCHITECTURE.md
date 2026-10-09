@@ -23,7 +23,7 @@ engine.rs   one thread: monitors, hover, docking,    main.ts      Overlay class:
             fullscreen, layout → emits events  ───►               monitor window, draws the
 providers/  one thread each: temps, weather, media,              notch/bar SVG, mounts widgets
             tray host, tasks, system… → publish ───►  data.ts      subscribe(key, cb) data hub
-osd/        keyboard hook (volume keys), Core Audio,  geometry.ts  the shape (single SVG path)
+osd/        volume keys, Core Audio, WMI,         geometry.ts  the shape (single SVG path)
             WMI brightness, keyboard layout  ──────►  widgets/*    widget + panel factories
 config.rs   TOML model, defaults, resolve_layout     settings/*   the settings window
 config_edit.rs  comment-preserving config writes ◄── (invoke)
@@ -57,7 +57,8 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src-tauri/src/launcher.rs` | App index (Start menu shortcuts + Store apps), icons, launching, the global hotkey thread |
 | `src-tauri/src/corners.rs` | Rounded screen corners as native layered windows (when not attached to the bars) |
 | `src-tauri/src/dropzone.rs` | Files dropped on a bar (to pin them): WebView2 takes the drop, the page posts the files back (`postMessageWithAdditionalObjects`), this reads their paths |
-| `src-tauri/src/osd/` | `mod.rs` low-level keyboard hook + keyboard-layout watch; `volume.rs` Core Audio; `brightness.rs` WMI |
+| `src-tauri/src/osd/` | `mod.rs` OSD + keyboard-layout watch; `volume.rs` Core Audio; `brightness.rs` WMI |
+| `src-tauri/src/keyhook.rs` | The low-level keyboard hook, in a helper process (`StatusNotch.exe --keyhook <pid>`, started by the app, exits with it): volume keys, and the Windows key opening the launcher (`[launcher] start_menu`). Talks to the app through named events |
 | `src-tauri/src/actions.rs` | `run_action(action, target)`: open, settings, sleep, hibernate, lock, restart, shutdown, sign_out, open_config, open_log, open_config_folder |
 | `src-tauri/src/settings.rs` | Opens the settings window; `monitors_list`, `lhm_sensors`, `system_time_format`, `app_version` |
 | `src-tauri/src/presets.rs` | Presets = full config copies in `%APPDATA%\StatusNotch\presets\<name>.toml`. Shipped presets (`src-tauri/presets/*.toml`, the author's minus monitor rules, pins and weather city) are added once each on start (`presets/.shipped`). Applying a preset keeps your pins and weather city if it has none |
@@ -222,7 +223,14 @@ order by `settings/main.ts` when settings opens.
 
 ## 8. OSD, tray, Windows specifics
 
-* **OSD:** a low-level keyboard hook swallows volume keys (when `replace_volume_keys`),
+* **Keyboard hook:** in its own helper process (keyhook.rs). A hook inside the app
+  wasn't run while one of our windows had the focus (and neither were the hooks
+  after it: other apps' shortcuts died in our windows). The helper has no window.
+  With `[launcher] start_menu` it holds a physical Windows key back: another key
+  next replays Win + that key (shortcuts work); released alone, it presses a
+  private hotkey (Ctrl+Alt+Shift+F24) the app registers, because a hotkey lets the
+  app take the focus. Simulated Win presses (PowerToys remaps) pass untouched.
+* **OSD:** the keyboard helper swallows volume keys (when `replace_volume_keys`),
   sets volume via Core Audio, and emits `notch://osd`; the notch holding `osd.notch`
   grows into a pill. Its Core Audio volume callback is also quick settings' only source
   for the volume (`system::volume_changed`). Brightness (Fn keys) is watched through WMI. Keyboard-layout
