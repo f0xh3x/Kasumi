@@ -9,7 +9,8 @@ backend and a plain TypeScript + SVG frontend (no UI framework).
 
 Guiding rules: keep it **minimal** (new extras must be optional and off by default),
 **pure black** look, everything **configurable in `config.toml`** and exposed in the
-settings window.
+settings window. Development rules, the catalogue of shared helpers, past rendering
+bugs and how to build / test are in **`CLAUDE.md`**.
 
 ---
 
@@ -20,8 +21,8 @@ Rust (src-tauri/src)                                 Frontend (src/)
 ──────────────────────────────────────────────────   ─────────────────────────────────
 engine.rs   one thread: monitors, hover, docking,    main.ts      Overlay class: one per
             fullscreen, layout → emits events  ───►               monitor window, draws the
-providers/  one thread each: temps, weather,                      notch/bar SVG, mounts widgets
-            media (SMTC), systray host → publish ──►  data.ts      subscribe(key, cb) data hub
+providers/  one thread each: temps, weather, media,              notch/bar SVG, mounts widgets
+            tray host, tasks, system… → publish ───►  data.ts      subscribe(key, cb) data hub
 osd/        keyboard hook (volume keys), Core Audio,  geometry.ts  the shape (single SVG path)
             WMI brightness, keyboard layout  ──────►  widgets/*    widget + panel factories
 config.rs   TOML model, defaults, resolve_layout     settings/*   the settings window
@@ -51,7 +52,7 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src-tauri/src/engine.rs` | Engine thread (~60 Hz): cursor polling → hover state machine (`Idle/Dwell/Open/Leave`) per surface, hot corners/edges, window docking ("undocked" notches), dock shrinking under maximized windows, fullscreen hiding, minimize watchdog, monitor changes, `build_layout` + `notch_positions` (unchanged layouts aren't resent); launcher open/close (`launcher_toggle`, closes when focus leaves); commands `get_layout`, `set_regions`, `set_notch_widths`, `set_content_height`, `fe_log`, `launcher_open/close` |
 | `src-tauri/src/config.rs` | Serde model of `config.toml`, defaults, `surface_list()` / `resolve_surface()` (surface + per-monitor rule → notches & bar groups), `widget_enabled()`, legacy model support |
 | `src-tauri/src/config_edit.rs` | `config_read`, `config_write(path, value)`, `config_write_many(ops)`, `config_reset` — `toml_edit`, keeps comments/CRLF, validates before writing |
-| `src-tauri/src/providers/` | Data providers (see §5): `temps.rs` (LibreHardwareMonitor), `weather.rs` (Open-Meteo), `media.rs` (Windows SMTC), `systray.rs` (tray icon host), `tasks.rs` (app windows, pins, icons; activate/close/launch/reorder), `system.rs` (volume, brightness, battery, network for quick settings) |
+| `src-tauri/src/providers/` | Data providers (see §5); `mod.rs` has the shared helpers (`publish`, `placed`, `widget_opts`, `rgba_json`, HTTP). `temps.rs` (LibreHardwareMonitor), `weather.rs` (Open-Meteo), `media.rs` (Windows SMTC), `systray.rs` (tray icon host), `tasks.rs` (app windows, pins, icons; activate/close/launch/reorder), `system.rs` (battery, brightness, network, and the volume the OSD watcher hands it, for quick settings), `audio.rs` (output devices, per-app volume), `extras.rs` (focus, netspeed, recycle bin, privacy), `claude.rs` (Claude Code usage from its session logs), `clipboard.rs` (history, in memory), `notifications.rs` (Windows notification database via winsqlite3) |
 | `src-tauri/src/taskbar.rs` | Hides / restores the Windows taskbar (`[shell] hide_taskbar`), reserves screen space for always-shown bars (crash-safe marker) |
 | `src-tauri/src/launcher.rs` | App index (Start menu shortcuts + Store apps), icons, launching, the global hotkey thread |
 | `src-tauri/src/corners.rs` | Rounded screen corners as native layered windows (when not attached to the bars) |
@@ -60,18 +61,20 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src-tauri/src/actions.rs` | `run_action(action, target)`: open, settings, sleep, hibernate, lock, restart, shutdown, sign_out, open_config, open_log, open_config_folder |
 | `src-tauri/src/settings.rs` | Opens the settings window; `monitors_list`, `lhm_sensors`, `system_time_format`, `app_version` |
 | `src-tauri/src/presets.rs` | Presets = full config copies in `%APPDATA%\StatusNotch\presets\<name>.toml`. Shipped presets (`src-tauri/presets/*.toml`, the author's minus monitor rules, pins and weather city) are added once each on start (`presets/.shipped`). Applying a preset keeps your pins and weather city if it has none |
-| `src-tauri/src/win.rs` | Win32 helpers: monitors/DPI, overlay styles, z-order, app windows (DWM frame bounds), fullscreen detection, keyboard layouts |
+| `src-tauri/src/win.rs` | Win32 helpers: monitors/DPI, overlay styles, z-order, app windows (DWM frame bounds), fullscreen detection, keyboard layouts, and the small shared ones (UTF-16 strings, window title / class / process, bitmap pixels) |
 | `src-tauri/src/{tray,autostart,instance,logfile}.rs` | Own tray icon menu, Run-key autostart, single instance, release log → `%APPDATA%\StatusNotch\statusnotch.log` |
-| `src/main.ts` | `Overlay`: builds DOM from a `Layout`, springs, drops (notches/panels), OSD, keyboard peek, glide animation, region reporting, notch width measuring |
+| `src/main.ts` | `Overlay`: builds DOM from a `Layout`, springs, drops (notches/panels), OSD, keyboard peek, region reporting, notch width measuring |
 | `src/geometry.ts` | `computeFrame()` → the one SVG path: notch profile (from the reference SVG), bar, panels, merging of overlapping notches |
 | `src/spring.ts` | Damped spring used for every animation |
 | `src/types.ts` | `Layout`, `NotchLayout`, … (mirror of Rust structs, camelCase) |
 | `src/data.ts` | Data hub: `subscribe(key, cb)`; typed `DataMap` |
-| `src/widgets/index.ts` | Widget + panel registries, `createWidget`, `createPanel`, `panelFor`, `Glyph`, `el()`, `icon()` |
+| `src/widgets/index.ts` | Widget + panel registries, `createWidget`, `createPanel`, `panelFor`, `Glyph`, `g()`, `el()`, `icon()`, `iconUrl()` |
 | `src/widgets/tasks.ts` | Tasks: buttons per app (pinned + running on this monitor), drag to reorder, drop files to pin, hover popup / right-click panel |
 | `src/settings/schema.ts` | Declarative settings pages (one entry per setting) |
-| `src/settings/editors.ts` | Custom editors (placement drag & drop, notch toggles, sensor pickers, menu editor, presets…) + config migrations |
+| `src/settings/editors.ts` | Custom editors (placement drag & drop, notch pills, sensor pickers, menu editor, quick tiles, presets…) + config migrations |
 | `src/settings/main.ts` | Settings window rendering, save/saveMany, migrations on load |
+| `src/settings/dom.ts` | DOM helpers shared by both (`$`, `row`, `toggleSwitch`, …) |
+| `tools/` | Install script and test tools (see `CLAUDE.md`) |
 
 ## 3. Runtime flow
 
@@ -122,9 +125,10 @@ center = ["tasks", "tray", "quick"]
 * **Closed:** only notch widgets show, inside notches. With `[notch] merge = true`
   (default) notch widgets on the same side share **one notch** (ids `left`/`center`/`right`);
   otherwise one notch per widget (id = widget name).
-* **Opening:** each notch widget **glides** from its notch spot to its bar twin's spot,
-  then the bar copy takes over (`Overlay.glide`). Notch slot content gets `inNotch: true`
-  in its options, so a widget can render a compact variant (media hides its keys).
+* **Opening:** a notch widget is a single instance: it stays in its notch while the bar
+  opens, and the bar's groups make room for it (`Overlay.layoutBar`; center widgets sit
+  before / after a middle notch). A widget that looks different open / closed styles
+  itself with `html.bar-open` (media keys).
 * **Side notches** (`[notch.left|right]`): `hug` = sit in the corner (content keeps the
   bar's edge padding so nothing shifts on open), `avoid_windows` = slide to `offset` while
   a window's caption buttons are there, `offset`. Center: `offset`.
@@ -147,6 +151,8 @@ type PanelFactory = (opts, ctx: { close(): void; resize(): void }) => Widget;
 ```
 
 Example (clock): reads `opts.format`, updates text on a timer, `dispose` clears the timer.
+`opts` also carries `_device` (the overlay's monitor), used by tasks to list that
+monitor's windows.
 Widgets get live data with `subscribe("media", (m) => …)` (returns an unsubscribe — call it
 in `dispose`). Root element class is `widget <name>`; style in `src/styles.css`.
 Interactive bits need `pointer-events` (the overlay is click-through except reported regions).
@@ -159,27 +165,29 @@ Existing widgets: `clock` (+ `calendar` panel), `menu` (panel with actions), `tr
 (hosted tray icons; collapsed panel or expanded in the bar), `language` (keyboard
 layout, click to switch), `media` (SMTC, keys + title, panel with art/seek), `weather`
 (Open-Meteo, hourly panel), `temps` (LibreHardwareMonitor CPU/GPU, details panel),
-`tasks` (app windows + pins), `quick` (volume/brightness/battery/network panel),
-`buttons` (own action buttons, instances), `launcher` (search field + results).
+`tasks` (app windows + pins), `quick` (volume/brightness/battery/network panel, output
+devices, per-app volume, shortcut tiles), `buttons` (own action buttons, instances),
+`launcher` (search field + results), `language`, and optional extras: `focus`,
+`netspeed`, `recycle`, `privacy`, `claude`, `clipboard`, `notifications`.
 
 ### Adding a widget — checklist
 1. `src/widgets/<name>.ts`: factory (and optional panel factory); register in
-   `widgets` / `panels` in `src/widgets/index.ts`. Support `opts.inNotch` if it needs
-   a compact notch variant.
+   `widgets` / `panels` in `src/widgets/index.ts`.
 2. If it needs system/external data: a provider (below) + a typed entry in `DataMap`
    (`src/data.ts`).
-3. Settings: add it to `WIDGETS` in `src/settings/editors.ts` (placement chips and
-   "Own notch" toggle come for free) and a collapsible section in `schema.ts` with its
+3. Settings: add it to `WIDGETS` in `src/settings/editors.ts` (placement chips with
+   their notch pill come for free) and a collapsible section in `schema.ts` with its
    options (`path: ["widgets", "<name>", "<option>"]`).
 4. Defaults: a `[widgets.<name>]` table in `default-config.toml` (new extras:
    `enabled = false`).
 5. Styles in `src/styles.css`.
 
 ### Adding a data provider (Rust)
-`src-tauri/src/providers/<name>.rs` with `pub fn run(app: AppHandle)` — a loop that
-checks `widget_enabled(&app, "<name>")`, reads options with `widget_opts`, fetches, and
-calls `publish(&app, "<key>", json)` (deduplicated; broadcast as `notch://data`). Spawn it
-in `providers::start`. HTTP: `http_agent()` + `get_json()` (ureq, 5 s timeout). Commands
+`src-tauri/src/providers/<name>.rs` with a thread loop that idles unless
+`placed(&app, "<name>")` (the widget is on some bar), reads options with `widget_opts`,
+fetches, and calls `publish(&app, "<key>", json)` (deduplicated; broadcast as
+`notch://data`). Start it in `providers::start`. Prefer Windows notifications to
+polling where there are any. HTTP: `http_agent()` + `get_json()` (ureq, 5 s timeout). Commands
 the widget calls go in a module and must be listed in `main.rs`'s `generate_handler!`.
 
 ## 6. Settings window
@@ -192,7 +200,8 @@ it can be a function of the config returning `null` to hide the field. Writes go
 hot-reloads. Pages: General (startup, behaviour, hot corners), Widgets (Global/per-monitor
 layout, placement drag & drop, Notches, per-widget sections), Appearance, Animation,
 Hover, OSD, Presets, About. Config format changes need a migration in `editors.ts`
-(`migrationOps`, `migrationOpsV3`), run when settings opens.
+(`migrationOps`, `migrationOpsV3`, `V4`, `V5`, `migrationOpsDisabledSpots`), run in
+order by `settings/main.ts` when settings opens.
 
 ## 7. Config reference (top-level tables)
 
@@ -215,7 +224,8 @@ Hover, OSD, Presets, About. Config format changes need a migration in `editors.t
 
 * **OSD:** a low-level keyboard hook swallows volume keys (when `replace_volume_keys`),
   sets volume via Core Audio, and emits `notch://osd`; the notch holding `osd.notch`
-  grows into a pill. Brightness (Fn keys) is watched through WMI. Keyboard-layout
+  grows into a pill. Its Core Audio volume callback is also quick settings' only source
+  for the volume (`system::volume_changed`). Brightness (Fn keys) is watched through WMI. Keyboard-layout
   changes pop a small "peek" notch at the language widget.
 * **Tray hosting:** a hidden `Shell_TrayWnd` receives apps' `Shell_NotifyIcon` calls,
   forwards them to Explorer, and publishes icons (`tray` data key). It must stay *quiet*
@@ -234,6 +244,8 @@ Hover, OSD, Presets, About. Config format changes need a migration in `editors.t
   re-show the taskbar).
 
 ## 9. Build & release
+
+`tools/install.sh` does the build + install + checks in one go (see `CLAUDE.md`). By hand:
 
 ```bash
 npm install

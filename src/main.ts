@@ -407,9 +407,8 @@ class Overlay {
       slot.dataset.notch = n.id;
       const panels = new Map<string, HTMLDivElement>();
       for (const name of n.widgets) {
-        // Bar notches show a compact copy (the bar has the full one); a dock's
-        // notches are the widgets themselves.
-        const w = createWidget(name, dock ? opts(name) : { ...opts(name), inNotch: true });
+        // The widget itself: a notch widget isn't in the bar too (one instance).
+        const w = createWidget(name, opts(name));
         this.widgets.push(w);
         slot.append(w.el);
         this.notchEls.push({ slot, name, el: w.el });
