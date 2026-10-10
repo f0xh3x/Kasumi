@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 
 /// The current config, shared with providers (the engine replaces it on reload).
 pub type SharedConfig = Arc<RwLock<Config>>;
@@ -29,7 +29,43 @@ pub struct DataStore {
     values: Mutex<HashMap<String, Value>>,
 }
 
-/// Stores `value` under `key` and broadcasts it if it changed.
+/// Widget types whose pages read a data key. A key nobody lists here goes to
+/// every overlay (the safe default for a new provider).
+fn consumers(key: &str) -> Option<&'static [&'static str]> {
+    Some(match key {
+        "system" => &["quick"],
+        "tasks" | "taskIcons" => &["tasks"],
+        "temps" => &["temps"],
+        "media" => &["media"],
+        "weather" => &["weather"],
+        "tray" => &["tray"],
+        "keyboard" => &["language"],
+        "focus" => &["focus"],
+        "netspeed" => &["netspeed"],
+        "disks" => &["disk"],
+        "privacy" => &["privacy"],
+        "claude" => &["claude"],
+        "notifications" => &["notifications"],
+        "clipboard" => &["clipboard"],
+        _ => return None,
+    })
+}
+
+/// Sends one value to the overlays that show a widget using `key` (all of them
+/// for a key without a listed consumer): a page that has no such widget would
+/// only wake up to throw it away.
+fn emit_data(app: &AppHandle, key: &str, value: &Value) {
+    let payload = json!({ "key": key, "value": value });
+    let Some(types) = consumers(key) else {
+        let _ = app.emit("notch://data", payload);
+        return;
+    };
+    for label in crate::engine::overlays_showing(app, types) {
+        let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://data", payload.clone());
+    }
+}
+
+/// Stores `value` under `key` and sends it to the pages that use it, if it changed.
 pub fn publish(app: &AppHandle, key: &str, value: Value) {
     {
         let store = app.state::<DataStore>();
@@ -39,7 +75,49 @@ pub fn publish(app: &AppHandle, key: &str, value: Value) {
         }
         values.insert(key.to_string(), value.clone());
     }
-    let _ = app.emit("notch://data", json!({ "key": key, "value": value }));
+    emit_data(app, key, &value);
+}
+
+/// For a key holding an object that grows by entry (icons by app): the store
+/// keeps the whole object, the pages are sent only the entries that changed and
+/// merge them (`MERGED` in data.ts).
+pub fn publish_entries(app: &AppHandle, key: &str, entries: serde_json::Map<String, Value>) {
+    let changed = {
+        let store = app.state::<DataStore>();
+        let mut values = store.values.lock().unwrap();
+        let held = values.entry(key.to_string()).or_insert_with(|| Value::Object(Default::default()));
+        let Some(map) = held.as_object_mut() else { return };
+        let mut changed = serde_json::Map::new();
+        for (k, v) in entries {
+            if map.get(&k) != Some(&v) {
+                map.insert(k.clone(), v.clone());
+                changed.insert(k, v);
+            }
+        }
+        changed
+    };
+    if !changed.is_empty() {
+        emit_data(app, key, &Value::Object(changed));
+    }
+}
+
+/// Sends one overlay the current values it uses. For after its layout changed:
+/// a widget it didn't show before may have arrived, and what was published
+/// meanwhile went only to the pages that had one.
+pub fn resend(app: &AppHandle, label: &str) {
+    let keys: Vec<String> = app.state::<DataStore>().values.lock().unwrap().keys().cloned().collect();
+    for key in keys {
+        let Some(types) = consumers(&key) else { continue };
+        if !crate::engine::overlay_shows(app, label, types) {
+            continue;
+        }
+        // Read right before sending, so the value is as new as it can be (a
+        // publish landing in the microseconds between this read and the send
+        // could still be overtaken; the next change corrects it).
+        let Some(value) = app.state::<DataStore>().values.lock().unwrap().get(&key).cloned() else { continue };
+        let payload = json!({ "key": key, "value": value });
+        let _ = app.emit_to(EventTarget::WebviewWindow { label: label.to_string() }, "notch://data", payload);
+    }
 }
 
 #[tauri::command]

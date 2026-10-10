@@ -161,10 +161,18 @@ export function subscribe<K extends Key>(key: K, cb: (value: DataMap[K]) => void
   return () => set.delete(cb as (v: never) => void);
 }
 
+/** Keys whose events carry only the entries that changed (Rust: `publish_entries`). */
+const MERGED: Key[] = ["taskIcons"];
+
 export async function initData(): Promise<void> {
-  await listen<{ key: Key; value: unknown }>("notch://data", (e) => set(e.payload.key, e.payload.value));
+  await listen<{ key: Key; value: unknown }>("notch://data", (e) => {
+    const { key, value } = e.payload;
+    set(key, MERGED.includes(key) ? { ...(values.get(key) as object | undefined), ...(value as object) } : value);
+  });
   const snapshot = await invoke<Partial<Record<Key, unknown>>>("get_data");
   for (const [key, value] of Object.entries(snapshot) as [Key, unknown][]) {
-    if (!values.has(key)) set(key, value);
+    // The snapshot is whole; entries that arrived while it was on its way are newer.
+    if (MERGED.includes(key)) set(key, { ...(value as object), ...(values.get(key) as object | undefined) });
+    else if (!values.has(key)) set(key, value);
   }
 }

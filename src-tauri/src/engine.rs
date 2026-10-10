@@ -321,6 +321,28 @@ pub fn overlay_for(app: &AppHandle, widget: &str) -> Option<String> {
     (!o.hidden).then(|| (*label).clone())
 }
 
+/// Whether `layout` shows a widget of this type (`type` or `type#n`) in its bar
+/// or a notch, or a notch's own panel of that type (older configs name one).
+fn shows(layout: &Layout, ty: &str) -> bool {
+    let is = |w: &String| w.split('#').next() == Some(ty);
+    [&layout.bar.left, &layout.bar.center, &layout.bar.right].iter().any(|g| g.iter().any(is))
+        || layout.notches.iter().any(|n| n.widgets.iter().any(is) || n.panel.as_ref().is_some_and(is))
+}
+
+/// The overlays showing a widget of any of these types (who a data key goes to).
+pub fn overlays_showing(app: &AppHandle, types: &[&str]) -> Vec<String> {
+    let state = app.state::<SharedState>();
+    let sh = state.lock().unwrap();
+    sh.overlays.iter().filter(|(_, o)| types.iter().any(|t| shows(&o.layout, t))).map(|(l, _)| l.clone()).collect()
+}
+
+/// Whether this overlay shows a widget of any of these types.
+pub fn overlay_shows(app: &AppHandle, label: &str, types: &[&str]) -> bool {
+    let state = app.state::<SharedState>();
+    let sh = state.lock().unwrap();
+    sh.overlays.get(label).is_some_and(|o| types.iter().any(|t| shows(&o.layout, t)))
+}
+
 /// The window that was in front before the launcher took focus.
 static LAUNCHER_PREV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 /// The open launcher has had the focus (so losing it means the user went elsewhere).
@@ -915,7 +937,9 @@ impl Engine {
                 let _ = self.app.run_on_main_thread(move || win::place(h, m.left, top, m.width(), h_px));
             }
             layout.expanded = expanded;
-            let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://layout", layout);
+            let _ = self.app.emit_to(EventTarget::WebviewWindow { label: label.clone() }, "notch://layout", layout);
+            // A widget may be new here, and data goes only to pages showing its widget.
+            crate::providers::resend(&self.app, &label);
         }
         for (label, m, layout) in to_create {
             if let Err(e) = self.create_window(&label, &m, &layout) {

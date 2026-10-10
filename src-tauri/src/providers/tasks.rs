@@ -217,7 +217,6 @@ struct State {
     apps: HashMap<String, App>,
     /// Window handles in the order they first appeared.
     seen: Vec<isize>,
-    icons: serde_json::Map<String, Value>,
     /// The order the user dragged apps into (this session).
     manual: Vec<String>,
     /// Listed windows that got cloaked, and when (see `scan`).
@@ -361,7 +360,8 @@ fn scan(app: &AppHandle) {
     let pinned = pins(app);
     let mut st = state().lock().unwrap();
     let mut windows = Vec::new();
-    let mut icons_changed = false;
+    // Icons found this scan; the pages are sent just these (`publish_entries`).
+    let mut fresh = serde_json::Map::new();
     // Pinned apps are listed (first, in pin order) even without windows.
     for p in &pinned {
         if !st.apps.contains_key(&p.key) {
@@ -373,8 +373,7 @@ fn scan(app: &AppHandle) {
             };
             let (aumid, exe) = if p.lnk.is_some() && !p.target.is_empty() { (aumid, p.target.clone()) } else { (aumid, exe) };
             if let Some((w, hgt, rgba)) = icon {
-                st.icons.insert(p.key.clone(), super::rgba_json(w, hgt, &rgba));
-                icons_changed = true;
+                fresh.insert(p.key.clone(), super::rgba_json(w, hgt, &rgba));
             }
             st.apps.insert(p.key.clone(), App { key: p.key.clone(), name, exe, aumid, lnk: None });
         }
@@ -426,8 +425,7 @@ fn scan(app: &AppHandle) {
         if !st.apps.contains_key(&key) {
             let (name, icon) = describe(aumid.as_deref(), &exe);
             if let Some((w, hgt, rgba)) = icon {
-                st.icons.insert(key.clone(), super::rgba_json(w, hgt, &rgba));
-                icons_changed = true;
+                fresh.insert(key.clone(), super::rgba_json(w, hgt, &rgba));
             }
             st.apps.insert(key.clone(), App { key: key.clone(), name, exe: exe.clone(), aumid: aumid.clone(), lnk: None });
         }
@@ -480,10 +478,10 @@ fn scan(app: &AppHandle) {
             json!({ "hwnd": id, "title": title, "app": key, "active": active, "minimized": minimized, "monitor": monitor, "z": z })
         })
         .collect();
-    if icons_changed {
-        publish(app, "taskIcons", Value::Object(st.icons.clone()));
-    }
     drop(st);
+    if !fresh.is_empty() {
+        super::publish_entries(app, "taskIcons", fresh);
+    }
     publish(app, "tasks", json!({ "apps": apps, "windows": list }));
 }
 
