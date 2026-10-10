@@ -19,6 +19,14 @@ public static class KeySim {
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool f);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  // Windows only lets the app in front hand the foreground over: borrow its input queue.
+  public static void Activate(IntPtr w) {
+    uint pid; uint front = GetWindowThreadProcessId(GetForegroundWindow(), out pid), me = GetCurrentThreadId();
+    AttachThreadInput(me, front, true); SetForegroundWindow(w); AttachThreadInput(me, front, false);
+  }
   public static IntPtr Mark = IntPtr.Zero;
   public static void Combo(ushort[] vks) {
     var list = new System.Collections.Generic.List<INPUT>();
@@ -45,8 +53,17 @@ public static class KeySim {
 }
 "@
 if ($front) {
-  $p = Get-Process $front -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-  if ($p) { (New-Object -ComObject WScript.Shell).AppActivate($p.Id) | Out-Null; Start-Sleep -Milliseconds 400 }
+  # A window handle (number) or a program name. Keys only go out once it's really
+  # in front: otherwise they'd land in whatever is (e.g. the terminal running this).
+  $target = if ($front -match '^\d+$') { [IntPtr][long]$front } else {
+    $p = Get-Process $front -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    if ($p) { $p.MainWindowHandle } else { [IntPtr]::Zero }
+  }
+  if ($target -ne [IntPtr]::Zero) { [KeySim]::Activate($target); Start-Sleep -Milliseconds 400 }
+  if ($target -eq [IntPtr]::Zero -or [KeySim]::ForegroundHandle() -ne $target) {
+    "couldn't bring '$front' to the front: no keys sent ($([KeySim]::Front()))"
+    exit 1
+  }
 }
 if ($physical) { [KeySim]::Mark = [IntPtr]0x534E0200 }
 "before: $([KeySim]::Front())"

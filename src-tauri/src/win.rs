@@ -28,7 +28,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RWIN, VK_SPACE,
 };
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, SetWindowSubclass, SHQueryUserNotificationState, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+    DefSubclassProc, SetWindowSubclass, SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, EnumWindows, GetWindowTextLengthW, IsIconic, IsWindowVisible, ASFW_ANY,
@@ -417,27 +417,29 @@ pub fn fullscreen_monitor(ours: &[isize]) -> Option<(RECT, String)> {
         }
         let mr = mi.rcMonitor;
 
-        // This asks Explorer; poll it gently (the rect check below is local).
-        static LAST: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
-        let exclusive = {
+        // Windows' own view (what hides its taskbar): this asks Explorer, so poll it
+        // gently (the rect check below is local).
+        static LAST: std::sync::Mutex<Option<(std::time::Instant, Option<QUERY_USER_NOTIFICATION_STATE>)>> =
+            std::sync::Mutex::new(None);
+        let state = {
             let mut last = LAST.lock().unwrap();
             match *last {
-                Some((at, v)) if at.elapsed() < std::time::Duration::from_secs(2) => v,
+                Some((at, s)) if at.elapsed() < std::time::Duration::from_secs(1) => s,
                 _ => {
-                    let v = SHQueryUserNotificationState()
-                        .is_ok_and(|s| s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE);
-                    *last = Some((std::time::Instant::now(), v));
-                    v
+                    let s = SHQueryUserNotificationState().ok();
+                    *last = Some((std::time::Instant::now(), s));
+                    s
                 }
             }
         };
-        if exclusive {
+        if state == Some(QUNS_RUNNING_D3D_FULL_SCREEN) || state == Some(QUNS_PRESENTATION_MODE) {
             return Some((mr, format!("exclusive fullscreen / presentation ({class})")));
         }
 
-        // A maximized normal window can cover the monitor when the taskbar auto-hides;
-        // that is not fullscreen.
-        if IsZoomed(fg).as_bool() {
+        // A maximized normal window can cover the monitor when the taskbar is hidden;
+        // that is not fullscreen. Unless Windows says a fullscreen app is running
+        // (busy): a browser's fullscreen video stays "maximized" (Firefox / Zen).
+        if IsZoomed(fg).as_bool() && state != Some(QUNS_BUSY) {
             return None;
         }
         let style = GetWindowLongW(fg, GWL_STYLE) as u32;
