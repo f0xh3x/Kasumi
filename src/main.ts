@@ -709,6 +709,11 @@ class Overlay {
   }
 
   /** The notch that grows into the OSD pill. */
+  /** The corner a notch drop hugs ("left" / "right"), null for the others. */
+  private notchSide(d: Drop): "left" | "right" | null {
+    return this.layout?.notches.find((n) => d.key === `notch:${n.id}`)?.edge ?? null;
+  }
+
   private osdDrop(): Drop | undefined {
     const L = this.layout;
     if (!L) return undefined;
@@ -896,11 +901,14 @@ class Overlay {
         height *= s;
       }
       if (d === od && o > 0) {
-        // Grow around the notch's center.
-        const cx = x + d.width / 2;
+        // Grow from the notch's side: a corner notch keeps its outer edge (so the
+        // pill stays on screen), the others their center.
+        const side = this.notchSide(d);
+        const from = x;
         width = d.width + ((this.osdSize?.w ?? L.osd.width) - d.width) * o;
         height = d.height + ((this.osdSize?.h ?? L.osd.height) - d.height) * o;
-        x = cx - width / 2;
+        x = side === "left" ? from : side === "right" ? from + d.width - width : from + d.width / 2 - width / 2;
+        x = Math.max(0, Math.min(x, L.width - width));
       }
       return {
         x,
@@ -972,6 +980,10 @@ class Overlay {
         this.peekEl.style.visibility = k > 0.01 ? "visible" : "hidden";
       }
       if (d === od) {
+        // Content lines up with the side the pill grows from.
+        const side = this.notchSide(d);
+        this.osdEl.classList.toggle("from-left", side === "left");
+        this.osdEl.classList.toggle("from-right", side === "right");
         const inner = (this.osdSize?.w ?? L.osd.width) - 2 * L.geometry.notchCornerRadius - 8;
         this.osdEl.style.width = `${inner}px`;
         this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${(away * row) / 2}px) translateY(${-away * 50}%)`;

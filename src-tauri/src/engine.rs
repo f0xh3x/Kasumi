@@ -291,11 +291,11 @@ pub fn monitor_matches(matcher: &str, m: &Monitor, index: usize) -> bool {
 /// keyboard peek at the language widget). Hidden overlays (fullscreen) don't
 /// count, so nothing pops over a fullscreen app.
 pub fn osd_targets(app: &AppHandle, kind: &str) -> Vec<(String, Option<String>)> {
-    let (screen, spot) = {
+    let (screen, spot, default_spot) = {
         let cfg = app.state::<SharedConfig>();
         let cfg = cfg.read().unwrap();
         let (screen, spot) = cfg.osd.place(kind);
-        (screen.trim().to_string(), spot.trim().to_lowercase())
+        (screen.trim().to_string(), spot.trim().to_lowercase(), cfg.osd.spot.trim().to_lowercase())
     };
     let cursor = win::cursor_pos();
     let state = app.state::<SharedState>();
@@ -316,7 +316,9 @@ pub fn osd_targets(app: &AppHandle, kind: &str) -> Vec<(String, Option<String>)>
         "others" => monitors.iter().filter(|m| !m.primary).copied().collect(),
         _ => monitors.iter().enumerate().filter(|(i, m)| monitor_matches(&screen, m, *i)).map(|(_, m)| *m).collect(),
     };
-    let (edge, side) = spot.split_once('-').unwrap_or(("top", "center"));
+    // "widget" falls back to the default spot where no bar shows the language widget.
+    let notch_spot = if spot == "widget" { default_spot.as_str() } else { spot.as_str() };
+    let (edge, side) = notch_spot.split_once('-').unwrap_or(("top", "center"));
     let want = match side {
         "left" => Anchor::Left,
         "right" => Anchor::Right,
@@ -334,8 +336,8 @@ pub fn osd_targets(app: &AppHandle, kind: &str) -> Vec<(String, Option<String>)>
             };
             if let Some((label, _)) = here.iter().find(|(_, o)| shows(o)) {
                 out.push(((*label).clone(), None));
+                continue;
             }
-            continue;
         }
         // The bar on that edge (or whichever this monitor has), then the notch on that side.
         let Some((label, o)) = here.iter().find(|(_, o)| (o.edge == Edge::Bottom) == (edge == "bottom")).or_else(|| here.first()) else {

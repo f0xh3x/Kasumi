@@ -704,6 +704,8 @@ html.edge-bottom .launcher-power { padding: 0 4px 6px; margin: 0 0 4px; border-t
 .note-action:hover { color: var(--fg); background: rgba(255, 255, 255, 0.1); }
 /* A new notification popped out of the OSD notch ([osd] notification_style). */
 .osd.note { gap: 8px; justify-content: center; }
+.osd.note.from-left { justify-content: flex-start; }
+.osd.note.from-right { justify-content: flex-end; }
 .osd-note-icon { width: 18px; height: 18px; flex: none; display: flex; align-items: center; justify-content: center; }
 .osd-note-icon img { width: 18px; height: 18px; object-fit: contain; }
 .osd-note-app { flex: none; font-weight: 600; white-space: nowrap; }
