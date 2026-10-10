@@ -6,7 +6,7 @@ import { initData } from "./data";
 import { computeFrame, lerp, mirrorPath, type Bump } from "./geometry";
 import { Spring } from "./spring";
 import type { Layout, NotchLayout, Rect } from "./types";
-import { createPanel, createWidget, g, languageCode, panelFor, widgetType, type Widget } from "./widgets";
+import { appIcon, createPanel, createWidget, g, languageCode, panelFor, widgetType, type Widget } from "./widgets";
 import { launcherSetOpen } from "./widgets/launcher";
 
 const svg = document.getElementById("shape") as unknown as SVGSVGElement;
@@ -96,6 +96,9 @@ class Overlay {
   private osdIcon = document.createElement("span");
   private osdFill = div("osd-fill");
   private osdValue = document.createElement("span");
+  private osdTrack = div("osd-track");
+  /** A notification's pill size while one is out (null: the level pill's, [osd] width / height). */
+  private osdSize: { w: number; h: number } | null = null;
 
   // Keyboard-layout peek: a small notch pops out at the language widget.
   private peek = new Spring(0, 0, 420, 32);
@@ -522,10 +525,11 @@ class Overlay {
     // OSD content, drawn over the OSD notch (clipped by the shape like everything else).
     this.osdIcon.className = "icon";
     this.osdValue.className = "osd-value";
-    const track = div("osd-track");
-    track.append(this.osdFill);
+    this.osdTrack = div("osd-track");
+    this.osdTrack.append(this.osdFill);
+    this.osdSize = null;
     this.osdEl = div("osd");
-    this.osdEl.append(this.osdIcon, track, this.osdValue);
+    this.osdEl.append(this.osdIcon, this.osdTrack, this.osdValue);
     content.append(this.osdEl);
   }
 
@@ -718,6 +722,12 @@ class Overlay {
   showOsd(e: { kind: "volume" | "brightness" | "keyboard" | "caps"; level: number; muted: boolean; text?: string }): void {
     const L = this.layout;
     if (!L || !this.osdDrop()) return;
+    // After a notification: the level pill's own content and size again.
+    if (this.osdSize) {
+      this.osdSize = null;
+      this.osdEl.className = "osd";
+      this.osdEl.replaceChildren(this.osdIcon, this.osdTrack, this.osdValue);
+    }
     const pct = Math.round(e.level * 100);
     let glyph = 0xe706; // Brightness
     if (e.kind === "keyboard" || e.kind === "caps") glyph = 0xe765;
@@ -735,6 +745,55 @@ class Overlay {
       this.osd.target = 0;
       this.kick();
     }, L.osd.durationMs);
+    this.kick();
+  }
+
+  /**
+   * A new notification out of the OSD notch ([osd] notifications): its app's icon
+   * and name with the title and text on one line ("line"), the title over the
+   * text ("two"), or just icon and app ("compact"), for notification_ms.
+   */
+  showNotification(n: { app: string; aumid: string; title: string; body: string }): void {
+    const L = this.layout;
+    if (!L || !this.osdDrop()) return;
+    const style = L.osd.notificationStyle === "two" || L.osd.notificationStyle === "compact" ? L.osd.notificationStyle : "line";
+    const pic = div("osd-note-icon");
+    const bell = document.createElement("span");
+    bell.className = "icon";
+    bell.textContent = g(0xea8f);
+    pic.append(bell);
+    appIcon(n.aumid).then((url) => {
+      if (!url) return;
+      const img = document.createElement("img");
+      img.src = url;
+      img.draggable = false;
+      pic.replaceChildren(img);
+    });
+    const text = (cls: string, t: string) => {
+      const d = div(cls);
+      d.textContent = t;
+      return d;
+    };
+    let parts: HTMLElement[];
+    if (style === "compact") {
+      parts = [pic, text("osd-note-app", n.app)];
+    } else if (style === "two") {
+      const lines = div("osd-note-lines");
+      lines.append(text("osd-note-head", [n.app, n.title].filter(Boolean).join(" · ")), text("osd-note-text", n.body || n.title));
+      parts = [pic, lines];
+    } else {
+      parts = [pic, text("osd-note-app", n.app), text("osd-note-text", [n.title, n.body].filter(Boolean).join(" — "))];
+    }
+    this.osdEl.className = `osd note note-${style}`;
+    this.osdEl.replaceChildren(...parts);
+    this.osdSize =
+      style === "compact" ? { w: 200, h: L.osd.height } : { w: Math.max(L.osd.width, 380), h: style === "two" ? L.osd.height + 20 : L.osd.height };
+    this.osd.target = 1;
+    clearTimeout(this.osdTimer);
+    this.osdTimer = window.setTimeout(() => {
+      this.osd.target = 0;
+      this.kick();
+    }, L.osd.notificationMs || 5000);
     this.kick();
   }
 
@@ -821,8 +880,8 @@ class Overlay {
       if (d === od && o > 0) {
         // Grow around the notch's center.
         const cx = x + d.width / 2;
-        width = d.width + (L.osd.width - d.width) * o;
-        height = d.height + (L.osd.height - d.height) * o;
+        width = d.width + ((this.osdSize?.w ?? L.osd.width) - d.width) * o;
+        height = d.height + ((this.osdSize?.h ?? L.osd.height) - d.height) * o;
         x = cx - width / 2;
       }
       return {
@@ -895,7 +954,7 @@ class Overlay {
         this.peekEl.style.visibility = k > 0.01 ? "visible" : "hidden";
       }
       if (d === od) {
-        const inner = L.osd.width - 2 * L.geometry.notchCornerRadius - 8;
+        const inner = (this.osdSize?.w ?? L.osd.width) - 2 * L.geometry.notchCornerRadius - 8;
         this.osdEl.style.width = `${inner}px`;
         this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${(away * row) / 2}px) translateY(${-away * 50}%)`;
         this.osdEl.style.opacity = String(clamp01(o * 1.8 - 0.5));
@@ -1003,6 +1062,7 @@ async function main(): Promise<void> {
   await win.listen<{ kind: "volume" | "brightness" | "caps"; level: number; muted: boolean; text?: string }>("notch://osd", (e) =>
     overlay.showOsd(e.payload),
   );
+  await win.listen<{ app: string; aumid: string; title: string; body: string }>("notch://notification", (e) => overlay.showNotification(e.payload));
   await initData().catch((e) => report(`data: ${e}`));
   overlay.apply(await invoke<Layout>("get_layout"));
 }

@@ -138,7 +138,7 @@ interface DataMap {
   disks: { id: string; label: string; total: number; free: number }[] | null;
   privacy: { mic: string[]; camera: string[]; location: string[] } | null;
   claude: ClaudeUsage | null;
-  notifications: { count: number; unseen: number; items: { id: number; app: string; title: string; body: string; time: number }[] } | null;
+  notifications: { count: number; unseen: number; items: { id: number; app: string; aumid: string; title: string; body: string; time: number }[] } | null;
   clipboard: { id: number; time: number; kind: "text" | "image"; text?: string; bytes?: number; thumb?: { w: number; h: number; rgba: string } | null }[] | null;
 }
 

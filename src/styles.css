@@ -682,3 +682,32 @@ html.edge-bottom .launcher-power { padding: 0 4px 6px; margin: 0 0 4px; border-t
 .disk-item { display: flex; align-items: center; gap: 6px; }
 .disk-letter { color: var(--fg-dim); }
 .disk-text { font-variant-numeric: tabular-nums; }
+/* Notifications: the bell, the panel (app icon and name, when, title, text). */
+.widget.notifications { gap: 5px; cursor: pointer; }
+.widget.notifications.new .icon, .widget.notifications.new .note-count { color: var(--new, #4cc2ff); }
+.note-count { font-variant-numeric: tabular-nums; }
+.note-panel { display: flex; flex-direction: column; gap: 8px; width: 320px; }
+.note-list { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow-y: auto; }
+.note-row { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 9px; background: rgba(255, 255, 255, 0.05); }
+.note-row.clickable { cursor: pointer; }
+.note-row.clickable:hover { background: rgba(255, 255, 255, 0.1); }
+.note-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-dim); }
+.note-app { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-icon { width: 14px; height: 14px; flex: none; display: flex; align-items: center; justify-content: center; }
+.note-icon img { width: 14px; height: 14px; object-fit: contain; }
+.note-icon .icon { font-size: 11px; transform: none; }
+.note-title { font-weight: 600; }
+.note-body { color: rgba(255, 255, 255, 0.75); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+.note-empty { color: var(--fg-dim); }
+.note-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.note-action { font-size: 12px; color: var(--fg-dim); padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.note-action:hover { color: var(--fg); background: rgba(255, 255, 255, 0.1); }
+/* A new notification popped out of the OSD notch ([osd] notification_style). */
+.osd.note { gap: 8px; }
+.osd-note-icon { width: 18px; height: 18px; flex: none; display: flex; align-items: center; justify-content: center; }
+.osd-note-icon img { width: 18px; height: 18px; object-fit: contain; }
+.osd-note-app { flex: none; font-weight: 600; white-space: nowrap; }
+.osd-note-text { flex: 1; min-width: 0; color: rgba(255, 255, 255, 0.75); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.osd.note-compact .osd-note-app { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.osd-note-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.osd-note-head { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

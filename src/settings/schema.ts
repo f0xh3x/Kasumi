@@ -464,16 +464,16 @@ export const pages: Page[] = [
         title: "Notifications",
         collapsible: true,
         icon: 0xea8f,
-        help: "Windows' notifications. They can be read but not answered or dismissed from here: Notification Center does that. Windows keeps none while notifications are switched off in its settings.",
+        help: "Windows' notifications: the bell opens a list of recent ones. Windows keeps none while notifications are switched off in its settings (Do not disturb is fine: it only stops Windows' own pop-ups). New ones can also pop out of the notch: OSD page.",
         fields: [
           {
             kind: "select",
-            label: "Click shows",
-            path: ["widgets", "notifications", "mode"],
-            default: "list",
+            label: "Clicking a notification",
+            path: ["widgets", "notifications", "click"],
+            default: "open",
             options: [
-              { value: "list", label: "A list of recent notifications" },
-              { value: "count", label: "Notification Center (just a count here)" },
+              { value: "open", label: "Opens the app that sent it" },
+              { value: "nothing", label: "Does nothing" },
             ],
           },
           { kind: "toggle", label: "Count", help: "How many notifications there are, beside the bell.", path: ["widgets", "notifications", "count"], default: true },
@@ -924,6 +924,34 @@ export const pages: Page[] = [
             default: true,
           },
           { kind: "slider", label: "Volume step", path: ["osd", "volume_step"], default: 2, min: 1, max: 10, step: 1, unit: "%" },
+        ],
+      },
+      {
+        title: "Notifications",
+        help: "New Windows notifications pop out of the OSD notch, on the monitor under the cursor (not over fullscreen apps). Windows keeps them only while its notifications are on: turn on Do not disturb so it doesn't also show its own.",
+        fields: [
+          { kind: "toggle", label: "Show new notifications", path: ["osd", "notifications"], default: false },
+          {
+            kind: "select",
+            label: "Look",
+            path: (cfg) => (cfg.osd?.notifications === true ? ["osd", "notification_style"] : null),
+            default: "line",
+            options: [
+              { value: "line", label: "One line: app, title and text" },
+              { value: "two", label: "Two lines: title over the text" },
+              { value: "compact", label: "Just the app's icon and name" },
+            ],
+          },
+          {
+            kind: "slider",
+            label: "Shown for",
+            path: (cfg) => (cfg.osd?.notifications === true ? ["osd", "notification_ms"] : null),
+            default: 5000,
+            min: 2000,
+            max: 15000,
+            step: 500,
+            unit: "ms",
+          },
         ],
       },
       {

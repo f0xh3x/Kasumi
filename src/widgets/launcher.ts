@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { POWER_ACTIONS } from "../power-actions";
-import { confirmClick, iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
+import { appIconNow, appIcon, confirmClick, g, el, icon, type PanelContext, type Widget } from "./index";
 
 /**
  * The app launcher. The widget is a search icon that morphs into a text field
@@ -28,8 +28,6 @@ const S = {
   fields: new Set<HTMLInputElement>(),
 };
 const notify = () => S.listeners.forEach((f) => f());
-const icons = new Map<string, string>();
-const pending = new Set<string>();
 
 /** Higher is better; -1 = no match. */
 function score(name: string, q: string): number {
@@ -237,17 +235,9 @@ export function launcherPanel(opts: Record<string, unknown>, ctx: PanelContext):
       ...S.results.map((a, i) => {
         const img = document.createElement("img");
         img.draggable = false;
-        const url = icons.get(a.id);
+        const url = appIconNow(a.id);
         if (url) img.src = url;
-        else if (!pending.has(a.id)) {
-          pending.add(a.id);
-          invoke<{ w: number; h: number; rgba: string }>("launcher_icon", { id: a.id })
-            .then((i) => {
-              icons.set(a.id, iconUrl(i));
-              notify();
-            })
-            .catch(() => {});
-        }
+        else if (url === undefined) appIcon(a.id).then((u) => u && notify());
         const row = el(`launcher-row${i === S.selected ? " selected" : ""}`, img, el("launcher-name", a.name));
         row.addEventListener("mousemove", () => {
           if (S.selected !== i) {

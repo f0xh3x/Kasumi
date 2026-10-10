@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../data";
-import { iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
+import { appIcon, iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
 
 
 /** The window in front: its title, its app's name, or both. */
@@ -157,26 +157,28 @@ const ago = (unix: number) => {
  * mode "list": its panel lists them; "count": a click opens Notification Center.
  */
 export function notifications(opts: Record<string, unknown>): Widget {
-  const listMode = opts.mode !== "count";
   const count = el("note-count");
   const bell = icon(g(0xea8f));
   const root = el("widget notifications clickable", bell, ...(opts.count !== false ? [count] : []));
   if (typeof opts.color === "string") root.style.setProperty("--new", opts.color);
-  root.addEventListener("click", () => {
-    invoke("notifications_seen").catch(console.error);
-    if (!listMode) invoke("notifications_center").catch(console.error);
-  });
+  // A click opens the panel (the overlay does that); what's there isn't new any more.
+  root.addEventListener("click", () => invoke("notifications_seen").catch(console.error));
   const off = subscribe("notifications", (n) => {
     const total = n?.count ?? 0;
     count.textContent = total ? String(total) : "";
     root.classList.toggle("new", (n?.unseen ?? 0) > 0);
     root.title = total ? `${total} notification${total === 1 ? "" : "s"}` : "No notifications";
   });
-  // "count" mode handles its own click (no panel).
-  return { el: root, dispose: off, ...(listMode ? {} : { panelTrigger: "event" as const }) };
+  return { el: root, dispose: off };
 }
 
-export function notificationsPanel(_opts: Record<string, unknown>, ctx: PanelContext): Widget {
+/**
+ * Recent notifications, in the app's style: per notification its app (icon and
+ * name), when, title and text. A click opens the app that sent it ([widgets.
+ * notifications] click = "open", default) or does nothing ("nothing").
+ */
+export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
+  const opens = opts.click !== "nothing";
   const list = el("note-list");
   const action = (label: string, run: () => void) => {
     const b = el("note-action", label);
@@ -189,23 +191,33 @@ export function notificationsPanel(_opts: Record<string, unknown>, ctx: PanelCon
   };
   const actions = el(
     "note-actions",
-    action("Notification Center", () => invoke("notifications_center").catch(console.error)),
-    action("Do not disturb…", () => invoke("run_action", { action: "open", target: "ms-settings:notifications" }).catch(console.error)),
+    action("Notification settings", () => invoke("run_action", { action: "open", target: "ms-settings:notifications" }).catch(console.error)),
   );
   const root = el("note-panel", list, actions);
   const off = subscribe("notifications", (n) => {
     const rows = (n?.items ?? []).map((it) => {
+      const pic = el("note-icon", icon(g(0xea8f)));
+      appIcon(it.aumid).then((url) => {
+        if (!url) return;
+        const img = document.createElement("img");
+        img.src = url;
+        img.draggable = false;
+        pic.replaceChildren(img);
+      });
       const row = el(
-        "note-row",
-        el("note-head", el("note-app", it.app), el("note-time", ago(it.time))),
+        `note-row${opens ? " clickable" : ""}`,
+        el("note-head", pic, el("note-app", it.app), el("note-time", ago(it.time))),
         ...(it.title ? [el("note-title", it.title)] : []),
         ...(it.body ? [el("note-body", it.body)] : []),
       );
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        ctx.close();
-        invoke("notifications_center").catch(console.error);
-      });
+      if (opens && it.aumid) {
+        row.title = `Open ${it.app}`;
+        row.addEventListener("click", (e) => {
+          e.stopPropagation();
+          ctx.close();
+          invoke("launcher_launch", { id: it.aumid }).catch(console.error);
+        });
+      }
       return row;
     });
     list.replaceChildren(...(rows.length ? rows : [el("note-empty", "No notifications.")]));

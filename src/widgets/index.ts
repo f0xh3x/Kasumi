@@ -228,3 +228,21 @@ export function formatBytes(bytes: number): string {
   }
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
+
+/** Apps' icons by AppUserModelID (or path, as shell:AppsFolder knows them), as
+ *  PNG data URLs; null when there's none. Asked for once each. */
+const appIcons = new Map<string, Promise<string | null>>();
+const appIconsDone = new Map<string, string | null>();
+export function appIcon(id: string): Promise<string | null> {
+  let p = appIcons.get(id);
+  if (!p) {
+    p = invoke<{ w: number; h: number; rgba: string }>("launcher_icon", { id })
+      .then((i) => iconUrl(i))
+      .catch(() => null)
+      .then((url) => (appIconsDone.set(id, url), url));
+    appIcons.set(id, p);
+  }
+  return p;
+}
+/** The icon if it's already there (undefined: not asked for or not back yet). */
+export const appIconNow = (id: string): string | null | undefined => appIconsDone.get(id);

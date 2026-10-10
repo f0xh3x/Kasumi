@@ -61,6 +61,10 @@ export interface Osd {
   height: number;
   durationMs: number;
   keyboardWidth: number;
+  /** New notifications pop out of the notch, in this style, for this long. */
+  notifications: boolean;
+  notificationStyle: "line" | "two" | "compact";
+  notificationMs: number;
 }
 
 export interface Theme {

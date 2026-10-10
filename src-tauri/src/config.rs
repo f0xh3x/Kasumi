@@ -249,6 +249,14 @@ pub struct Osd {
     pub caps_lock: bool,
     /// The surface (bar) whose notch grows into the pill: "top" or "bottom".
     pub surface: String,
+    /// Pop new notifications out of the notch (Windows' own store, see
+    /// providers/notifications.rs).
+    pub notifications: bool,
+    /// "line" (app, title, text on one line), "two" (title over text) or
+    /// "compact" (icon and app only).
+    pub notification_style: String,
+    /// How long a notification stays out.
+    pub notification_ms: u64,
 }
 
 impl Default for Osd {
@@ -266,6 +274,9 @@ impl Default for Osd {
             keyboard_width: 120.0,
             caps_lock: false,
             surface: "top".into(),
+            notifications: false,
+            notification_style: "line".into(),
+            notification_ms: 5000,
         }
     }
 }

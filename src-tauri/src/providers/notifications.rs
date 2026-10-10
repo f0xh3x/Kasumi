@@ -1,8 +1,11 @@
-//! Notifications for the notifications widget, read from Windows' own store
+//! Notifications, read from Windows' own store
 //! (`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`, SQLite) through
-//! Windows' SQLite (winsqlite3.dll, loaded when needed). Read-only, and only while
-//! the widget is placed and the files changed. Apps outside the Store can't act on
-//! notifications, so this lists them; Notification Center does the rest.
+//! Windows' SQLite (winsqlite3.dll, loaded when needed). Read-only, when the store
+//! changes (a folder watch, not a poll), and only while the notifications widget is
+//! placed or new ones pop out of the notch ([osd] notifications): the widget gets
+//! the list ("notifications" data), the notch the new one (`notch://notification`).
+//! Windows only stores notifications while they're switched on; with Do not
+//! disturb on it shows none itself, which leaves showing them to us.
 
 use serde_json::{json, Value};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -66,6 +69,8 @@ impl Sqlite {
 pub struct Note {
     pub id: i64,
     pub app: String,
+    /// The app's AppUserModelID (its icon and how to start it: shell:AppsFolder).
+    pub aumid: String,
     pub title: String,
     pub body: String,
     /// Unix seconds.
@@ -113,6 +118,7 @@ pub fn read(path: &std::path::Path) -> Option<Vec<Note>> {
                 out.push(Note {
                     id,
                     app: app_name(&handler),
+                    aumid: handler.clone(),
                     title: texts.first().cloned().unwrap_or_default(),
                     body: texts.iter().skip(1).cloned().collect::<Vec<_>>().join("\n"),
                     // FILETIME (100 ns since 1601) -> unix seconds.
@@ -187,10 +193,34 @@ fn publish(app: &AppHandle, notes: &[Note]) {
     let seen = seen();
     let items: Vec<Value> = notes
         .iter()
-        .map(|n| json!({ "id": n.id, "app": n.app, "title": n.title, "body": n.body, "time": n.time }))
+        .map(|n| json!({ "id": n.id, "app": n.app, "aumid": n.aumid, "title": n.title, "body": n.body, "time": n.time }))
         .collect();
     let unseen = notes.iter().filter(|n| n.time > seen).count();
     super::publish(app, "notifications", json!({ "count": notes.len(), "unseen": unseen, "items": items }));
+}
+
+/// Sends `()` whenever something in the store's folder changes.
+fn watch(dir: &std::path::Path, tx: std::sync::mpsc::Sender<()>) -> Option<notify::RecommendedWatcher> {
+    use notify::Watcher;
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if res.is_ok() {
+            let _ = tx.send(());
+        }
+    })
+    .ok()?;
+    watcher.watch(dir, notify::RecursiveMode::NonRecursive).ok()?;
+    Some(watcher)
+}
+
+/// A new notification out of the OSD notch, on the monitor under the cursor.
+fn pop(app: &AppHandle, n: &Note) {
+    use tauri::{Emitter, EventTarget};
+    let Some(label) = crate::engine::osd_target(app) else { return };
+    let _ = app.emit_to(
+        EventTarget::WebviewWindow { label },
+        "notch://notification",
+        json!({ "app": n.app, "aumid": n.aumid, "title": n.title, "body": n.body }),
+    );
 }
 
 pub fn start(app: &AppHandle) {
@@ -199,24 +229,47 @@ pub fn start(app: &AppHandle) {
         .name("statusnotch-notifications".into())
         .spawn(move || {
             let path = db_path();
-            let wal = path.with_extension("db-wal");
-            let mut last: Option<(Option<SystemTime>, Option<SystemTime>)> = None;
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _watcher = path.parent().and_then(|dir| watch(dir, tx));
+            // The newest notification already handled: only ones after it pop out
+            // (None: not read yet, so whatever is there at the start is old).
+            let mut newest: Option<i64> = None;
+            let mut changed = true;
             loop {
-                if super::placed(&app, "notifications") {
-                    let stamp = (
-                        std::fs::metadata(&path).and_then(|m| m.modified()).ok(),
-                        std::fs::metadata(&wal).and_then(|m| m.modified()).ok(),
-                    );
-                    if last != Some(stamp) {
-                        last = Some(stamp);
-                        let notes = read(&path).unwrap_or_default();
-                        *LATEST.lock().unwrap() = notes.iter().map(|n| (n.id, n.time)).collect();
+                let list = super::placed(&app, "notifications");
+                let popping = {
+                    use tauri::Manager;
+                    let cfg = app.state::<super::SharedConfig>();
+                    let cfg = cfg.read().unwrap();
+                    cfg.osd.enabled && cfg.osd.notifications
+                };
+                if !list && !popping {
+                    newest = None;
+                    changed = true;
+                } else if changed {
+                    changed = false;
+                    let notes = read(&path).unwrap_or_default();
+                    *LATEST.lock().unwrap() = notes.iter().map(|n| (n.id, n.time)).collect();
+                    if list {
                         publish(&app, &notes);
                     }
-                } else {
-                    last = None;
+                    let top = notes.iter().map(|n| n.id).max();
+                    if let (Some(prev), true) = (newest, popping) {
+                        // The newest new one, if it just arrived (not an old one the store rewrote).
+                        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+                        if let Some(n) = notes.iter().filter(|n| n.id > prev && now - n.time < 60).max_by_key(|n| n.id) {
+                            pop(&app, n);
+                        }
+                    }
+                    newest = top.or(newest);
                 }
-                std::thread::sleep(Duration::from_secs(3));
+                // Wait for the store to change (writes come in bursts: settle first),
+                // re-checking now and then whether anything is wanted (settings).
+                if rx.recv_timeout(Duration::from_secs(3)).is_ok() {
+                    std::thread::sleep(Duration::from_millis(150));
+                    while rx.try_recv().is_ok() {}
+                    changed = true;
+                }
             }
         })
         .expect("spawn notifications thread");
@@ -230,19 +283,6 @@ pub async fn notifications_seen(app: AppHandle) -> Result<(), String> {
     let _ = std::fs::write(seen_file(), newest.to_string());
     let notes = read(&db_path()).unwrap_or_default();
     publish(&app, &notes);
-    Ok(())
-}
-
-/// Opens Windows' Notification Center (Win+N).
-#[tauri::command]
-pub async fn notifications_center() -> Result<(), String> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_LWIN};
-    unsafe {
-        keybd_event(VK_LWIN.0 as u8, 0, Default::default(), 0);
-        keybd_event(b'N', 0, Default::default(), 0);
-        keybd_event(b'N', 0, KEYEVENTF_KEYUP, 0);
-        keybd_event(VK_LWIN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
-    }
     Ok(())
 }
 
