@@ -15,7 +15,7 @@ npx tsc --noEmit
 npm run build 2>&1 | grep -E "error|built in"
 cd src-tauri
 if [[ "${1:-}" == "--test" ]]; then
-  cargo test --features tauri/custom-protocol 2>&1 | grep -E "test result|FAILED|panicked"
+  cargo test --features tauri/custom-protocol 2>&1 | grep -E -A6 "^error|test result|FAILED|panicked"
 fi
 cargo build --release --features tauri/custom-protocol 2>&1 | grep -E "^(warning|error)|Finished"
 
