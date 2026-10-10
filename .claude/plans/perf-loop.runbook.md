@@ -51,9 +51,17 @@ Stop and report when ANY of these is true:
 
 | Phase | Status | Commit | Before → after |
 |---|---|---|---|
-| 0 | pending | | |
-| 1 | pending | | |
-| 2 | pending | | |
-| 3 | pending | | |
-| 4 | pending | | |
-| 5 | pending | | |
+| 0 | done (idle only; hover capture needs the mouse) | 6830497 | idle: 1.31 CPU-s / 20 s; 6 WebView2 221 MB, statusnotch 116 MB |
+| 1 | done, reviewed (2 findings fixed) | b1b6a57 | not yet measured (needs install) |
+| 2 | done, reviewed (flick latency: band widened to 200 px, 40 ms calm poll, side borders, zone sizes) | 609807f + follow-up | not yet measured (needs install) |
+| 3 | **dropped**: a ResizeObserver already exists; the 2 s check is the deliberate fix from 6e2ce6e | | |
+| 4 | partly: media timer gated. **Skipped** `mirrorPath` removal (path built by many string emitters in an untested file; regex runs only while a bottom dock animates) and event-driven battery/network (most work, least gain) | 35da19f | |
+| 5 | done, reviewed clean; CSS values verified in headless Edge | 85bc7ed | n/a (code clarity, not a measured gain) |
+
+## Left for the user (needs install / mouse)
+
+1. `tools/install.sh` (restarts the app), then repeat the idle sample.
+2. `tools/hover-capture.ps1 -monitor <n>` + `frames.py changes`: confirm hot corners / dock open as before (Phase 2).
+3. Look at a second monitor's widgets (tasks, quick, media): data must still arrive after moving a widget between monitors (Phase 1).
+4. Open settings and change a layout: widgets must keep showing data (Phase 1 resend).
+5. Possible follow-up: six `will-change` declarations remain on `.bar .slot .panel .osd .peek` (CLAUDE.md §4 bans them on content; they are structural, so untouched).

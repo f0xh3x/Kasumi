@@ -1260,8 +1260,9 @@ impl Engine {
     /// nothing opening, open or pinned, and the cursor nowhere near a surface's
     /// edge, so the next look can wait (`CALM_POLL_MS`).
     fn tick_hover(&mut self, now: Instant) -> (bool, bool) {
-        let Some((cx, cy)) = win::cursor_pos() else { return (false, false) };
+        let Some((cx, cy)) = win::cursor_pos() else { return (false, true) };
         let mut calm = true;
+        let multi = self.monitors.len() > 1;
         let t = &self.cfg.timing;
         let dwell = Duration::from_millis(t.dwell_ms);
         let grace = Duration::from_millis(t.grace_ms);
@@ -1316,8 +1317,14 @@ impl Engine {
                     Hover::Leave(t0) => Hover::Leave(t0),
                 } };
                 o.hover = next;
-                // Every trigger zone starts within this distance of the surface's edge.
-                let near = on_monitor && ly < NEAR_EDGE_PX.max(h.edge_size + 8.0);
+                // Every trigger zone lies within this distance of the surface's edge
+                // (the settings cap them far below it; a hand-edited config might not).
+                let tallest = o.layout.notches.iter().map(|n| n.height).fold(0.0, f64::max);
+                let reach = NEAR_EDGE_PX.max(h.edge_size.max(h.corner).max(tallest).max(t.edge_px) + 8.0);
+                // With several monitors the cursor can enter this one from its sides.
+                let side = (NEAR_EDGE_PX * m.scale).round() as i32;
+                let by_side = multi && on_monitor && (cx - m.left < side || m.right - 1 - cx < side);
+                let near = on_monitor && (ly < reach || by_side);
                 calm &= !always && !o.pinned && matches!(next, Hover::Idle) && !near;
 
                 let expanded = matches!(next, Hover::Open | Hover::Leave(_));
@@ -1367,10 +1374,12 @@ impl Engine {
 }
 
 /// How often the engine looks at the cursor while things are calm (ms; never
-/// faster than `[timing] poll_ms`): the cursor has to cross `NEAR_EDGE_PX` of a
-/// surface's edge before any hot zone, so the first fast look still comes in time.
-const CALM_POLL_MS: u64 = 50;
-const NEAR_EDGE_PX: f64 = 120.0;
+/// faster than `[timing] poll_ms`). The cursor has to cross `NEAR_EDGE_PX` of a
+/// surface's edge before any hot zone; a sample inside that band switches to the
+/// fast poll, which holds for flicks up to about NEAR_EDGE_PX / CALM_POLL_MS
+/// = 5000 px/s. Windows rounds sleeps up, so a calm look is ~45-60 ms apart.
+const CALM_POLL_MS: u64 = 40;
+const NEAR_EDGE_PX: f64 = 200.0;
 
 /// Widget settings as the bars get them: without the tasks pin list, which the
 /// widget gets with its data (so pinning or reordering doesn't rebuild the bar).
