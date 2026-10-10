@@ -538,3 +538,18 @@ body.maximized { border: 0; border-radius: 0; }
 .spot-top-right, .spot-bottom-right { right: 10px; }
 .spot-node.inherited.spot-top-left, .spot-node.inherited.spot-top-center, .spot-node.inherited.spot-top-right { border-top: 0; }
 .spot-node.inherited.spot-bottom-left, .spot-node.inherited.spot-bottom-center, .spot-node.inherited.spot-bottom-right { border-bottom: 0; }
+
+/* A how-to: numbered steps with a button (Windows setup for notifications). */
+.guide { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 6px; margin: 4px 0 8px; display: flex; flex-direction: column; gap: 10px; }
+.guide-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.guide-head .icon { font-size: 14px; color: var(--dim); }
+.guide-step { display: flex; gap: 10px; }
+.guide-num { flex: none; width: 20px; height: 20px; border-radius: 10px; background: var(--raised); color: var(--dim); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.guide-num:empty { background: none; }
+.guide-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.guide-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.guide-help { color: var(--faint); font-size: 12px; }
+.guide-status { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 9px; background: rgba(77, 255, 154, 0.15); color: #4dff9a; }
+.guide-status.bad { background: rgba(255, 159, 67, 0.18); color: #ff9f43; }
+.guide .button-row { padding-top: 2px; }
+.guide .button { display: flex; align-items: center; gap: 8px; }

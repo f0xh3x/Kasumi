@@ -588,6 +588,20 @@ pub fn reg_string(root: windows::Win32::System::Registry::HKEY, path: &str, name
     Some(String::from_utf16_lossy(&buf[..(len as usize / 2).saturating_sub(1)]))
 }
 
+/// A DWORD value from the registry.
+pub fn reg_dword(root: windows::Win32::System::Registry::HKEY, path: &str, name: &str) -> Option<u32> {
+    use windows::Win32::System::Registry::RRF_RT_REG_DWORD;
+    let (path, name) = (wide(path), wide(name));
+    let mut value = 0u32;
+    let mut len = 4u32;
+    unsafe {
+        RegGetValueW(root, PCWSTR(path.as_ptr()), PCWSTR(name.as_ptr()), RRF_RT_REG_DWORD, None, Some((&mut value as *mut u32).cast()), Some(&mut len))
+            .ok()
+            .ok()?;
+    }
+    Some(value)
+}
+
 /// The signed-in user's SID ("S-1-5-21-..."), e.g. for per-user registry keys.
 pub fn user_sid() -> Option<String> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};

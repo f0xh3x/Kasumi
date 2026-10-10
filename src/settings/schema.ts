@@ -973,8 +973,9 @@ export const pages: Page[] = [
         collapsible: true,
         group: "Pop-ups",
         icon: 0xea8f,
-        help: "New Windows notifications (not over fullscreen apps). Windows keeps them only while its notifications are on: turn on Do not disturb so it doesn't also show its own.",
+        help: "New Windows notifications (not over fullscreen apps).",
         fields: [
+          { kind: "custom", editor: "windowsGuide" },
           { kind: "toggle", label: "Show new notifications", path: ["osd", "notifications"], default: false },
           {
             kind: "select",

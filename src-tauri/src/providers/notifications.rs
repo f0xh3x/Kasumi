@@ -310,6 +310,15 @@ pub fn start(app: &AppHandle) {
         .expect("spawn notifications thread");
 }
 
+/// Whether Windows' notifications are on (Settings > System > Notifications):
+/// while they're off Windows keeps none, so there's nothing to show. For the
+/// settings guide.
+#[tauri::command]
+pub async fn notifications_windows_on() -> bool {
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+    crate::win::reg_dword(HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled") != Some(0)
+}
+
 /// Dismisses notifications from StatusNotch's list (`ids`; none: all of them).
 /// Windows' own notification center isn't touched.
 #[tauri::command]

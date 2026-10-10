@@ -1321,6 +1321,43 @@ function presets(ctx: EditorCtx): HTMLElement {
 }
 
 /** Quick settings tiles: the chosen ones in order (move, remove), the rest to add. */
+// --- Windows setup for notifications --------------------------------------------------
+
+/**
+ * How to set Windows up so StatusNotch shows the notifications and Windows
+ * doesn't (it has to keep storing them: that's where they're read from).
+ */
+const windowsGuide: Editor = () => {
+  const status = $("span", "guide-status", "…");
+  invoke<boolean>("notifications_windows_on")
+    .then((on) => {
+      status.textContent = on ? "On" : "Off: turn on";
+      status.classList.toggle("bad", !on);
+    })
+    .catch(() => status.remove());
+  const step = (n: string, title: string, text: string, ...extra: HTMLElement[]) =>
+    $("div", "guide-step", $("span", "guide-num", n), $("div", "guide-text", $("div", "guide-title", title, ...extra), $("div", "guide-help", text)));
+  const open = $("button", "button", glyph(0xe713), "Open Windows notification settings");
+  open.addEventListener("click", () => invoke("run_action", { action: "open", target: "ms-settings:notifications" }).catch(console.error));
+  return $(
+    "div",
+    "guide",
+    $("div", "guide-head", glyph(0xe946), $("span", "", "Set up Windows for this")),
+    step("1", "Notifications on", "StatusNotch reads notifications from Windows. While they're off, Windows keeps none, so there's nothing to show.", status),
+    step(
+      "2",
+      "Do not disturb on",
+      "Windows keeps every notification but shows no pop-ups of its own; StatusNotch shows them instead. Apps on its priority list (calls, reminders, alarms) still get Windows' pop-ups.",
+    ),
+    step(
+      "",
+      "Or: banners off, per app",
+      "Instead of Do not disturb: click an app on that page and switch off \"Show notification banners\". Leave \"Show notifications in notification center\" on.",
+    ),
+    $("div", "button-row", open),
+  );
+};
+
 // --- OSD: where each pop-up appears ------------------------------------------------------
 
 const OSD_SPOTS: [string, string][] = [
@@ -1546,6 +1583,7 @@ export const editors: Record<string, Editor> = {
   launcherPower,
   diskPicker,
   osdPlace,
+  windowsGuide,
   presets,
   surfaceManager,
   surfaceStyle,
