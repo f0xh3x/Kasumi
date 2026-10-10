@@ -122,8 +122,10 @@ export function mediaPanel(_opts: Record<string, unknown>, _ctx: PanelContext): 
     playPause.classList.toggle("disabled", !m.canPlayPause);
     paint();
   });
+  // The position moves between the player's updates; nobody sees it while the panel is shut.
   const timer = window.setInterval(() => {
-    if (media?.playing && dragging === null) paint();
+    const panel = root.closest<HTMLElement>(".panel");
+    if (media?.playing && dragging === null && panel && panel.style.visibility !== "hidden") paint();
   }, 500);
 
   return {
