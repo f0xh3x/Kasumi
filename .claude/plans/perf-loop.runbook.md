@@ -58,10 +58,33 @@ Stop and report when ANY of these is true:
 | 4 | partly: media timer gated. **Skipped** `mirrorPath` removal (path built by many string emitters in an untested file; regex runs only while a bottom dock animates) and event-driven battery/network (most work, least gain) | 35da19f | |
 | 5 | done, reviewed clean; CSS values verified in headless Edge | 85bc7ed | n/a (code clarity, not a measured gain) |
 
-## Left for the user (needs install / mouse)
+## Measured (2026-10-10, installed and checked on the real machine)
 
-1. `tools/install.sh` (restarts the app), then repeat the idle sample.
-2. `tools/hover-capture.ps1 -monitor <n>` + `frames.py changes`: confirm hot corners / dock open as before (Phase 2).
-3. Look at a second monitor's widgets (tasks, quick, media): data must still arrive after moving a widget between monitors (Phase 1).
-4. Open settings and change a layout: widgets must keep showing data (Phase 1 resend).
-5. Possible follow-up: six `will-change` declarations remain on `.bar .slot .panel .osd .peek` (CLAUDE.md §4 bans them on content; they are structural, so untouched).
+- **Windows:** six overlays 345 / 709 px, no page errors in the log.
+- **Hover capture, 60 fps, G27Q dock:** old and new builds open and close in the same
+  5 frames each, same x-ranges, same latency (first change at frame 2).
+- **Screenshots:** bottom docks pixel-identical on all three monitors; top bars differ only
+  by the clock, the scrolling media title and the window behind. Task icon and battery
+  data show in the opened dock (taskIcons deltas and system data arrive).
+- **Idle CPU, interleaved A/B (old exe then new exe, 2 rounds x 3 runs, cursor parked,
+  main process + all WebView2 counted):**
+  old 0.83 CPU-s / 20 s (main 0.25, webview2 0.58), new 0.92 (main 0.30, webview2 0.62).
+  **No measurable improvement at idle**; the difference is within noise. The whole app is
+  ~4 % of one core. Earlier unpaired samples (1.3-2.7) were the user's other apps.
+- **Back-off verified with a temporary tick counter:** mid-screen 125 ticks / 5 s (40 ms),
+  60 px from the top edge ~306 ticks / 5 s (16 ms). It engages, but a tick is so cheap
+  that 60 % fewer of them does not show in CPU: the engine loop was not the cost.
+- **Not tested:** widgets moving between monitors / a layout change while running (needs a
+  config.toml edit; the rule is to ask first).
+- **Measuring trap:** `StatusNotch.old.exe` has process name `StatusNotch.old`; filtering
+  on `statusnotch.exe` silently leaves the old main process out of the numbers.
+
+## Still open
+
+1. Widgets moving between monitors / changing a layout while running (Phase 1 `resend`):
+   needs a temporary config.toml change; do it with the user's OK.
+2. Possible follow-up: six `will-change` declarations remain on `.bar .slot .panel .osd .peek`
+   (CLAUDE.md section 4 bans them on content; these are structural, so untouched).
+3. If idle cost matters: it is ~0.85 CPU-s / 20 s in total, ~70 % in the six WebView2
+   processes. Next suspects are per-second page work (clock text, media scroll), not the
+   engine or the data flow. Profile a page (DevTools Performance) before changing anything.
