@@ -225,13 +225,49 @@ impl Default for Theme {
     }
 }
 
+impl Osd {
+    /// Where a pop-up ("volume", "brightness", "caps", "keyboard", "notification")
+    /// appears: (screen, spot), its own or the default.
+    pub fn place(&self, kind: &str) -> (&str, &str) {
+        let (screen, spot) = match kind {
+            "volume" => (&self.volume_screen, &self.volume_spot),
+            "brightness" => (&self.brightness_screen, &self.brightness_spot),
+            "caps" => (&self.caps_screen, &self.caps_spot),
+            "keyboard" => (&self.keyboard_screen, &self.keyboard_spot),
+            "notification" => (&self.notification_screen, &self.notification_spot),
+            _ => (&self.screen, &self.spot),
+        };
+        fn or<'a>(own: &'a str, default: &'a str) -> &'a str {
+            if own.trim().is_empty() { default } else { own }
+        }
+        (or(screen, &self.screen), or(spot, &self.spot))
+    }
+}
+
 /// On-screen display: a notch briefly grows into a pill showing a level.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all(serialize = "camelCase"))]
 pub struct Osd {
     pub enabled: bool,
-    /// Notch that grows into the pill (falls back to the monitor's first notch).
-    pub notch: String,
+    /// Where pop-ups appear unless their own setting says otherwise. Screen:
+    /// "cursor" (the monitor under it), "main", "all", "others" (all but the
+    /// main one) or a monitor, matched like a [[monitors]] rule. Spot: a bar
+    /// and its notch, "top-center", "top-left", ... "bottom-right" (left / right:
+    /// the corner notches; a bar without one there uses its center notch).
+    pub screen: String,
+    pub spot: String,
+    /// Per pop-up: "" = like `screen` / `spot`. The keyboard one's spot can also
+    /// be "widget": a small notch at the language widget.
+    pub volume_screen: String,
+    pub volume_spot: String,
+    pub brightness_screen: String,
+    pub brightness_spot: String,
+    pub caps_screen: String,
+    pub caps_spot: String,
+    pub keyboard_screen: String,
+    pub keyboard_spot: String,
+    pub notification_screen: String,
+    pub notification_spot: String,
     pub width: f64,
     pub height: f64,
     pub duration_ms: u64,
@@ -247,8 +283,6 @@ pub struct Osd {
     pub keyboard_width: f64,
     /// Pop the OSD when Caps Lock is switched on or off.
     pub caps_lock: bool,
-    /// The surface (bar) whose notch grows into the pill: "top" or "bottom".
-    pub surface: String,
     /// Pop new notifications out of the notch (Windows' own store, see
     /// providers/notifications.rs).
     pub notifications: bool,
@@ -263,7 +297,18 @@ impl Default for Osd {
     fn default() -> Self {
         Self {
             enabled: true,
-            notch: "clock".into(),
+            screen: "cursor".into(),
+            spot: "top-center".into(),
+            volume_screen: String::new(),
+            volume_spot: String::new(),
+            brightness_screen: String::new(),
+            brightness_spot: String::new(),
+            caps_screen: String::new(),
+            caps_spot: String::new(),
+            keyboard_screen: String::new(),
+            keyboard_spot: "widget".into(),
+            notification_screen: String::new(),
+            notification_spot: String::new(),
             width: 230.0,
             height: 34.0,
             duration_ms: 1500,
@@ -273,7 +318,6 @@ impl Default for Osd {
             keyboard: true,
             keyboard_width: 120.0,
             caps_lock: false,
-            surface: "top".into(),
             notifications: false,
             notification_style: "line".into(),
             notification_ms: 5000,

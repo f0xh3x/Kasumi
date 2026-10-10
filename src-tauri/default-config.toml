@@ -57,8 +57,8 @@ style = "drop"            # drop: bar slides out of the top edge | spread: grows
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]
 enabled = true
-surface = "top"              # bar whose notch grows: top | bottom
-notch = "clock"              # notch that grows (on the monitor under the cursor)
+screen = "cursor"           # where pop-ups appear: cursor | main | all | others | a monitor's name
+spot = "top-center"          # which notch grows: top|bottom - left|center|right (each pop-up can have its own: volume_screen, notification_spot...)
 width = 230
 height = 34
 duration_ms = 1500

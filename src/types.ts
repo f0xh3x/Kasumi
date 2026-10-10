@@ -56,7 +56,6 @@ export interface NotchLayout {
 
 export interface Osd {
   enabled: boolean;
-  notch: string;
   width: number;
   height: number;
   durationMs: number;

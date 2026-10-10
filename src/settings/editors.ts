@@ -24,6 +24,8 @@ export interface EditorCtx {
   reload(): Promise<void>;
   /** Shows another page with one of its dropdowns open (by its section title). */
   goto(page: string, section: string): void;
+  /** The part after ":" in the field's editor name, if any. */
+  arg?: string;
 }
 
 type Editor = (ctx: EditorCtx) => HTMLElement;
@@ -144,6 +146,9 @@ export const surfaceLayout = (cfg: Cfg, id: string): LayoutCfg =>
 export const scope: { monitor: string | null; surface: string } = { monitor: null, surface: "top" };
 
 let monitorsCache: MonitorInfo[] | null = null;
+/** The monitors (asked for once). */
+const loadMonitors = (): Promise<MonitorInfo[]> =>
+  monitorsCache ? Promise.resolve(monitorsCache) : invoke<MonitorInfo[]>("monitors_list").then((list) => (monitorsCache = list));
 
 interface MonitorInfo {
   index: number;
@@ -311,12 +316,7 @@ const scopeSelector: Editor = (ctx) => {
       }
     }
   };
-  if (monitorsCache) draw(monitorsCache);
-  else
-    invoke<MonitorInfo[]>("monitors_list").then((list) => {
-      monitorsCache = list;
-      draw(list);
-    });
+  loadMonitors().then(draw);
   const help = scope.monitor
     ? `Layout for ${scope.monitor}. Widget settings below are shared by all monitors.`
     : "The layout every monitor uses unless it has its own.";
@@ -1321,6 +1321,48 @@ function presets(ctx: EditorCtx): HTMLElement {
 }
 
 /** Quick settings tiles: the chosen ones in order (move, remove), the rest to add. */
+// --- OSD: where each pop-up appears ------------------------------------------------------
+
+const OSD_SPOTS: [string, string][] = [
+  ["top-center", "Top bar · center"],
+  ["top-left", "Top bar · left corner"],
+  ["top-right", "Top bar · right corner"],
+  ["bottom-center", "Bottom bar · center"],
+  ["bottom-left", "Bottom bar · left corner"],
+  ["bottom-right", "Bottom bar · right corner"],
+];
+
+/**
+ * Screen and spot of a pop-up ("osdPlace:volume" etc.; "osdPlace" alone: the
+ * default the others follow). Writes [osd] <kind>_screen / <kind>_spot, or
+ * screen / spot.
+ */
+const osdPlace: Editor = (ctx) => {
+  const kind = ctx.arg ?? "";
+  const key = (what: "screen" | "spot") => (kind ? `${kind}_${what}` : what);
+  const osd = ctx.cfg.osd ?? {};
+  const like: [string, string][] = kind ? [["", "Like the default"]] : [];
+  const screen = select([...like, ["cursor", "The screen with the cursor"], ["main", "Main screen"], ["all", "All screens"], ["others", "All but the main screen"]], "");
+  screen.value = osd[key("screen")] ?? (kind ? "" : "cursor");
+  // The monitors by name, once known (a saved name is kept even if it's not connected).
+  loadMonitors().then((list) => {
+    for (const m of list) screen.append(new Option(m.name, m.name));
+    const saved = osd[key("screen")];
+    if (saved && ![...screen.options].some((o) => o.value === saved)) screen.append(new Option(saved, saved));
+    screen.value = saved ?? (kind ? "" : "cursor");
+  });
+  const spots: [string, string][] = [...like, ...(kind === "keyboard" ? ([["widget", "At the language widget"]] as [string, string][]) : []), ...OSD_SPOTS];
+  const spot = select(spots, osd[key("spot")] ?? (kind === "keyboard" ? "widget" : kind ? "" : "top-center"));
+  screen.addEventListener("change", () => ctx.save(["osd", key("screen")], screen.value || null));
+  spot.addEventListener("change", () => ctx.save(["osd", key("spot")], spot.value || null));
+  return $(
+    "div",
+    "stack-tight",
+    row("Screen", kind ? undefined : "Where pop-ups appear, unless one says otherwise below.", screen),
+    row("Spot", kind ? undefined : "Which notch grows: a bar's center, or its corner notch (a bar without one there uses its center).", spot),
+  );
+};
+
 // --- Disk usage -------------------------------------------------------------------------
 
 /** Which drives the disk widget shows: chips to switch on / off (none chosen = all). */
@@ -1466,6 +1508,7 @@ export const editors: Record<string, Editor> = {
   quickTiles,
   launcherPower,
   diskPicker,
+  osdPlace,
   presets,
   surfaceManager,
   surfaceStyle,

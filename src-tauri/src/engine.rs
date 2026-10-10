@@ -272,53 +272,84 @@ pub fn to_screen(app: &AppHandle, label: &str, x: f64, y: f64) -> Option<(i32, i
     Some((o.monitor.left + (x * o.monitor.scale).round() as i32, o.window_top() + (y * o.monitor.scale).round() as i32))
 }
 
-/// The overlay an OSD should appear on: on the monitor under the cursor (else the
-/// primary one), the surface showing the OSD's widget, else the top one. None
-/// while that overlay is hidden (fullscreen app).
-pub fn osd_target(app: &AppHandle) -> Option<String> {
-    let (widget, surface) = {
-        let cfg = app.state::<SharedConfig>();
-        let cfg = cfg.read().unwrap();
-        (cfg.osd.notch.clone(), cfg.osd.surface.clone())
-    };
-    // The chosen bar on the monitor under the cursor, if it's there and has a notch.
-    let chosen = {
-        let (cx, cy) = win::cursor_pos()?;
-        let state = app.state::<SharedState>();
-        let sh = state.lock().unwrap();
-        let under = |o: &Overlay| {
-            let m = &o.monitor;
-            cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
-        };
-        sh.overlays
-            .iter()
-            .find(|(_, o)| under(o) && o.surface == surface && !o.hidden && !o.layout.notches.is_empty())
-            .map(|(l, _)| l.clone())
-    };
-    chosen.or_else(|| overlay_for(app, &widget))
+/// Whether a monitor matches a [[monitors]] rule's `match` (or an OSD screen):
+/// "*", "primary", "#2" (left to right, from 1), its device ("\\.\DISPLAY4") or
+/// part of its name.
+pub fn monitor_matches(matcher: &str, m: &Monitor, index: usize) -> bool {
+    let s = matcher.trim();
+    let lower = s.to_lowercase();
+    match lower.as_str() {
+        "*" => true,
+        "primary" => m.primary,
+        _ if s.starts_with('#') => s[1..].parse::<usize>().is_ok_and(|n| n == index + 1),
+        _ => m.device.eq_ignore_ascii_case(s) || (!m.friendly.is_empty() && m.friendly.to_lowercase().contains(&lower)),
+    }
 }
 
-/// On the monitor under the cursor (else the primary one), the overlay showing
-/// `widget` (in a notch, else in its bar), else the top surface.
-pub fn overlay_for(app: &AppHandle, widget: &str) -> Option<String> {
-    let (cx, cy) = win::cursor_pos()?;
+/// Where a pop-up kind appears ([osd] screen / spot, or the kind's own): the
+/// overlays, each with the notch that grows (None: the "widget" spot, the
+/// keyboard peek at the language widget). Hidden overlays (fullscreen) don't
+/// count, so nothing pops over a fullscreen app.
+pub fn osd_targets(app: &AppHandle, kind: &str) -> Vec<(String, Option<String>)> {
+    let (screen, spot) = {
+        let cfg = app.state::<SharedConfig>();
+        let cfg = cfg.read().unwrap();
+        let (screen, spot) = cfg.osd.place(kind);
+        (screen.trim().to_string(), spot.trim().to_lowercase())
+    };
+    let cursor = win::cursor_pos();
     let state = app.state::<SharedState>();
     let sh = state.lock().unwrap();
-    let under = |o: &Overlay| {
-        let m = &o.monitor;
-        cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
+    // The monitors, left to right (as [[monitors]] number them).
+    let mut monitors: Vec<&Monitor> = Vec::new();
+    for o in sh.overlays.values() {
+        if !monitors.contains(&&o.monitor) {
+            monitors.push(&o.monitor);
+        }
+    }
+    monitors.sort_by_key(|m| (m.left, m.top));
+    let under = |m: &Monitor| cursor.is_some_and(|(x, y)| x >= m.left && x < m.right && y >= m.top && y < m.bottom);
+    let chosen: Vec<&Monitor> = match screen.to_lowercase().as_str() {
+        "cursor" | "" => monitors.iter().find(|m| under(m)).or_else(|| monitors.iter().find(|m| m.primary)).copied().into_iter().collect(),
+        "main" => monitors.iter().filter(|m| m.primary).copied().collect(),
+        "all" => monitors.clone(),
+        "others" => monitors.iter().filter(|m| !m.primary).copied().collect(),
+        _ => monitors.iter().enumerate().filter(|(i, m)| monitor_matches(&screen, m, *i)).map(|(_, m)| *m).collect(),
     };
-    let monitor = sh.overlays.values().find(|o| under(o)).or_else(|| sh.overlays.values().find(|o| o.monitor.primary))?.monitor.clone();
-    let here: Vec<(&String, &Overlay)> = sh.overlays.iter().filter(|(_, o)| o.monitor == monitor).collect();
-    let in_notch = |o: &Overlay| o.layout.notches.iter().any(|n| n.id == widget || n.widgets.iter().any(|w| w == widget));
-    let in_bar = |o: &Overlay| [&o.layout.bar.left, &o.layout.bar.center, &o.layout.bar.right].iter().any(|g| g.iter().any(|w| w == widget));
-    let (label, o) = here
-        .iter()
-        .find(|(_, o)| in_notch(o))
-        .or_else(|| here.iter().find(|(_, o)| in_bar(o)))
-        .or_else(|| here.iter().find(|(_, o)| o.edge == Edge::Top))
-        .or_else(|| here.first())?;
-    (!o.hidden).then(|| (*label).clone())
+    let (edge, side) = spot.split_once('-').unwrap_or(("top", "center"));
+    let want = match side {
+        "left" => Anchor::Left,
+        "right" => Anchor::Right,
+        _ => Anchor::Center,
+    };
+    let mut out = Vec::new();
+    for m in chosen {
+        let here: Vec<(&String, &Overlay)> =
+            sh.overlays.iter().filter(|(_, o)| o.monitor == *m && !o.hidden && !o.layout.notches.is_empty()).collect();
+        if spot == "widget" {
+            // The bar showing the language widget (in a notch or in the bar).
+            let shows = |o: &Overlay| {
+                o.layout.notches.iter().any(|n| n.widgets.iter().any(|w| w == "language"))
+                    || [&o.layout.bar.left, &o.layout.bar.center, &o.layout.bar.right].iter().any(|g| g.iter().any(|w| w == "language"))
+            };
+            if let Some((label, _)) = here.iter().find(|(_, o)| shows(o)) {
+                out.push(((*label).clone(), None));
+            }
+            continue;
+        }
+        // The bar on that edge (or whichever this monitor has), then the notch on that side.
+        let Some((label, o)) = here.iter().find(|(_, o)| (o.edge == Edge::Bottom) == (edge == "bottom")).or_else(|| here.first()) else {
+            continue;
+        };
+        let anchor = |id: &str| o.defs.iter().find(|d| d.id == id).map(|d| d.anchor);
+        let visible = || o.layout.notches.iter().filter(|n| !n.hidden);
+        let notch = visible()
+            .find(|n| anchor(&n.id) == Some(want))
+            .or_else(|| visible().find(|n| anchor(&n.id) == Some(Anchor::Center)))
+            .or_else(|| o.layout.notches.first());
+        out.push(((*label).clone(), notch.map(|n| n.id.clone())));
+    }
+    out
 }
 
 /// Whether `layout` shows a widget of this type (`type` or `type#n`) in its bar
@@ -631,19 +662,7 @@ impl Engine {
     }
 
     fn rule_for(&self, m: &Monitor, index: usize) -> Option<&MonitorRule> {
-        self.cfg.monitors.iter().find(|r| {
-            let s = r.matcher.trim();
-            let lower = s.to_lowercase();
-            match lower.as_str() {
-                "*" => true,
-                "primary" => m.primary,
-                _ if s.starts_with('#') => s[1..].parse::<usize>().is_ok_and(|n| n == index + 1),
-                _ => {
-                    m.device.eq_ignore_ascii_case(s)
-                        || (!m.friendly.is_empty() && m.friendly.to_lowercase().contains(&lower))
-                }
-            }
-        })
+        self.cfg.monitors.iter().find(|r| monitor_matches(&r.matcher, m, index))
     }
 
     #[allow(clippy::too_many_arguments)]

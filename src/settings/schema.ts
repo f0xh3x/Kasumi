@@ -49,6 +49,8 @@ export interface Section {
   fields: Field[];
   /** Shown as a collapsible row (closed by default) with this icon. */
   collapsible?: boolean;
+  /** The card consecutive collapsible sections share (default "Widget settings"). */
+  group?: string;
   icon?: number;
   /** Widgets page: only in the Global view, or only when a monitor is selected. */
   scope?: "global" | "monitor";
@@ -895,26 +897,20 @@ export const pages: Page[] = [
     sections: [
       {
         title: "On-screen display",
+        help: "Volume, brightness and the others grow out of a notch for a moment. Where they appear is set here for all of them; each can choose its own below.",
         fields: [
-          { kind: "toggle", label: "Show OSD", path: ["osd", "enabled"], default: true },
-          {
-            kind: "select",
-            label: "Show on",
-            help: "The bar whose notch grows into the pill (on the monitor under the cursor).",
-            path: ["osd", "surface"],
-            default: "top",
-            options: [
-              { value: "top", label: "Top bar" },
-              { value: "bottom", label: "Bottom bar" },
-            ],
-          },
-          { kind: "slider", label: "Duration", path: ["osd", "duration_ms"], default: 1500, min: 500, max: 4000, step: 100, unit: "ms" },
+          { kind: "toggle", label: "Show pop-ups", path: ["osd", "enabled"], default: true },
+          { kind: "custom", editor: "osdPlace" },
+          { kind: "slider", label: "Duration", help: "Volume, brightness, Caps Lock and the keyboard layout.", path: ["osd", "duration_ms"], default: 1500, min: 500, max: 4000, step: 100, unit: "ms" },
           { kind: "slider", label: "Pill width", path: ["osd", "width"], default: 230, min: 160, max: 400, step: 5, unit: "px" },
           { kind: "slider", label: "Pill height", path: ["osd", "height"], default: 34, min: 24, max: 48, step: 1, unit: "px" },
         ],
       },
       {
         title: "Volume",
+        collapsible: true,
+        group: "Pop-ups",
+        icon: 0xe767,
         fields: [
           {
             kind: "toggle",
@@ -924,11 +920,46 @@ export const pages: Page[] = [
             default: true,
           },
           { kind: "slider", label: "Volume step", path: ["osd", "volume_step"], default: 2, min: 1, max: 10, step: 1, unit: "%" },
+          { kind: "custom", editor: "osdPlace:volume" },
+        ],
+      },
+      {
+        title: "Brightness",
+        collapsible: true,
+        group: "Pop-ups",
+        icon: 0xe706,
+        fields: [
+          { kind: "toggle", label: "Show brightness", help: "The built-in screen's brightness (laptop Fn keys).", path: ["osd", "brightness"], default: true },
+          { kind: "custom", editor: "osdPlace:brightness" },
+        ],
+      },
+      {
+        title: "Caps Lock",
+        collapsible: true,
+        group: "Pop-ups",
+        icon: 0xe765,
+        fields: [
+          { kind: "toggle", label: "Show Caps Lock", help: "When it's switched on or off.", path: ["osd", "caps_lock"], default: false },
+          { kind: "custom", editor: "osdPlace:caps" },
+        ],
+      },
+      {
+        title: "Keyboard layout",
+        collapsible: true,
+        group: "Pop-ups",
+        icon: 0xe765,
+        fields: [
+          { kind: "toggle", label: "Show layout changes", path: ["osd", "keyboard"], default: true },
+          { kind: "slider", label: "Width at the widget", path: ["osd", "keyboard_width"], default: 120, min: 80, max: 200, step: 5, unit: "px" },
+          { kind: "custom", editor: "osdPlace:keyboard" },
         ],
       },
       {
         title: "Notifications",
-        help: "New Windows notifications pop out of the OSD notch, on the monitor under the cursor (not over fullscreen apps). Windows keeps them only while its notifications are on: turn on Do not disturb so it doesn't also show its own.",
+        collapsible: true,
+        group: "Pop-ups",
+        icon: 0xea8f,
+        help: "New Windows notifications (not over fullscreen apps). Windows keeps them only while its notifications are on: turn on Do not disturb so it doesn't also show its own.",
         fields: [
           { kind: "toggle", label: "Show new notifications", path: ["osd", "notifications"], default: false },
           {
@@ -952,15 +983,7 @@ export const pages: Page[] = [
             step: 500,
             unit: "ms",
           },
-        ],
-      },
-      {
-        title: "Other pops",
-        fields: [
-          { kind: "toggle", label: "Brightness (Fn keys)", path: ["osd", "brightness"], default: true },
-          { kind: "toggle", label: "Keyboard language", path: ["osd", "keyboard"], default: true },
-          { kind: "toggle", label: "Caps Lock", help: "Shows when Caps Lock is switched on or off.", path: ["osd", "caps_lock"], default: false },
-          { kind: "slider", label: "Language pop width", path: ["osd", "keyboard_width"], default: 120, min: 80, max: 200, step: 5, unit: "px" },
+          { kind: "custom", editor: "osdPlace:notification" },
         ],
       },
     ],

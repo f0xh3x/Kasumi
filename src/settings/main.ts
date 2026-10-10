@@ -91,9 +91,12 @@ const fieldRow = (f: { label: string; help?: string }, control: HTMLElement) => 
 
 function control(f: Field): HTMLElement | null {
   if (f.kind === "custom") {
-    const editor = editors[f.editor];
+    // "name:arg": one editor for several settings (e.g. osdPlace:volume).
+    const [name, arg] = f.editor.split(":");
+    const editor = editors[name];
     if (!editor) return null;
     return editor({
+      arg,
       cfg,
       save: async (path, value) => {
         await save(path, value === null ? undefined : value);
@@ -250,7 +253,7 @@ function renderPage(page: Page): HTMLElement {
     if (s.collapsible) {
       // Consecutive collapsible sections share one card, one dropdown each.
       if (!group) {
-        group = $("section", "card", $("h2", "card-title", "Widget settings"));
+        group = $("section", "card", $("h2", "card-title", s.group ?? "Widget settings"));
         content.append(group);
       }
       group.append(collapsible(s.title, $("div", "sub-body", ...rows), `${page.id}:${s.title}`, s.icon));

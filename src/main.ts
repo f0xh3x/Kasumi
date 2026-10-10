@@ -97,6 +97,8 @@ class Overlay {
   private osdFill = div("osd-fill");
   private osdValue = document.createElement("span");
   private osdTrack = div("osd-track");
+  /** The notch the current pop-up grows out of (null: the center one). */
+  private osdNotch: string | null = null;
   /** A notification's pill size while one is out (null: the level pill's, [osd] width / height). */
   private osdSize: { w: number; h: number } | null = null;
 
@@ -710,17 +712,18 @@ class Overlay {
   private osdDrop(): Drop | undefined {
     const L = this.layout;
     if (!L) return undefined;
-    const holder = L.notches.find((n) => n.id === L.osd.notch || n.widgets.includes(L.osd.notch));
+    // The notch the pop-up came for (Rust picks it: [osd] spot), else the center one.
     return (
-      (holder && this.drops.find((d) => d.key === `notch:${holder.id}`)) ??
+      (this.osdNotch !== null ? this.drops.find((d) => d.key === `notch:${this.osdNotch}`) : undefined) ??
       this.drops.find((d) => d.key === "notch:center") ??
       this.drops.find((d) => d.inHull)
     );
   }
 
   /** Shows a level on the OSD notch, then shrinks back after the configured duration. */
-  showOsd(e: { kind: "volume" | "brightness" | "keyboard" | "caps"; level: number; muted: boolean; text?: string }): void {
+  showOsd(e: { kind: "volume" | "brightness" | "keyboard" | "caps"; level: number; muted: boolean; text?: string; notch?: string | null }): void {
     const L = this.layout;
+    this.osdNotch = e.notch ?? null;
     if (!L || !this.osdDrop()) return;
     // After a notification: the level pill's own content and size again.
     if (this.osdSize) {
@@ -753,8 +756,9 @@ class Overlay {
    * and name with the title and text on one line ("line"), the title over the
    * text ("two"), or just icon and app ("compact"), for notification_ms.
    */
-  showNotification(n: { app: string; aumid: string; title: string; body: string }): void {
+  showNotification(n: { app: string; aumid: string; title: string; body: string; notch?: string | null }): void {
     const L = this.layout;
+    this.osdNotch = n.notch ?? null;
     if (!L || !this.osdDrop()) return;
     const style = L.osd.notificationStyle === "two" || L.osd.notificationStyle === "compact" ? L.osd.notificationStyle : "line";
     const pic = div("osd-note-icon");
@@ -798,9 +802,14 @@ class Overlay {
   }
 
   /** Keyboard layout changed: pop a small notch at the language widget (or use the OSD). */
-  showKeyboard(e: { code: string; code2?: string; name: string }): void {
+  showKeyboard(e: { code: string; code2?: string; name: string; notch?: string | null }): void {
     const L = this.layout;
     if (!L) return;
+    // Out of a notch like the other pop-ups ([osd] keyboard_spot), not the peek.
+    if (e.notch) {
+      this.showOsd({ kind: "keyboard", level: 0, muted: false, text: languageCode(e, L.widgets.language), notch: e.notch });
+      return;
+    }
     // The language widget shows the new layout itself whenever it's visible.
     if (this.languageVisible()) return;
     const anchor = this.langEl?.getBoundingClientRect();
@@ -1058,11 +1067,11 @@ async function main(): Promise<void> {
   await win.listen<{ expanded: boolean }>("notch://state", (e) => overlay.setExpanded(e.payload.expanded));
   await win.listen<NotchLayout[]>("notch://positions", (e) => overlay.updatePositions(e.payload));
   await win.listen<{ open: boolean }>("notch://launcher", (e) => overlay.setLauncher(e.payload.open));
-  await win.listen<{ code: string; code2?: string; name: string }>("notch://keyboard", (e) => overlay.showKeyboard(e.payload));
-  await win.listen<{ kind: "volume" | "brightness" | "caps"; level: number; muted: boolean; text?: string }>("notch://osd", (e) =>
+  await win.listen<{ code: string; code2?: string; name: string; notch?: string | null }>("notch://keyboard", (e) => overlay.showKeyboard(e.payload));
+  await win.listen<{ kind: "volume" | "brightness" | "caps"; level: number; muted: boolean; text?: string; notch?: string | null }>("notch://osd", (e) =>
     overlay.showOsd(e.payload),
   );
-  await win.listen<{ app: string; aumid: string; title: string; body: string }>("notch://notification", (e) => overlay.showNotification(e.payload));
+  await win.listen<{ app: string; aumid: string; title: string; body: string; notch?: string | null }>("notch://notification", (e) => overlay.showNotification(e.payload));
   await initData().catch((e) => report(`data: ${e}`));
   overlay.apply(await invoke<Layout>("get_layout"));
 }

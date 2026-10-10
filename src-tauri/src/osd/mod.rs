@@ -5,7 +5,7 @@ mod brightness;
 mod volume;
 
 use crate::providers::SharedConfig;
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
 /// Until when volume changes don't pop the OSD (set while a quick settings
@@ -16,7 +16,19 @@ pub fn quiet_volume(for_: std::time::Duration) {
     *QUIET_VOLUME.lock().unwrap() = Some(std::time::Instant::now() + for_);
 }
 
-/// Shows the OSD on the overlay under the cursor. `level` is 0..=1.
+/// Sends a pop-up of `kind` to where it appears (engine::osd_targets): `event`
+/// with `payload`, plus the notch that grows. Returns how many overlays got it.
+pub fn emit(app: &AppHandle, kind: &str, event: &str, payload: Value) -> usize {
+    let targets = crate::engine::osd_targets(app, kind);
+    for (label, notch) in &targets {
+        let mut p = payload.clone();
+        p["notch"] = json!(notch);
+        let _ = app.emit_to(EventTarget::WebviewWindow { label: label.clone() }, event, p);
+    }
+    targets.len()
+}
+
+/// Shows the level OSD ("volume", "brightness") where it appears. `level` is 0..=1.
 pub fn show(app: &AppHandle, kind: &str, level: f32, muted: bool) {
     if !app.state::<SharedConfig>().read().unwrap().osd.enabled {
         return;
@@ -24,16 +36,8 @@ pub fn show(app: &AppHandle, kind: &str, level: f32, muted: bool) {
     if kind == "volume" && QUIET_VOLUME.lock().unwrap().is_some_and(|t| std::time::Instant::now() < t) {
         return;
     }
-    let Some(label) = crate::engine::osd_target(app) else {
-        eprintln!("[statusnotch] osd {kind}: no visible overlay under the cursor");
-        return;
-    };
-    eprintln!("[statusnotch] osd {kind} {:.0}%{} -> {label}", level * 100.0, if muted { " muted" } else { "" });
-    let _ = app.emit_to(
-        EventTarget::WebviewWindow { label },
-        "notch://osd",
-        json!({ "kind": kind, "level": level.clamp(0.0, 1.0), "muted": muted }),
-    );
+    let n = emit(app, kind, "notch://osd", json!({ "kind": kind, "level": level.clamp(0.0, 1.0), "muted": muted }));
+    eprintln!("[statusnotch] osd {kind} {:.0}%{} -> {n} overlay(s)", level * 100.0, if muted { " muted" } else { "" });
 }
 
 /// Watches the foreground window's keyboard layout. Publishes it as data
@@ -68,14 +72,8 @@ impl KeyboardWatch {
         if !enabled {
             return;
         }
-        if let Some(label) = crate::engine::osd_target(app) {
-            let text = if on { "Caps Lock on" } else { "Caps Lock off" };
-            let _ = app.emit_to(
-                EventTarget::WebviewWindow { label },
-                "notch://osd",
-                json!({ "kind": "caps", "level": if on { 1.0 } else { 0.0 }, "muted": !on, "text": text }),
-            );
-        }
+        let text = if on { "Caps Lock on" } else { "Caps Lock off" };
+        emit(app, "caps", "notch://osd", json!({ "kind": "caps", "level": if on { 1.0 } else { 0.0 }, "muted": !on, "text": text }));
     }
 
     fn tick_layout(&mut self, app: &AppHandle) {
@@ -94,10 +92,8 @@ impl KeyboardWatch {
             cfg.osd.enabled && cfg.osd.keyboard
         };
         if same_window && enabled {
-            // The peek pops at the language widget, on whichever surface shows it.
-            if let Some(label) = crate::engine::overlay_for(app, "language") {
-                let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://keyboard", data);
-            }
+            // At the language widget (the peek), or out of a notch like the other pop-ups.
+            emit(app, "keyboard", "notch://keyboard", data);
         }
     }
 }

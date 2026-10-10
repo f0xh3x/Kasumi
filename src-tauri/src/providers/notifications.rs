@@ -208,15 +208,9 @@ fn stamp(path: &std::path::Path) -> [Option<(u64, SystemTime)>; 2] {
     [of(path), of(&path.with_extension("db-wal"))]
 }
 
-/// A new notification out of the OSD notch, on the monitor under the cursor.
+/// A new notification out of the OSD notch, where notifications appear.
 fn pop(app: &AppHandle, n: &Note) {
-    use tauri::{Emitter, EventTarget};
-    let Some(label) = crate::engine::osd_target(app) else { return };
-    let _ = app.emit_to(
-        EventTarget::WebviewWindow { label },
-        "notch://notification",
-        json!({ "app": n.app, "aumid": n.aumid, "title": n.title, "body": n.body }),
-    );
+    crate::osd::emit(app, "notification", "notch://notification", json!({ "app": n.app, "aumid": n.aumid, "title": n.title, "body": n.body }));
 }
 
 pub fn start(app: &AppHandle) {
