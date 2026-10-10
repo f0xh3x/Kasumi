@@ -55,8 +55,7 @@ export function mediaPanel(_opts: Record<string, unknown>, _ctx: PanelContext): 
     if (!media) return;
     const dur = media.durationMs;
     const frac = dragging ?? (dur > 0 ? position() / dur : 0);
-    fill.style.width = `${frac * 100}%`;
-    knob.style.left = `${frac * 100}%`;
+    seek.style.setProperty("--v", String(frac));
     elapsed.textContent = fmt(frac * dur);
     total.textContent = dur > 0 ? fmt(dur) : "";
   };

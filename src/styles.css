@@ -17,7 +17,7 @@ body {
   color: var(--fg);
   font-family: "Inter", "Segoe UI", sans-serif;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size, 13px);
   font-feature-settings: "tnum" 1, "cv11" 1;
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -231,7 +231,7 @@ html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); 
   background: rgba(255, 255, 255, 0.2);
   overflow: hidden;
 }
-.osd-fill { height: 100%; border-radius: 2px; background: var(--fg); transition: width 120ms ease; }
+.osd-fill { height: 100%; width: calc(var(--v, 0) * 100%); border-radius: 2px; background: var(--fg); transition: width 120ms ease; }
 .osd.muted .osd-fill { background: rgba(255, 255, 255, 0.35); }
 .osd-value { width: 26px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
 
@@ -298,9 +298,10 @@ html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); 
 .seek-hit { flex: 1; height: 14px; display: flex; align-items: center; cursor: pointer; }
 .media-seek.disabled .seek-hit { cursor: default; }
 .seek-track { position: relative; width: 100%; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.18); }
-.seek-fill { height: 100%; border-radius: 2px; background: var(--fg); }
+.seek-fill { height: 100%; width: calc(var(--v, 0) * 100%); border-radius: 2px; background: var(--fg); }
 .seek-knob {
   position: absolute;
+  left: calc(var(--v, 0) * 100%);
   top: 50%;
   width: 10px;
   height: 10px;
@@ -357,7 +358,7 @@ html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); 
 .hw-key { font-size: 11px; color: var(--fg-dim); width: 30px; }
 .hw-ram .hw-key { width: auto; }
 .hw-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.15); overflow: hidden; }
-.hw-bar-fill { height: 100%; border-radius: 2px; background: var(--fg); transition: width 300ms ease; }
+.hw-bar-fill { height: 100%; width: calc(var(--v, 0) * 100%); border-radius: 2px; background: var(--fg); transition: width 300ms ease; }
 .hw-load-text { font-size: 11px; width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
 .hw-load-text.wide { width: auto; min-width: 90px; }
 .hw-detail { font-size: 11px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -581,12 +582,13 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 
 /* Claude Code usage: text, a bar or ring, a "working" dot. */
 .widget.claude { gap: 7px; font-variant-numeric: tabular-nums; }
-.meter-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); overflow: hidden; flex: none; }
-.meter-bar-fill { height: 100%; width: 0; border-radius: 3px; background: var(--fg); transition: width 400ms ease; }
+.meter-bar { width: var(--len, 60px); height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); overflow: hidden; flex: none; }
+.meter-bar-fill { height: 100%; width: calc(var(--v, 0) * 100%); border-radius: 3px; background: var(--fg); transition: width 400ms ease; }
 .meter-ring { width: 15px; height: 15px; flex: none; transform: rotate(-90deg); }
 .meter-ring circle { fill: none; stroke-width: 2.5; }
 .meter-ring .track { stroke: rgba(255, 255, 255, 0.18); }
-.meter-ring .fill { stroke: var(--fg); stroke-linecap: round; transition: stroke-dasharray 400ms ease; }
+/* The ring's circumference is 2π × its radius (6): 37.7. */
+.meter-ring .fill { stroke: var(--fg); stroke-linecap: round; stroke-dasharray: calc(var(--v, 0) * 37.7) 37.7; transition: stroke-dasharray 400ms ease; }
 /* Meters (Claude usage, disks) past their limit take the warning colour. */
 .high .meter-bar-fill { background: var(--warn); }
 .high .meter-ring .fill { stroke: var(--warn); }
@@ -600,7 +602,7 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .claude-row.dim { color: var(--fg-dim); }
 .claude-chart { display: flex; align-items: flex-end; justify-content: space-between; gap: 6px; height: 66px; margin-top: 4px; }
 .claude-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
-.claude-col-bar { width: 100%; border-radius: 3px; background: rgba(255, 255, 255, 0.55); }
+.claude-col-bar { width: 100%; height: max(2px, calc(var(--v, 0) * 48px)); border-radius: 3px; background: rgba(255, 255, 255, 0.55); }
 .claude-col-day { font-size: 10px; color: var(--fg-dim); }
 
 /* Clipboard history. */

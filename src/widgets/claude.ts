@@ -141,7 +141,7 @@ export function claudePanel(opts: Record<string, unknown>, ctx: PanelContext): W
         ...days.map((t, i) => {
           const d = new Date((dayStart(6 - i) + 3600) * 1000);
           const col = el("claude-col", el("claude-col-bar"), el("claude-col-day", d.toLocaleDateString([], { weekday: "narrow" })));
-          (col.firstElementChild as HTMLElement).style.height = `${Math.max(2, (t / max) * 48)}px`;
+          (col.firstElementChild as HTMLElement).style.setProperty("--v", String(t / max));
           col.title = `${d.toLocaleDateString([], { weekday: "long" })}: ${tokens(t)}`;
           return col;
         }),

@@ -205,18 +205,16 @@ export function meter(kind: "bar" | "circle", length: number) {
     }
     track.classList.add("track");
     fill.classList.add("fill");
-    const C = 2 * Math.PI * 6;
-    fill.setAttribute("stroke-dasharray", `0 ${C}`);
     svg.append(track, fill);
     return {
       el: svg as unknown as HTMLElement,
-      set: (v: number) => fill.setAttribute("stroke-dasharray", `${Math.min(1, Math.max(0, v)) * C} ${C}`),
+      set: (v: number) => svg.style.setProperty("--v", String(Math.min(1, Math.max(0, v)))),
     };
   }
   const fill = el("meter-bar-fill");
   const bar = el("meter-bar", fill);
-  bar.style.width = `${length}px`;
-  return { el: bar, set: (v: number) => (fill.style.width = `${Math.min(1, Math.max(0, v)) * 100}%`) };
+  bar.style.setProperty("--len", `${length}px`);
+  return { el: bar, set: (v: number) => bar.style.setProperty("--v", String(Math.min(1, Math.max(0, v)))) };
 }
 
 /** Bytes as Explorer shows them (1024-based): "931 GB", "1.8 TB", "512 MB". */

@@ -13,7 +13,7 @@ const num = (v: number | null | undefined, digits = 0) => (v == null ? "–" : v
 function bar(): { root: HTMLElement; set: (pct: number | null | undefined) => void } {
   const fill = el("hw-bar-fill");
   const root = el("hw-bar", fill);
-  return { root, set: (pct) => (fill.style.width = `${Math.max(0, Math.min(100, pct ?? 0))}%`) };
+  return { root, set: (pct) => fill.style.setProperty("--v", String(Math.max(0, Math.min(100, pct ?? 0)) / 100)) };
 }
 
 function sparkline(): { root: SVGSVGElement; set: (values: number[]) => void } {

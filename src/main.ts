@@ -32,7 +32,7 @@ function applyTheme(t: Layout["theme"]): void {
   root.setProperty("--accent", t.accent);
   root.setProperty("--warn", t.warn);
   root.setProperty("--shape-opacity", String(Math.min(1, Math.max(0, (t.opacity ?? 100) / 100))));
-  document.body.style.fontSize = `${t.fontSize}px`;
+  root.setProperty("--font-size", `${t.fontSize}px`);
 }
 
 function div(className: string): HTMLDivElement {
@@ -725,7 +725,7 @@ class Overlay {
       glyph = e.muted ? 0xe74f : pct === 0 ? 0xe992 : pct < 34 ? 0xe993 : pct < 67 ? 0xe994 : 0xe995;
     }
     this.osdIcon.textContent = g(glyph);
-    this.osdFill.style.width = `${pct}%`;
+    this.osdFill.style.setProperty("--v", String(pct / 100));
     this.osdEl.classList.toggle("muted", e.muted);
     this.osdValue.textContent = e.text ?? String(pct);
     this.osdEl.classList.toggle("text", e.text !== undefined);
