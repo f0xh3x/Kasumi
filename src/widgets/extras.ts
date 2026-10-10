@@ -179,6 +179,9 @@ export function notifications(opts: Record<string, unknown>): Widget {
  */
 export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
   const opens = opts.click !== "nothing";
+  // [widgets.notifications] keep: StatusNotch's own list, dismissed here (× / Clear all).
+  const keeps = opts.keep === true;
+  const dismiss = (id: number | null) => invoke("notifications_dismiss", { id }).catch(console.error);
   const list = el("note-list");
   const action = (label: string, run: () => void) => {
     const b = el("note-action", label);
@@ -189,10 +192,25 @@ export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelCont
     });
     return b;
   };
+  const clear = el("note-action", "Clear all");
+  clear.addEventListener("click", (e) => {
+    e.stopPropagation();
+    dismiss(null);
+  });
   const actions = el(
     "note-actions",
+    ...(keeps ? [clear] : []),
     action("Notification settings", () => invoke("run_action", { action: "open", target: "ms-settings:notifications" }).catch(console.error)),
   );
+  const dismissButton = (id: number) => {
+    const b = el("note-dismiss clickable", icon(g(0xe711)));
+    b.title = "Dismiss";
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      dismiss(id);
+    });
+    return b;
+  };
   const root = el("note-panel", list, actions);
   const off = subscribe("notifications", (n) => {
     const rows = (n?.items ?? []).map((it) => {
@@ -206,7 +224,7 @@ export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelCont
       });
       const row = el(
         `note-row${opens ? " clickable" : ""}`,
-        el("note-head", pic, el("note-app", it.app), el("note-time", ago(it.time))),
+        el("note-head", pic, el("note-app", it.app), el("note-time", ago(it.time)), ...(keeps ? [dismissButton(it.id)] : [])),
         ...(it.title ? [el("note-title", it.title)] : []),
         ...(it.body ? [el("note-body", it.body)] : []),
       );
@@ -220,6 +238,7 @@ export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelCont
       }
       return row;
     });
+    clear.hidden = !rows.length;
     list.replaceChildren(...(rows.length ? rows : [el("note-empty", "No notifications.")]));
     ctx.resize();
   });

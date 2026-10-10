@@ -68,10 +68,10 @@ Tooltips are plain `title`s (stripped globally when `[general] tooltips = false`
 | `win.rs` | `wide(s)` / `wide_to_string(buf)`, `reg_string(root, path, name)`, `user_sid()`, `window_pid`, `window_title`, `class_name`, `process_path(pid)`, `process_name(pid)`, `window_process(h)` (lower-case exe name), `bitmap_bgra(hbitmap)`, `monitors()`, `cursor_pos`, `app_windows`, `fullscreen_monitor`, foreground/focus helpers, keyboard-layout helpers, `short_time_pattern` |
 | `providers/tasks.rs` | `exe_icon(path)`, `item_icon(shell item)`: program icons as RGBA |
 | `providers/system.rs` | `volume_changed(Some((level, muted)))`: fed by `osd/volume.rs` |
-| `osd/mod.rs` | `show(app, kind, level, muted)`, `quiet_volume(duration)` (no OSD while a slider drags) |
+| `osd/mod.rs` | `emit(app, kind, event, payload)`: sends any pop-up where its [osd] screen / spot say (adds `notch`); `show(app, kind, level, muted)`, `quiet_volume(duration)` (no OSD while a slider drags) |
 | `keyhook.rs` | The keyboard hook (helper process): `set_replace_volume`, `set_start_key`, `START_HOTKEY`. Any new global key handling goes here, never a hook inside the app (§4) |
 | `win.rs` `send_keys` | Simulated key presses (`KeyEvent`, with a mark so a hook can recognise its own) |
-| `engine.rs` | `to_screen`, `osd_target`, `overlay_for`, `launcher_toggle`, command `fe_log` |
+| `engine.rs` | `to_screen`, `osd_targets(app, kind)` (overlays + notch for a pop-up), `monitor_matches(matcher, monitor, index)` ([[monitors]] rule / OSD screen), `launcher_toggle`, command `fe_log` |
 | `config.rs` | `widget_enabled`, `widget_placed`, `widget_hides_when_maximized`, `surface_list`, `resolve_surface` |
 | `config_edit.rs` | `config_write` / `config_write_many`: comment-preserving, validated |
 
@@ -87,7 +87,9 @@ New commands must be listed in `main.rs`'s `generate_handler!`.
   sends changes. If Windows can notify you, use that (see `osd/volume.rs`).
   Icons: `rgba_json` → `iconUrl`.
 * **Add a setting:** an entry in `schema.ts`; a custom editor only if no field
-  kind fits, built with `settings/dom.ts`. Defaults in `default-config.toml`.
+  kind fits, built with `settings/dom.ts` (`editor: "name:arg"` passes `ctx.arg`,
+  e.g. `osdPlace:volume`; `loadMonitors()` lists the monitors). Defaults in
+  `default-config.toml`.
 * **Change the config format:** add a migration in `editors.ts` and list it in
   `settings/main.ts` (old configs are migrated when settings opens).
 * **Bottom surfaces:** positions are distances from the screen edge; `render()`

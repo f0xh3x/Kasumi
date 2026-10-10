@@ -66,6 +66,7 @@ impl Sqlite {
     }
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Note {
     pub id: i64,
     pub app: String,
@@ -189,6 +190,50 @@ fn seen() -> i64 {
 
 static LATEST: Mutex<Vec<(i64, i64)>> = Mutex::new(Vec::new());
 
+/// StatusNotch's own list ([widgets.notifications] keep): what it has shown,
+/// kept when an app takes its notification back (Discord once you've read the
+/// message), until dismissed. In the config folder, so a restart keeps it.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct History {
+    items: Vec<Note>,
+    /// Dismissed while Windows still has them (else they'd come back from there).
+    dismissed: Vec<i64>,
+}
+
+static HISTORY: Mutex<Option<History>> = Mutex::new(None);
+
+fn history_file() -> PathBuf {
+    crate::config::dir().join("notifications-history.json")
+}
+
+fn keep(app: &AppHandle) -> bool {
+    super::widget_opts(app, "notifications").get("keep").and_then(|v| v.as_bool()) == Some(true)
+}
+
+/// What the panel lists: Windows' store as it is, or (keep) also what apps took
+/// back, until dismissed; newest first, at most 50.
+fn listed(app: &AppHandle, store: &[Note]) -> Vec<Note> {
+    if !keep(app) {
+        return store.to_vec();
+    }
+    let mut guard = HISTORY.lock().unwrap();
+    let h = guard.get_or_insert_with(|| std::fs::read_to_string(history_file()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default());
+    let mut all: Vec<Note> = store.iter().filter(|n| !h.dismissed.contains(&n.id)).cloned().collect();
+    for n in &h.items {
+        if !all.iter().any(|x| x.id == n.id) && !h.dismissed.contains(&n.id) {
+            all.push(n.clone());
+        }
+    }
+    all.sort_by_key(|n| std::cmp::Reverse((n.time, n.id)));
+    all.truncate(50);
+    h.items = all.clone();
+    h.dismissed.retain(|id| store.iter().any(|n| n.id == *id));
+    if let Ok(text) = serde_json::to_string(h) {
+        let _ = std::fs::write(history_file(), text);
+    }
+    all
+}
+
 fn publish(app: &AppHandle, notes: &[Note]) {
     let seen = seen();
     let items: Vec<Value> = notes
@@ -241,7 +286,7 @@ pub fn start(app: &AppHandle) {
                     let notes = read(&path).unwrap_or_default();
                     *LATEST.lock().unwrap() = notes.iter().map(|n| (n.id, n.time)).collect();
                     if list {
-                        publish(&app, &notes);
+                        publish(&app, &listed(&app, &notes));
                     }
                     let top = notes.iter().map(|n| n.id).max();
                     if let (Some(prev), true) = (newest, popping) {
@@ -260,6 +305,29 @@ pub fn start(app: &AppHandle) {
         .expect("spawn notifications thread");
 }
 
+/// Dismisses a notification from StatusNotch's own list (keep), or all of them
+/// (`id` none: Clear all). Windows' own notification center isn't touched.
+#[tauri::command]
+pub async fn notifications_dismiss(app: AppHandle, id: Option<i64>) -> Result<(), String> {
+    let store = read(&db_path()).unwrap_or_default();
+    {
+        let mut guard = HISTORY.lock().unwrap();
+        let h = guard.get_or_insert_with(History::default);
+        match id {
+            Some(id) => {
+                h.dismissed.push(id);
+                h.items.retain(|n| n.id != id);
+            }
+            None => {
+                h.dismissed.extend(store.iter().map(|n| n.id));
+                h.items.clear();
+            }
+        }
+    }
+    publish(&app, &listed(&app, &store));
+    Ok(())
+}
+
 /// The user looked: what's there now isn't new any more.
 #[tauri::command]
 pub async fn notifications_seen(app: AppHandle) -> Result<(), String> {
@@ -267,7 +335,7 @@ pub async fn notifications_seen(app: AppHandle) -> Result<(), String> {
     *SEEN.lock().unwrap() = Some(newest.max(seen()));
     let _ = std::fs::write(seen_file(), newest.to_string());
     let notes = read(&db_path()).unwrap_or_default();
-    publish(&app, &notes);
+    publish(&app, &listed(&app, &notes));
     Ok(())
 }
 

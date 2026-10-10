@@ -478,6 +478,13 @@ export const pages: Page[] = [
               { value: "nothing", label: "Does nothing" },
             ],
           },
+          {
+            kind: "toggle",
+            label: "Keep until cleared",
+            help: "Off: the list mirrors Windows, so what an app takes back (Discord once you've read the message) goes. On: StatusNotch keeps them until you dismiss them (× or Clear all).",
+            path: ["widgets", "notifications", "keep"],
+            default: false,
+          },
           { kind: "toggle", label: "Count", help: "How many notifications there are, beside the bell.", path: ["widgets", "notifications", "count"], default: true },
           { kind: "color", label: "New notifications", help: "The bell's color while there's something you haven't looked at.", path: ["widgets", "notifications", "color"], default: "#4cc2ff" },
         ],
