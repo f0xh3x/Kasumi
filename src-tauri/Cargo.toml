@@ -1,6 +1,6 @@
 [package]
 name = "statusnotch"
-version = "0.3.0"
+version = "0.3.1"
 description = "Notch-style status bar for Windows"
 edition = "2021"
 
