@@ -43,11 +43,11 @@ apps (Premiere, Illustrator) while you work: see "Testing without the user".
 | Where | What |
 |---|---|
 | `widgets/index.ts` | `el(cls, ...kids)` (div), `icon(glyph)` (span.icon), `g(code)` glyph char, `Glyph.*` common glyphs, `iconUrl({w,h,rgba})` Rust icon → cached PNG data URL, `meter(kind, length)` small bar / ring for a 0..1 share (.high = warning colour), `formatBytes` (as Explorer), `languageCode`, `confirmClick` (second click for destructive actions), `createWidget` / `createPanel` / `panelFor` / `widgetType` (`"buttons#2"` → `"buttons"`), types `Widget`, `PanelContext` |
-| `data.ts` | `subscribe(key, cb)` → unsubscribe (call it in `dispose`). Typed `DataMap`: system, tasks, taskIcons, temps, media, weather, tray, keyboard, focus, netspeed, recycle, privacy, claude, notifications, clipboard |
+| `data.ts` | `subscribe(key, cb)` → unsubscribe (call it in `dispose`). Typed `DataMap`: system, tasks, taskIcons, temps, media, weather, tray, keyboard, focus, netspeed, disks, privacy, claude, notifications, clipboard |
 | `geometry.ts` | `computeFrame` (the one SVG path), `lerp`, `mirrorPath` (bottom surfaces' clip path; M/L/C/Z only) |
 | `spring.ts` | `Spring`: every animation |
 | `quick-tiles.ts` | `QUICK_TILES`, `MAX_TILES` (6), `DEFAULT_TILES` |
-| `widgets/quick.ts` | `slider()` (icon + range + value; volume, brightness, per-app rows), `slide()` (animate an element's height inside a panel, whole pixels) |
+| `widgets/quick.ts` | `slider()` (icon + range + value; volume, brightness, per-app rows), `slide()` (animate an element's height inside a panel, whole pixels). Both are private to the file today: `export` them when a second widget needs one |
 | `settings/dom.ts` | `$`, `glyph`, `input`, `select`, `iconButton`, `toggleSwitch` (role/aria), `row(label, help, control)` |
 | `settings/schema.ts` | Declarative fields: toggle, slider, number, text, select, color, list, autostart, action, custom. A `path` *function* returning `null` hides a field (dependent options, e.g. per-app volume hides without the volume slider) |
 | `settings/editors.ts` | `editors` registry (custom editors), `collapsible`, `WIDGETS` catalogue, config migrations (`migrationOps*`, run by `settings/main.ts`) |
@@ -115,7 +115,7 @@ New commands must be listed in `main.rs`'s `generate_handler!`.
 
 ```bash
 tools/install.sh            # tsc, vite, cargo release build, swap exe, start, check
-tools/install.sh --test     # + cargo tests (21; 2 hardware tests are #[ignore]d:
+tools/install.sh --test     # + cargo tests (22; 2 hardware tests are #[ignore]d:
                             #   cargo test audio -- --ignored, notifications needs WPN_TEST_DB)
 ```
 

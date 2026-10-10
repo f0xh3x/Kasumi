@@ -52,7 +52,7 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src-tauri/src/engine.rs` | Engine thread (~60 Hz): cursor polling → hover state machine (`Idle/Dwell/Open/Leave`) per surface, hot corners/edges, window docking ("undocked" notches), dock shrinking under maximized windows, fullscreen hiding, minimize watchdog, monitor changes, `build_layout` + `notch_positions` (unchanged layouts aren't resent); launcher open/close (`launcher_toggle`, closes when focus leaves); commands `get_layout`, `set_regions`, `set_notch_widths`, `set_content_height`, `fe_log`, `launcher_open/close` |
 | `src-tauri/src/config.rs` | Serde model of `config.toml`, defaults, `surface_list()` / `resolve_surface()` (surface + per-monitor rule → notches & bar groups), `widget_enabled()`, legacy model support |
 | `src-tauri/src/config_edit.rs` | `config_read`, `config_write(path, value)`, `config_write_many(ops)`, `config_reset` — `toml_edit`, keeps comments/CRLF, validates before writing |
-| `src-tauri/src/providers/` | Data providers (see §5); `mod.rs` has the shared helpers (`publish`, `placed`, `widget_opts`, `rgba_json`, HTTP). `temps.rs` (LibreHardwareMonitor), `weather.rs` (Open-Meteo), `media.rs` (Windows SMTC), `systray.rs` (tray icon host), `tasks.rs` (app windows, pins, icons; activate/close/launch/reorder), `system.rs` (battery, brightness, network, and the volume the OSD watcher hands it, for quick settings), `audio.rs` (output devices, per-app volume), `extras.rs` (focus, netspeed, recycle bin, privacy), `claude.rs` (Claude Code usage from its session logs), `clipboard.rs` (history, in memory), `notifications.rs` (Windows notification database via winsqlite3) |
+| `src-tauri/src/providers/` | Data providers (see §5); `mod.rs` has the shared helpers (`publish`, `placed`, `widget_opts`, `rgba_json`, HTTP). `temps.rs` (LibreHardwareMonitor), `weather.rs` (Open-Meteo), `media.rs` (Windows SMTC), `systray.rs` (tray icon host), `tasks.rs` (app windows, pins, icons; activate/close/launch/reorder), `system.rs` (battery, brightness, network, and the volume the OSD watcher hands it, for quick settings), `audio.rs` (output devices, per-app volume), `extras.rs` (focus, netspeed, disk usage + `disk_list`, privacy), `claude.rs` (Claude Code usage from its session logs), `clipboard.rs` (history, in memory), `notifications.rs` (Windows notification database via winsqlite3) |
 | `src-tauri/src/taskbar.rs` | Hides / restores the Windows taskbar (`[shell] hide_taskbar`), reserves screen space for always-shown bars (crash-safe marker) |
 | `src-tauri/src/launcher.rs` | App index (Start menu shortcuts + Store apps), icons, launching, the global hotkey thread |
 | `src-tauri/src/corners.rs` | Rounded screen corners as native layered windows (when not attached to the bars) |
@@ -63,12 +63,14 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src-tauri/src/settings.rs` | Opens the settings window; `monitors_list`, `lhm_sensors`, `system_time_format`, `app_version` |
 | `src-tauri/src/presets.rs` | Presets = full config copies in `%APPDATA%\StatusNotch\presets\<name>.toml`. Shipped presets (`src-tauri/presets/*.toml`, the author's minus monitor rules, pins and weather city) are added once each on start (`presets/.shipped`). Applying a preset keeps your pins and weather city if it has none |
 | `src-tauri/src/win.rs` | Win32 helpers: monitors/DPI, overlay styles, z-order, app windows (DWM frame bounds), fullscreen detection, keyboard layouts, and the small shared ones (UTF-16 strings, window title / class / process, bitmap pixels) |
+| `src-tauri/src/webmem.rs` | Asks WebView2 to keep its memory low while a bar is closed (`set_low`, called by the engine on open / close) |
 | `src-tauri/src/{tray,autostart,instance,logfile}.rs` | Own tray icon menu, Run-key autostart, single instance, release log → `%APPDATA%\StatusNotch\statusnotch.log` |
 | `src/main.ts` | `Overlay`: builds DOM from a `Layout`, springs, drops (notches/panels), OSD, keyboard peek, region reporting, notch width measuring |
 | `src/geometry.ts` | `computeFrame()` → the one SVG path: notch profile (from the reference SVG), bar, panels, merging of overlapping notches |
 | `src/spring.ts` | Damped spring used for every animation |
 | `src/types.ts` | `Layout`, `NotchLayout`, … (mirror of Rust structs, camelCase) |
 | `src/data.ts` | Data hub: `subscribe(key, cb)`; typed `DataMap` |
+| `src/quick-tiles.ts`, `src/power-actions.ts` | Catalogues: quick-settings shortcut tiles (`QUICK_TILES`, `MAX_TILES`, `DEFAULT_TILES`) and the launcher's power buttons (`POWER_ACTIONS`) |
 | `src/widgets/index.ts` | Widget + panel registries, `createWidget`, `createPanel`, `panelFor`, `Glyph`, `g()`, `el()`, `icon()`, `iconUrl()` |
 | `src/widgets/tasks.ts` | Tasks: buttons per app (pinned + running on this monitor), drag to reorder, drop files to pin, hover popup / right-click panel |
 | `src/settings/schema.ts` | Declarative settings pages (one entry per setting) |
@@ -168,8 +170,8 @@ layout, click to switch), `media` (SMTC, keys + title, panel with art/seek), `we
 (Open-Meteo, hourly panel), `temps` (LibreHardwareMonitor CPU/GPU, details panel),
 `tasks` (app windows + pins), `quick` (volume/brightness/battery/network panel, output
 devices, per-app volume, shortcut tiles), `buttons` (own action buttons, instances),
-`launcher` (search field + results), `language`, and optional extras: `focus`,
-`netspeed`, `recycle`, `privacy`, `claude`, `clipboard`, `notifications`.
+`launcher` (search field + results), and optional extras: `focus`,
+`netspeed`, `disk`, `privacy`, `claude`, `clipboard`, `notifications`.
 
 ### Adding a widget — checklist
 1. `src/widgets/<name>.ts`: factory (and optional panel factory); register in
@@ -201,7 +203,7 @@ it can be a function of the config returning `null` to hide the field. Writes go
 hot-reloads. Pages: General (startup, behaviour, hot corners), Widgets (Global/per-monitor
 layout, placement drag & drop, Notches, per-widget sections), Appearance, Animation,
 Hover, OSD, Presets, About. Config format changes need a migration in `editors.ts`
-(`migrationOps`, `migrationOpsV3`, `V4`, `V5`, `migrationOpsDisabledSpots`), run in
+(`migrationOps`, `migrationOpsV3`, `V4`, `V5`, `migrationOpsDisabledSpots`, `migrationOpsRemovedWidgets`), run in
 order by `settings/main.ts` when settings opens.
 
 ## 7. Config reference (top-level tables)
