@@ -907,8 +907,8 @@ class Overlay {
         const from = x;
         width = d.width + ((this.osdSize?.w ?? L.osd.width) - d.width) * o;
         height = d.height + ((this.osdSize?.h ?? L.osd.height) - d.height) * o;
-        x = side === "left" ? from : side === "right" ? from + d.width - width : from + d.width / 2 - width / 2;
-        x = Math.max(0, Math.min(x, L.width - width));
+        // (A corner notch reaches past the screen edge, its round-off hidden there: keep that.)
+        x = side === "left" ? from : side === "right" ? from + d.width - width : Math.max(0, Math.min(from + d.width / 2 - width / 2, L.width - width));
       }
       return {
         x,
