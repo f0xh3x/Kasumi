@@ -1,7 +1,7 @@
 //! Notifications, read from Windows' own store
 //! (`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`, SQLite) through
-//! Windows' SQLite (winsqlite3.dll, loaded when needed). Read-only, when the store
-//! changes (a folder watch, not a poll), and only while the notifications widget is
+//! Windows' SQLite (winsqlite3.dll, loaded when needed). Read-only, when the store's
+//! files change (checked each second: `stamp`), and only while the notifications widget is
 //! placed or new ones pop out of the notch ([osd] notifications): the widget gets
 //! the list ("notifications" data), the notch the new one (`notch://notification`).
 //! Windows only stores notifications while they're switched on; with Do not
@@ -199,17 +199,13 @@ fn publish(app: &AppHandle, notes: &[Note]) {
     super::publish(app, "notifications", json!({ "count": notes.len(), "unseen": unseen, "items": items }));
 }
 
-/// Sends `()` whenever something in the store's folder changes.
-fn watch(dir: &std::path::Path, tx: std::sync::mpsc::Sender<()>) -> Option<notify::RecommendedWatcher> {
-    use notify::Watcher;
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if res.is_ok() {
-            let _ = tx.send(());
-        }
-    })
-    .ok()?;
-    watcher.watch(dir, notify::RecursiveMode::NonRecursive).ok()?;
-    Some(watcher)
+/// The store's files as they are now (size and last write of the database and
+/// its write-ahead log): cheap to ask for, and it changes with every write. A
+/// folder watch reports nothing here (the notification service keeps the files
+/// open), hence this.
+fn stamp(path: &std::path::Path) -> [Option<(u64, SystemTime)>; 2] {
+    let of = |p: &std::path::Path| std::fs::metadata(p).ok().and_then(|m| Some((m.len(), m.modified().ok()?)));
+    [of(path), of(&path.with_extension("db-wal"))]
 }
 
 /// A new notification out of the OSD notch, on the monitor under the cursor.
@@ -229,13 +225,13 @@ pub fn start(app: &AppHandle) {
         .name("statusnotch-notifications".into())
         .spawn(move || {
             let path = db_path();
-            let (tx, rx) = std::sync::mpsc::channel();
-            let _watcher = path.parent().and_then(|dir| watch(dir, tx));
             // The newest notification already handled: only ones after it pop out
             // (None: not read yet, so whatever is there at the start is old).
             let mut newest: Option<i64> = None;
-            let mut changed = true;
+            let mut last = None;
             loop {
+                let now_stamp = stamp(&path);
+                let changed = last != Some(now_stamp);
                 let list = super::placed(&app, "notifications");
                 let popping = {
                     use tauri::Manager;
@@ -245,9 +241,9 @@ pub fn start(app: &AppHandle) {
                 };
                 if !list && !popping {
                     newest = None;
-                    changed = true;
+                    last = None;
                 } else if changed {
-                    changed = false;
+                    last = Some(now_stamp);
                     let notes = read(&path).unwrap_or_default();
                     *LATEST.lock().unwrap() = notes.iter().map(|n| (n.id, n.time)).collect();
                     if list {
@@ -261,15 +257,10 @@ pub fn start(app: &AppHandle) {
                             pop(&app, n);
                         }
                     }
-                    newest = top.or(newest);
+                    // Read once: from now on anything newer is new (an empty store too).
+                    newest = Some(top.unwrap_or(0).max(newest.unwrap_or(0)));
                 }
-                // Wait for the store to change (writes come in bursts: settle first),
-                // re-checking now and then whether anything is wanted (settings).
-                if rx.recv_timeout(Duration::from_secs(3)).is_ok() {
-                    std::thread::sleep(Duration::from_millis(150));
-                    while rx.try_recv().is_ok() {}
-                    changed = true;
-                }
+                std::thread::sleep(Duration::from_secs(1));
             }
         })
         .expect("spawn notifications thread");
