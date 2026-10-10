@@ -506,3 +506,35 @@ body.maximized { border: 0; border-radius: 0; }
 .tile-chip.add:hover { opacity: 1; }
 .tile-chip.add.full { opacity: 0.25; cursor: default; }
 .tile-chip.toggle { cursor: pointer; padding-right: 10px; }
+
+/* OSD spot: a small screen with six notches to click. */
+.spot-picker { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.spot-map {
+  position: relative;
+  width: 176px;
+  height: 100px;
+  border: 2px solid var(--faint);
+  border-radius: 8px;
+  background: var(--raised);
+  flex: none;
+}
+.spot-node {
+  position: absolute;
+  width: 38px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid var(--faint);
+  background: var(--panel);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.spot-node:hover { border-color: var(--fg); }
+.spot-node.active { background: var(--fg); border-color: var(--fg); }
+.spot-node.inherited { border: 1px dashed var(--fg); }
+.spot-top-left, .spot-top-center, .spot-top-right { top: -1px; border-top: 0; border-radius: 0 0 6px 6px; }
+.spot-bottom-left, .spot-bottom-center, .spot-bottom-right { bottom: -1px; border-bottom: 0; border-radius: 6px 6px 0 0; }
+.spot-top-left, .spot-bottom-left { left: 10px; }
+.spot-top-center, .spot-bottom-center { left: calc(50% - 19px); }
+.spot-top-right, .spot-bottom-right { right: 10px; }
+.spot-node.inherited.spot-top-left, .spot-node.inherited.spot-top-center, .spot-node.inherited.spot-top-right { border-top: 0; }
+.spot-node.inherited.spot-bottom-left, .spot-node.inherited.spot-bottom-center, .spot-node.inherited.spot-bottom-right { border-bottom: 0; }

@@ -790,8 +790,17 @@ class Overlay {
     }
     this.osdEl.className = `osd note note-${style}`;
     this.osdEl.replaceChildren(...parts);
-    this.osdSize =
-      style === "compact" ? { w: 200, h: L.osd.height } : { w: Math.max(L.osd.width, 380), h: style === "two" ? L.osd.height + 20 : L.osd.height };
+    // The pill around the text (osd inner width = w - 2 * corner radius - 8), or always the widest.
+    const widest = Math.max(L.osd.notificationWidth || 420, 160);
+    let w = widest;
+    if (L.osd.notificationFit !== false) {
+      const was = this.osdEl.style.width;
+      this.osdEl.style.width = "max-content";
+      const text = Math.ceil(this.osdEl.getBoundingClientRect().width);
+      this.osdEl.style.width = was;
+      w = Math.round(Math.min(widest, Math.max(160, text + 2 * L.geometry.notchCornerRadius + 8)));
+    }
+    this.osdSize = { w, h: style === "two" ? L.osd.height + 20 : L.osd.height };
     this.osd.target = 1;
     clearTimeout(this.osdTimer);
     this.osdTimer = window.setTimeout(() => {
@@ -971,7 +980,10 @@ class Overlay {
       }
       if (d.panelEl) {
         const p = d.spring.value;
-        d.panelEl.style.visibility = p > 0.01 ? "visible" : "hidden";
+        const shown = p > 0.01;
+        // Panels hear when they're shut (notch:panel-closed, detail: the panel's box).
+        if (!shown && d.panelEl.style.visibility === "visible") window.dispatchEvent(new CustomEvent("notch:panel-closed", { detail: d.panelEl }));
+        d.panelEl.style.visibility = shown ? "visible" : "hidden";
         d.panelEl.style.opacity = String(clamp01(p * 1.4 - 0.2));
         // Its edge-side end (the far end is `depth`).
         d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(bf.depth - d.panelHeight) * away}px)`;

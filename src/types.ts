@@ -64,6 +64,8 @@ export interface Osd {
   notifications: boolean;
   notificationStyle: "line" | "two" | "compact";
   notificationMs: number;
+  notificationFit: boolean;
+  notificationWidth: number;
 }
 
 export interface Theme {

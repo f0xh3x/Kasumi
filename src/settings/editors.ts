@@ -1324,13 +1324,49 @@ function presets(ctx: EditorCtx): HTMLElement {
 // --- OSD: where each pop-up appears ------------------------------------------------------
 
 const OSD_SPOTS: [string, string][] = [
-  ["top-center", "Top bar · center"],
   ["top-left", "Top bar · left corner"],
+  ["top-center", "Top bar · center"],
   ["top-right", "Top bar · right corner"],
-  ["bottom-center", "Bottom bar · center"],
   ["bottom-left", "Bottom bar · left corner"],
+  ["bottom-center", "Bottom bar · center"],
   ["bottom-right", "Bottom bar · right corner"],
 ];
+
+/**
+ * A small screen with six notches to click (three on top, three at the bottom),
+ * plus chips for the choices that aren't a place on it. `inherited`: the spot
+ * "Like the default" means, outlined while that's chosen.
+ */
+function spotMap(value: string, extras: [string, string][], inherited: string, onPick: (v: string) => void): HTMLElement {
+  const screen = $("div", "spot-map");
+  const chips = $("div", "scope-bar");
+  const paint = (v: string) => {
+    for (const b of screen.querySelectorAll<HTMLElement>(".spot-node")) {
+      b.classList.toggle("active", b.dataset.spot === v);
+      b.classList.toggle("inherited", v === "" && b.dataset.spot === inherited);
+    }
+    for (const c of chips.querySelectorAll<HTMLElement>(".scope-chip")) c.classList.toggle("active", c.dataset.spot === v);
+  };
+  const pick = (v: string) => {
+    paint(v);
+    onPick(v);
+  };
+  for (const [spot, label] of OSD_SPOTS) {
+    const b = $("button", `spot-node spot-${spot}`);
+    b.dataset.spot = spot;
+    b.title = label;
+    b.addEventListener("click", () => pick(spot));
+    screen.append(b);
+  }
+  for (const [spot, label] of extras) {
+    const c = $("button", "scope-chip", label);
+    c.dataset.spot = spot;
+    c.addEventListener("click", () => pick(spot));
+    chips.append(c);
+  }
+  paint(value);
+  return $("div", "spot-picker", screen, ...(extras.length ? [chips] : []));
+}
 
 /**
  * Screen and spot of a pop-up ("osdPlace:volume" etc.; "osdPlace" alone: the
@@ -1351,15 +1387,16 @@ const osdPlace: Editor = (ctx) => {
     if (saved && ![...screen.options].some((o) => o.value === saved)) screen.append(new Option(saved, saved));
     screen.value = saved ?? (kind ? "" : "cursor");
   });
-  const spots: [string, string][] = [...like, ...(kind === "keyboard" ? ([["widget", "At the language widget"]] as [string, string][]) : []), ...OSD_SPOTS];
-  const spot = select(spots, osd[key("spot")] ?? (kind === "keyboard" ? "widget" : kind ? "" : "top-center"));
+  const extras: [string, string][] = [...like, ...(kind === "keyboard" ? ([["widget", "At the language widget"]] as [string, string][]) : [])];
+  const spot = spotMap(osd[key("spot")] ?? (kind === "keyboard" ? "widget" : kind ? "" : "top-center"), extras, osd.spot ?? "top-center", (v) =>
+    ctx.save(["osd", key("spot")], v || null),
+  );
   screen.addEventListener("change", () => ctx.save(["osd", key("screen")], screen.value || null));
-  spot.addEventListener("change", () => ctx.save(["osd", key("spot")], spot.value || null));
   return $(
     "div",
     "stack-tight",
     row("Screen", kind ? undefined : "Where pop-ups appear, unless one says otherwise below.", screen),
-    row("Spot", kind ? undefined : "Which notch grows: a bar's center, or its corner notch (a bar without one there uses its center).", spot),
+    row("Spot", kind ? "Which notch it grows out of." : "Which notch grows: a bar's center, or its corner notch (a bar without one there uses its center).", spot),
   );
 };
 

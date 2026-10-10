@@ -291,6 +291,9 @@ pub struct Osd {
     pub notification_style: String,
     /// How long a notification stays out.
     pub notification_ms: u64,
+    /// The notification pop-up is as wide as its text (up to `notification_width`), else always that wide.
+    pub notification_fit: bool,
+    pub notification_width: f64,
 }
 
 impl Default for Osd {
@@ -321,6 +324,8 @@ impl Default for Osd {
             notifications: false,
             notification_style: "line".into(),
             notification_ms: 5000,
+            notification_fit: true,
+            notification_width: 420.0,
         }
     }
 }

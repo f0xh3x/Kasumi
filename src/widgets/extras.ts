@@ -181,7 +181,14 @@ export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelCont
   const opens = opts.click !== "nothing";
   // [widgets.notifications] keep: StatusNotch's own list, dismissed here (× / Clear all).
   const keeps = opts.keep === true;
-  const dismiss = (id: number | null) => invoke("notifications_dismiss", { id }).catch(console.error);
+  const dismiss = (ids: number[] | null) => invoke("notifications_dismiss", { ids }).catch(console.error);
+  // [widgets.notifications] clear_on_close: what the panel showed goes once it's shut.
+  let shown: number[] = [];
+  const onClosed = (e: Event) => {
+    const box = (e as CustomEvent<HTMLElement>).detail;
+    if (opts.clear_on_close === true && shown.length && box.contains(root)) dismiss(shown);
+  };
+  window.addEventListener("notch:panel-closed", onClosed);
   const list = el("note-list");
   const action = (label: string, run: () => void) => {
     const b = el("note-action", label);
@@ -207,12 +214,13 @@ export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelCont
     b.title = "Dismiss";
     b.addEventListener("click", (e) => {
       e.stopPropagation();
-      dismiss(id);
+      dismiss([id]);
     });
     return b;
   };
   const root = el("note-panel", list, actions);
   const off = subscribe("notifications", (n) => {
+    shown = (n?.items ?? []).map((it) => it.id);
     const rows = (n?.items ?? []).map((it) => {
       const pic = el("note-icon", icon(g(0xea8f)));
       appIcon(it.aumid).then((url) => {
@@ -242,5 +250,11 @@ export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelCont
     list.replaceChildren(...(rows.length ? rows : [el("note-empty", "No notifications.")]));
     ctx.resize();
   });
-  return { el: root, dispose: off };
+  return {
+    el: root,
+    dispose: () => {
+      off();
+      window.removeEventListener("notch:panel-closed", onClosed);
+    },
+  };
 }

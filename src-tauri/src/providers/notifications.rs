@@ -210,23 +210,28 @@ fn keep(app: &AppHandle) -> bool {
     super::widget_opts(app, "notifications").get("keep").and_then(|v| v.as_bool()) == Some(true)
 }
 
-/// What the panel lists: Windows' store as it is, or (keep) also what apps took
-/// back, until dismissed; newest first, at most 50.
+/// The saved list, loaded once.
+fn history(guard: &mut Option<History>) -> &mut History {
+    guard.get_or_insert_with(|| std::fs::read_to_string(history_file()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default())
+}
+
+/// What the panel lists: Windows' store minus what was dismissed here, and
+/// (keep) what apps took back; newest first, at most 50.
 fn listed(app: &AppHandle, store: &[Note]) -> Vec<Note> {
-    if !keep(app) {
-        return store.to_vec();
-    }
+    let keep = keep(app);
     let mut guard = HISTORY.lock().unwrap();
-    let h = guard.get_or_insert_with(|| std::fs::read_to_string(history_file()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default());
+    let h = history(&mut guard);
     let mut all: Vec<Note> = store.iter().filter(|n| !h.dismissed.contains(&n.id)).cloned().collect();
-    for n in &h.items {
-        if !all.iter().any(|x| x.id == n.id) && !h.dismissed.contains(&n.id) {
-            all.push(n.clone());
+    if keep {
+        for n in &h.items {
+            if !all.iter().any(|x| x.id == n.id) && !h.dismissed.contains(&n.id) {
+                all.push(n.clone());
+            }
         }
     }
     all.sort_by_key(|n| std::cmp::Reverse((n.time, n.id)));
     all.truncate(50);
-    h.items = all.clone();
+    h.items = if keep { all.clone() } else { Vec::new() };
     h.dismissed.retain(|id| store.iter().any(|n| n.id == *id));
     if let Ok(text) = serde_json::to_string(h) {
         let _ = std::fs::write(history_file(), text);
@@ -305,24 +310,17 @@ pub fn start(app: &AppHandle) {
         .expect("spawn notifications thread");
 }
 
-/// Dismisses a notification from StatusNotch's own list (keep), or all of them
-/// (`id` none: Clear all). Windows' own notification center isn't touched.
+/// Dismisses notifications from StatusNotch's list (`ids`; none: all of them).
+/// Windows' own notification center isn't touched.
 #[tauri::command]
-pub async fn notifications_dismiss(app: AppHandle, id: Option<i64>) -> Result<(), String> {
+pub async fn notifications_dismiss(app: AppHandle, ids: Option<Vec<i64>>) -> Result<(), String> {
     let store = read(&db_path()).unwrap_or_default();
     {
         let mut guard = HISTORY.lock().unwrap();
-        let h = guard.get_or_insert_with(History::default);
-        match id {
-            Some(id) => {
-                h.dismissed.push(id);
-                h.items.retain(|n| n.id != id);
-            }
-            None => {
-                h.dismissed.extend(store.iter().map(|n| n.id));
-                h.items.clear();
-            }
-        }
+        let h = history(&mut guard);
+        let ids = ids.unwrap_or_else(|| store.iter().map(|n| n.id).chain(h.items.iter().map(|n| n.id)).collect());
+        h.items.retain(|n| !ids.contains(&n.id));
+        h.dismissed.extend(ids);
     }
     publish(&app, &listed(&app, &store));
     Ok(())
