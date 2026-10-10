@@ -1245,7 +1245,15 @@ impl Engine {
                         Edge::Top => (m.top, m.top + depth),
                         Edge::Bottom => (m.bottom - depth, m.bottom),
                     };
-                    if let Some((class, r)) = windows.iter().find(|(_, r)| intersects(r, px(zx0), zy0, px(zx1), zy1)) {
+                    // Only a window whose top (bottom bars: bottom) edge is under the notch
+                    // itself: its caption buttons are there (maximized, snapped to the edge).
+                    // One just below the bar isn't covered by it.
+                    let reach = ((if all { nl.open_height } else { nl.height }) * m.scale).round() as i32;
+                    let under = |r: &windows::Win32::Foundation::RECT| match o.edge {
+                        Edge::Top => r.top < m.top + reach,
+                        Edge::Bottom => r.bottom > m.bottom - reach,
+                    };
+                    if let Some((class, r)) = windows.iter().find(|(_, r)| intersects(r, px(zx0), zy0, px(zx1), zy1) && under(r)) {
                         if !o.undocked.contains(&n.id) {
                             eprintln!(
                                 "[statusnotch] {label}: '{}' undocked by {class} at ({},{})-({},{})",

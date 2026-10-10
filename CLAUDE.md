@@ -148,6 +148,11 @@ Installer: `npx tauri build`; silent test install
   simulated Win presses otherwise). Leftover state from a failed run (an
   invisible Search window holding focus) poisons the next one: check `before:`.
   Never Caps Lock, Win+D or Alt+F4 combos.
+* **Notifications and windows:** `tools/toast.ps1 -title .. -text ..` sends a
+  Windows notification (as PowerShell). `tools/testwin.ps1` opens a throwaway
+  window (`-x -y -w -h`, or `-maximize`; `-cursor` parks the mouse on that
+  monitor, so ask) that closes itself: how notches react to windows. Never
+  move or maximize the user's own windows for a test.
 * **The user's recordings:** `frames.py extract <video> <dir>`, then the same
   analysis. Measure: a 1 px jump is invisible in a zoomed screenshot and obvious
   in numbers.
