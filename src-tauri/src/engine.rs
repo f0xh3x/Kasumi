@@ -608,13 +608,18 @@ impl Engine {
 
             self.update_corners();
 
-            if self.tick_hover(now) {
+            let (toggled, calm) = self.tick_hover(now);
+            if toggled {
                 // The bar opened or closed: re-dock right away instead of on the next tick.
                 let ours: Vec<isize> = self.shared.lock().unwrap().overlays.values().filter_map(|o| o.hwnd).collect();
                 self.update_docking(&ours);
             }
 
-            let poll = Duration::from_millis(self.cfg.timing.poll_ms.clamp(4, 100));
+            let mut poll_ms = self.cfg.timing.poll_ms.clamp(4, 100);
+            if calm {
+                poll_ms = poll_ms.max(CALM_POLL_MS);
+            }
+            let poll = Duration::from_millis(poll_ms);
             if let Some(rest) = poll.checked_sub(now.elapsed()) {
                 std::thread::sleep(rest);
             }
@@ -1251,9 +1256,12 @@ impl Engine {
         }
     }
 
-    /// Returns true if any overlay opened or closed.
-    fn tick_hover(&mut self, now: Instant) -> bool {
-        let Some((cx, cy)) = win::cursor_pos() else { return false };
+    /// Returns whether any overlay opened or closed, and whether things are calm:
+    /// nothing opening, open or pinned, and the cursor nowhere near a surface's
+    /// edge, so the next look can wait (`CALM_POLL_MS`).
+    fn tick_hover(&mut self, now: Instant) -> (bool, bool) {
+        let Some((cx, cy)) = win::cursor_pos() else { return (false, false) };
+        let mut calm = true;
         let t = &self.cfg.timing;
         let dwell = Duration::from_millis(t.dwell_ms);
         let grace = Duration::from_millis(t.grace_ms);
@@ -1308,6 +1316,9 @@ impl Engine {
                     Hover::Leave(t0) => Hover::Leave(t0),
                 } };
                 o.hover = next;
+                // Every trigger zone starts within this distance of the surface's edge.
+                let near = on_monitor && ly < NEAR_EDGE_PX.max(h.edge_size + 8.0);
+                calm &= !always && !o.pinned && matches!(next, Hover::Idle) && !near;
 
                 let expanded = matches!(next, Hover::Open | Hover::Leave(_));
                 if expanded != o.expanded {
@@ -1351,9 +1362,15 @@ impl Engine {
                 }
             });
         }
-        toggled
+        (toggled, calm)
     }
 }
+
+/// How often the engine looks at the cursor while things are calm (ms; never
+/// faster than `[timing] poll_ms`): the cursor has to cross `NEAR_EDGE_PX` of a
+/// surface's edge before any hot zone, so the first fast look still comes in time.
+const CALM_POLL_MS: u64 = 50;
+const NEAR_EDGE_PX: f64 = 120.0;
 
 /// Widget settings as the bars get them: without the tasks pin list, which the
 /// widget gets with its data (so pinning or reordering doesn't rebuild the bar).
