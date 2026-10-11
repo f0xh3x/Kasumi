@@ -72,40 +72,60 @@ export function tasks(opts: Record<string, unknown>): Widget {
   if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
   if (opts.dim_minimized === true) root.classList.add("dim-minimized");
   // Marker glide ([animation] marker_glide): when another app comes to the front,
-  // its line travels there from the last one, narrowing to a dot halfway.
+  // its line flows there like a drop of liquid: the front edge runs ahead (the
+  // line stretches and thins), the back edge follows and catches up at the new
+  // app. Both edges ease in and out and arrive together: no overshoot.
   const glides = opts._glide === true;
   if (glides) root.classList.add("glides");
   let lastActive: string | null = null;
-  let gliding: Animation | null = null;
+  let glideFrame = 0;
+  let glideEnd: (() => void) | null = null;
   const glideMarker = (from: { b: HTMLElement; dots: HTMLElement }, to: { b: HTMLElement; dots: HTMLElement }) => {
-    // Where each line sits, within the widget (offsets: unaffected by a dock's scaling).
+    // Where a line's center sits, within the widget (offsets: unaffected by a dock's scaling).
     const spot = (x: { b: HTMLElement; dots: HTMLElement }) => ({
       x: x.b.offsetLeft + x.dots.offsetLeft + x.dots.offsetWidth / 2,
       y: x.b.offsetTop + x.dots.offsetTop,
     });
+    glideEnd?.();
     const a = spot(from);
-    const z = spot(to);
-    gliding?.finish();
+    const LINE = 10;
+    const THICK = 3;
+    const ease = (k: number) => (k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2);
+    const part = (t: number, from: number) => ease(Math.min(1, Math.max(0, (t - from) / 0.68)));
     to.b.classList.add("marker-away");
     const m = el("task-marker");
-    m.style.left = `${a.x}px`;
-    m.style.top = `${z.y}px`;
     root.append(m);
-    const dx = z.x - a.x;
-    gliding = m.animate(
-      [
-        { transform: "translateX(-50%)", width: "10px" },
-        { transform: `translateX(calc(${(dx * 0.5).toFixed(1)}px - 50%))`, width: "3px", offset: 0.5 },
-        { transform: `translateX(calc(${dx.toFixed(1)}px - 50%))`, width: "10px" },
-      ],
-      { duration: Math.min(420, 220 + Math.abs(dx) * 0.6), easing: "cubic-bezier(0.55, 0, 0.3, 1)" },
-    );
-    const done = () => {
+    const start = performance.now();
+    const z0 = spot(to);
+    const dur = Math.min(420, 240 + Math.abs(z0.x - a.x) * 0.45);
+    glideEnd = () => {
+      cancelAnimationFrame(glideFrame);
       m.remove();
       to.b.classList.remove("marker-away");
+      glideEnd = null;
     };
-    gliding.onfinish = done;
-    gliding.oncancel = done;
+    const frame = (now: number) => {
+      const t = Math.min(1, (now - start) / dur);
+      // The target is read every frame: the line lands exactly where the app's own is.
+      const z = spot(to);
+      const right = z.x > a.x;
+      const lead = part(t, 0);
+      const trail = part(t, 0.32);
+      const front = right ? [a.x + LINE / 2, z.x + LINE / 2] : [a.x - LINE / 2, z.x - LINE / 2];
+      const back = right ? [a.x - LINE / 2, z.x - LINE / 2] : [a.x + LINE / 2, z.x + LINE / 2];
+      const f = front[0] + (front[1] - front[0]) * lead;
+      const bk = back[0] + (back[1] - back[0]) * trail;
+      const left = Math.min(f, bk);
+      const width = Math.max(THICK, Math.abs(f - bk));
+      // Stretched, it thins (down to 2 px), staying on the same baseline.
+      const thick = Math.max(2, Math.min(THICK, THICK * Math.sqrt(LINE / width)));
+      m.style.width = `${width.toFixed(2)}px`;
+      m.style.height = `${thick.toFixed(2)}px`;
+      m.style.transform = `translate(${left.toFixed(2)}px, ${(z.y + THICK - thick).toFixed(2)}px)`;
+      if (t < 1) glideFrame = requestAnimationFrame(frame);
+      else glideEnd?.();
+    };
+    glideFrame = requestAnimationFrame(frame);
   };
   // Magnify ([animation] magnify): icons grow as the cursor passes over them.
   if (opts._magnify === true) {
