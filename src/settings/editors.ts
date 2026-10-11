@@ -270,11 +270,6 @@ function ruleOps(cfg: Cfg, name: string, update: (r: any) => void): Op[] {
   return [{ path: ["monitors"], value: rules }];
 }
 
-/** Edits that store `next` as the selected surface's layout in the current scope. */
-function layoutOps(cfg: Cfg, next: LayoutCfg): Op[] {
-  return layoutsOps(cfg, { [scope.surface]: next });
-}
-
 /** Edits that store new layouts for several surfaces in the current scope. */
 function layoutsOps(cfg: Cfg, changed: Record<string, LayoutCfg>): Op[] {
   if (!scope.monitor) {
@@ -543,7 +538,20 @@ const placement: Editor = (ctx) => {
       () => {
         const next = structuredClone(L);
         next.notch = notch ? next.notch.filter((x) => x !== id) : [...next.notch, id];
-        ctx.saveMany(layoutOps(ctx.cfg, next));
+        // Global view: like adding a widget, its pin also reaches monitors with their own
+        // layout of this bar that show it (else it pins nothing those monitors show).
+        let target = ctx.cfg;
+        if (!scope.monitor && Array.isArray(ctx.cfg.monitors)) {
+          target = structuredClone(ctx.cfg);
+          for (const r of target.monitors) {
+            const o = r.surfaces?.[cur];
+            if (!hasLists(o) || !LISTS.slice(0, 3).some((k) => (o[k] ?? []).includes(id))) continue;
+            const has = (o.notch ?? []).includes(id);
+            if (!notch && !has) o.notch = [...(o.notch ?? []), id];
+            if (notch && has) o.notch = o.notch.filter((x: string) => x !== id);
+          }
+        }
+        ctx.saveMany([...layoutDiffOps(ctx.cfg, target), ...layoutsOps(target, { [cur]: next })]);
       },
     );
     const hide = button(
@@ -669,7 +677,7 @@ const placement: Editor = (ctx) => {
   const help = scope.monitor
     ? "Drag widgets between sides and bars; Disabled hides a widget on this monitor's bar. The pin shows a widget as a notch on this monitor."
     : "Drag widgets between sides and bars — a widget lives in one place. Disabled switches it off everywhere. A click on a widget opens its settings." +
-      (own.length ? ` Adding or removing a widget here also applies to ${own.join(", ")}, which have their own layout of this bar.` : "");
+      (own.length ? ` Adding or removing a widget (or its pin) here also applies to ${own.join(", ")}, which have their own layout of this bar.` : "");
   return $("div", "", root, $("p", "card-help", help));
 };
 
