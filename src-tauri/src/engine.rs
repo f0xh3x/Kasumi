@@ -415,6 +415,13 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             return;
         }
         o.pinned = opening;
+        if !opening {
+            // Closed: no hover grace for the bar (the cursor is usually elsewhere), so it
+            // shrinks together with the launcher's panel, in one motion. A cursor on the
+            // bar still keeps it open (the hover loop sees it and goes back to Open).
+            let now = Instant::now();
+            o.hover = Hover::Leave(now.checked_sub(Duration::from_secs(60)).unwrap_or(now));
+        }
         if opening && !o.expanded {
             o.expanded = true;
             o.hover = Hover::Open;
