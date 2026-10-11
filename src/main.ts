@@ -102,24 +102,34 @@ const PANEL_ROWS = [
   ".tasks-panel > *",
 ].join(", ");
 
-/** Cascade: each piece of an opening panel fades and slides in a little after the one before. */
-function cascadeRows(panel: HTMLElement, q: number, away: number): void {
-  const rows = panel.querySelectorAll<HTMLElement>(PANEL_ROWS);
-  const n = rows.length;
-  const done = q <= 0 || q >= 1;
-  if (done && panel.dataset.rowsOn !== "1") return;
-  rows.forEach((r, i) => {
-    if (done) {
-      r.style.opacity = "";
-      r.style.translate = "";
-      return;
+/**
+ * Cascade, by time (a spring is nearly open within ~100 ms, too fast to see one
+ * piece follow another): each element fades and slides `shift` px into place a
+ * little after the one before. Returns when the last one is in.
+ */
+function cascade(els: ArrayLike<HTMLElement>, start: number, shift: number): number {
+  const n = els.length;
+  const step = Math.min(40, 360 / Math.max(1, n));
+  const dur = 220;
+  const end = start + (n - 1) * step + dur;
+  const t = performance.now() - start;
+  for (let i = 0; i < n; i++) {
+    const el = els[i];
+    if (performance.now() >= end) {
+      clearCascade(el);
+      continue;
     }
-    const k = clamp01((q - (n > 1 ? (i / (n - 1)) * 0.45 : 0)) / 0.55);
-    r.style.opacity = k.toFixed(3);
-    r.style.translate = `0 ${Math.round((1 - k) * -8 * away)}px`;
-  });
-  if (done) delete panel.dataset.rowsOn;
-  else panel.dataset.rowsOn = "1";
+    const k = clamp01((t - i * step) / dur);
+    const e = 1 - (1 - k) ** 3;
+    el.style.opacity = e.toFixed(3);
+    el.style.translate = `0 ${Math.round((1 - e) * shift)}px`;
+  }
+  return end;
+}
+
+function clearCascade(el: HTMLElement): void {
+  el.style.opacity = "";
+  el.style.translate = "";
 }
 
 /** Space between a notch's content and the start of its curves, each side. */
@@ -158,6 +168,10 @@ class Overlay {
   /** The open bar's widgets, for the cascade, and their order from the middle out. */
   private barEls: { el: HTMLElement; cascade: boolean }[] = [];
   private barOrder: HTMLElement[] | null = null;
+  private barStart = 0;
+  /** When the panels' cascades began (by panel), and when time-driven effects end: keep drawing till then. */
+  private cascadeStart = new Map<HTMLElement, number>();
+  private holdUntil = 0;
 
   // Keyboard-layout peek: a small notch pops out at the language widget.
   private peek = new Spring(0, 0, 420, 32);
@@ -806,12 +820,11 @@ class Overlay {
   private cascadeBar(ex: number, away: number): void {
     const els = this.barEls.filter((b) => b.cascade).map((b) => b.el);
     if (!els.length) return;
-    if (ex <= 0.001 || ex >= 0.999) {
-      for (const el of els) {
-        el.style.opacity = "";
-        el.style.translate = "";
-      }
-      if (ex <= 0.001) this.barOrder = null;
+    // Closed (or closing): back to normal, ready to start over next time.
+    if (ex <= 0.001 || this.expand.target < 0.5) {
+      if (this.barOrder) for (const el of els) clearCascade(el);
+      this.barOrder = null;
+      this.barStart = 0;
       return;
     }
     if (!this.barOrder) {
@@ -821,13 +834,25 @@ class Overlay {
         return Math.abs(r.left + r.width / 2 - mid);
       };
       this.barOrder = els.map((el) => ({ el, d: off(el) })).sort((a, b) => a.d - b.d).map((x) => x.el);
+      this.barStart = performance.now();
     }
-    const n = this.barOrder.length;
-    this.barOrder.forEach((el, i) => {
-      const k = clamp01((ex - (n > 1 ? (i / (n - 1)) * 0.4 : 0)) / 0.6);
-      el.style.opacity = k.toFixed(3);
-      el.style.translate = `0 ${Math.round((1 - k) * -6 * away)}px`;
-    });
+    this.holdUntil = Math.max(this.holdUntil, cascade(this.barOrder, this.barStart, -6 * away));
+  }
+
+  /** A panel's cascade: starts as it begins to open, reset once it's shut. */
+  private cascadePanel(panel: HTMLElement, p: number, target: number, away: number): void {
+    const rows = panel.querySelectorAll<HTMLElement>(PANEL_ROWS);
+    let start = this.cascadeStart.get(panel);
+    if (p <= 0.01 && target < 0.5) {
+      if (start !== undefined) rows.forEach(clearCascade);
+      this.cascadeStart.delete(panel);
+      return;
+    }
+    if (start === undefined) {
+      start = performance.now();
+      this.cascadeStart.set(panel, start);
+    }
+    this.holdUntil = Math.max(this.holdUntil, cascade(rows, start, -8 * away));
   }
 
   /** The corner a notch drop hugs ("left" / "right"), null for the others. */
@@ -1141,7 +1166,7 @@ class Overlay {
         const q = clamp01(p);
         const fx = d.panelEl.dataset;
         d.panelEl.style.filter = fx.blur === "1" && q < 0.995 ? `blur(${((1 - q) * 6).toFixed(2)}px)` : "";
-        if (fx.cascade === "1") cascadeRows(d.panelEl, q, away);
+        if (fx.cascade === "1") this.cascadePanel(d.panelEl, p, d.spring.target, away);
       }
     });
   }
@@ -1165,7 +1190,8 @@ class Overlay {
       ...this.drops.flatMap((d) => [d.spring, ...(d.xs ? [d.xs] : []), ...(d.shown ? [d.shown] : [])]),
     ];
     for (const s of springs) s.step(dt);
-    if (springs.every((s) => s.settled)) {
+    // Time-driven effects (cascades) keep the loop going until they're done.
+    if (springs.every((s) => s.settled) && now >= this.holdUntil) {
       for (const s of springs) s.snap();
       this.running = false;
       this.render();
