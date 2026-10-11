@@ -15,7 +15,7 @@ body {
   overflow: hidden;
   background: transparent;
   color: var(--fg);
-  font-family: "Inter", "Segoe UI", sans-serif;
+  font-family: var(--font, "Inter"), "Segoe UI", sans-serif;
   font-weight: 600;
   font-size: var(--font-size, 13px);
   font-feature-settings: "tnum" 1, "cv11" 1;

@@ -83,6 +83,8 @@ export interface Theme {
   text: string;
   dimOpacity: number;
   accent: string;
+  accentSync: boolean;
+  font: string;
   warn: string;
   accentDetails: boolean;
   fontSize: number;

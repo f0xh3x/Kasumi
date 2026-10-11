@@ -1363,6 +1363,29 @@ const animWidget: Editor = (ctx) => {
   );
 };
 
+// --- Font ------------------------------------------------------------------------------
+
+/** The text font: any installed family ([theme] font), with a preview line in it. */
+const fontPicker: Editor = (ctx) => {
+  const saved = typeof ctx.cfg.theme?.font === "string" ? ctx.cfg.theme.font : "";
+  const pick = select([["", "Default (Inter)"], ...(saved ? ([[saved, saved]] as [string, string][]) : [])], saved);
+  const preview = $("div", "font-preview", "12:45 · 21° · Now playing");
+  const show = () => (preview.style.fontFamily = pick.value ? `"${pick.value}", sans-serif` : "");
+  show();
+  invoke<string[]>("fonts_list")
+    .then((fonts) => {
+      pick.replaceChildren(new Option("Default (Inter)", ""), ...fonts.map((f) => new Option(f, f)));
+      if (saved && !fonts.includes(saved)) pick.append(new Option(`${saved} (not installed)`, saved));
+      pick.value = saved;
+    })
+    .catch(console.error);
+  pick.addEventListener("change", () => {
+    show();
+    ctx.save(["theme", "font"], pick.value || null);
+  });
+  return $("div", "stack-tight", row("Font", "Any font installed on this PC. Icons keep their own.", pick), preview);
+};
+
 // --- Accent on details, per widget ------------------------------------------------------
 
 /** One widget's "accent on details" ("accentWidget:clock"): like the global setting, or on / off. */
@@ -1647,6 +1670,7 @@ export const editors: Record<string, Editor> = {
   windowsGuide,
   animWidget,
   accentWidget,
+  fontPicker,
   presets,
   surfaceManager,
   surfaceStyle,

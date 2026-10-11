@@ -602,6 +602,38 @@ pub fn reg_dword(root: windows::Win32::System::Registry::HKEY, path: &str, name:
     Some(value)
 }
 
+/// Windows' accent colour as "#rrggbb" (DWM's AccentColor: 0xAABBGGRR).
+pub fn system_accent() -> Option<String> {
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+    let v = reg_dword(HKEY_CURRENT_USER, r"Software\Microsoft\Windows\DWM", "AccentColor")?;
+    Some(format!("#{:02x}{:02x}{:02x}", v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff))
+}
+
+/// Installed font families, sorted (vertical "@" variants left out).
+pub fn font_families() -> Vec<String> {
+    use windows::Win32::Graphics::Gdi::{EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW};
+    unsafe extern "system" fn add(lf: *const LOGFONTW, _: *const TEXTMETRICW, _: u32, data: LPARAM) -> i32 {
+        let list = &mut *(data.0 as *mut Vec<String>);
+        let name = &(*lf).lfFaceName;
+        let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+        let name = String::from_utf16_lossy(&name[..len]);
+        if !name.is_empty() && !name.starts_with('@') {
+            list.push(name);
+        }
+        1
+    }
+    let mut list: Vec<String> = Vec::new();
+    unsafe {
+        let hdc = GetDC(None);
+        let lf = LOGFONTW { lfCharSet: DEFAULT_CHARSET, ..Default::default() };
+        EnumFontFamiliesExW(hdc, &lf, Some(add), LPARAM(&mut list as *mut _ as isize), 0);
+        ReleaseDC(None, hdc);
+    }
+    list.sort_by_key(|n| n.to_lowercase());
+    list.dedup();
+    list
+}
+
 /// The signed-in user's SID ("S-1-5-21-..."), e.g. for per-user registry keys.
 pub fn user_sid() -> Option<String> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};

@@ -584,6 +584,7 @@ fn intersects(r: &windows::Win32::Foundation::RECT, x0: i32, y0: i32, x1: i32, y
 impl Engine {
     fn run(mut self) {
         let mut last_monitor_check = Instant::now();
+        let mut last_accent = win::system_accent();
         let mut last_fullscreen_check = Instant::now();
         let mut last_keyboard_check = Instant::now();
         let mut keyboard = crate::osd::KeyboardWatch::default();
@@ -622,6 +623,14 @@ impl Engine {
 
             if now - last_monitor_check >= Duration::from_secs(1) {
                 last_monitor_check = now;
+                // Windows' accent colour changed: the bars follow it if synced.
+                let accent = win::system_accent();
+                if accent != last_accent {
+                    last_accent = accent;
+                    if self.cfg.theme.accent_sync {
+                        self.reconcile();
+                    }
+                }
                 let m = win::monitors();
                 if m != self.monitors {
                     self.monitors = m;
@@ -850,7 +859,15 @@ impl Engine {
             notches,
             widgets: frontend_widgets(&self.cfg.widgets),
             osd: self.cfg.osd.clone(),
-            theme: self.cfg.theme.clone(),
+            theme: {
+                let mut t = self.cfg.theme.clone();
+                if t.accent_sync {
+                    if let Some(a) = win::system_accent() {
+                        t.accent = a;
+                    }
+                }
+                t
+            },
             tooltips: self.cfg.general.tooltips,
             launcher: self.cfg.launcher.enabled,
             combine_notches: self.cfg.notch.combine_overlapping,

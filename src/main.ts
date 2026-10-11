@@ -33,6 +33,9 @@ function applyTheme(t: Layout["theme"]): void {
   root.setProperty("--warn", t.warn);
   root.setProperty("--shape-opacity", String(Math.min(1, Math.max(0, (t.opacity ?? 100) / 100))));
   root.setProperty("--font-size", `${t.fontSize}px`);
+  // An installed font for the text ([theme] font); the built-in one when unset.
+  if (t.font) root.setProperty("--font", `"${t.font.replace(/["\\]/g, "")}"`);
+  else root.removeProperty("--font");
 }
 
 function div(className: string): HTMLDivElement {

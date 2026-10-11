@@ -31,6 +31,8 @@ opacity = 100             # percent: bars, notches and panels (text stays solid)
 text = "#ffffff"
 dim_opacity = 0.45        # secondary text
 accent = "#ffffff"
+accent_sync = false       # use Windows' accent colour instead
+font = ""                 # an installed font family; "" = the built-in one
 warn = "#ff9f43"           # hot temperatures
 accent_details = false    # widget details (hover, the task line, sliders...) in the accent colour
 font_size = 13

@@ -47,6 +47,12 @@ pub async fn open_settings(app: AppHandle) {
     open(&app);
 }
 
+/// Installed font families, for the font picker.
+#[tauri::command]
+pub async fn fonts_list() -> Vec<String> {
+    crate::win::font_families()
+}
+
 /// Detected monitors, for the per-monitor rules editor.
 #[tauri::command]
 pub async fn monitors_list() -> Vec<serde_json::Value> {

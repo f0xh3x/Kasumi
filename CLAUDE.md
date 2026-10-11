@@ -65,7 +65,7 @@ Tooltips are plain `title`s (stripped globally when `[general] tooltips = false`
 | Where | What |
 |---|---|
 | `providers/mod.rs` | `publish(app, key, json)` (dedupes, broadcasts `notch://data`), `placed(app, ty)`, `widget_enabled`, `widget_opts`, `opt_str`, `opt_f64`, `http_agent` + `get_json` (5 s timeout), `rgba_json(w, h, rgba)` (icon for `iconUrl`), `data_url(mime, bytes)` (pictures for <img>), `SharedConfig` |
-| `win.rs` | `wide(s)` / `wide_to_string(buf)`, `reg_string(root, path, name)`, `reg_dword(root, path, name)`, `user_sid()`, `window_pid`, `window_title`, `class_name`, `process_path(pid)`, `process_name(pid)`, `window_process(h)` (lower-case exe name), `bitmap_bgra(hbitmap)`, `monitors()`, `cursor_pos`, `app_windows`, `fullscreen_monitor`, foreground/focus helpers, keyboard-layout helpers, `short_time_pattern` |
+| `win.rs` | `wide(s)` / `wide_to_string(buf)`, `reg_string(root, path, name)`, `reg_dword(root, path, name)`, `system_accent()`, `font_families()`, `user_sid()`, `window_pid`, `window_title`, `class_name`, `process_path(pid)`, `process_name(pid)`, `window_process(h)` (lower-case exe name), `bitmap_bgra(hbitmap)`, `monitors()`, `cursor_pos`, `app_windows`, `fullscreen_monitor`, foreground/focus helpers, keyboard-layout helpers, `short_time_pattern` |
 | `providers/tasks.rs` | `exe_icon(path)`, `item_icon(shell item)`: program icons as RGBA |
 | `providers/system.rs` | `volume_changed(Some((level, muted)))`: fed by `osd/volume.rs` |
 | `osd/mod.rs` | `emit(app, kind, event, payload)`: sends any pop-up where its [osd] screen / spot say (adds `notch`); `show(app, kind, level, muted)`, `quiet_volume(duration)` (no OSD while a slider drags) |

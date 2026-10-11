@@ -234,6 +234,10 @@ pub struct Theme {
     /// Opacity of secondary text (0..1), derived from `text`.
     pub dim_opacity: f64,
     pub accent: String,
+    /// Use Windows' accent colour (Settings > Personalization > Colors) instead of `accent`.
+    pub accent_sync: bool,
+    /// Text font: an installed font family ("" = the built-in one). Icons keep theirs.
+    pub font: String,
     /// Hot readings (temps above their warning level).
     pub warn: String,
     /// Widget details in the accent colour: hover highlights, the task in front's
@@ -252,6 +256,8 @@ impl Default for Theme {
             text: "#ffffff".into(),
             dim_opacity: 0.45,
             accent: "#ffffff".into(),
+            accent_sync: false,
+            font: String::new(),
             warn: "#ff9f43".into(),
             accent_details: false,
             font_size: 13.0,

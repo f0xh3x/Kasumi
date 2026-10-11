@@ -553,3 +553,6 @@ body.maximized { border: 0; border-radius: 0; }
 .guide-status.bad { background: rgba(255, 159, 67, 0.18); color: #ff9f43; }
 .guide .button-row { padding-top: 2px; }
 .guide .button { display: flex; align-items: center; gap: 8px; }
+
+/* Font picker: a line of sample text in the chosen font. */
+.font-preview { padding: 2px 0 8px; color: var(--dim); font-size: 15px; }
