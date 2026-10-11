@@ -85,6 +85,7 @@ export interface Theme {
   accent: string;
   accentSync: boolean;
   font: string;
+  fontSecondary: string;
   warn: string;
   accentDetails: boolean;
   fontSize: number;

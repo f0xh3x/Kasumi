@@ -887,6 +887,7 @@ export const pages: Page[] = [
           },
           { kind: "color", label: "Warning", help: "Hot temperatures.", path: ["theme", "warn"], default: "#ff9f43" },
           { kind: "custom", editor: "fontPicker" },
+          { kind: "custom", editor: "fontPicker::secondary" },
           { kind: "slider", label: "Text size", path: ["theme", "font_size"], default: 13, min: 11, max: 16, step: 0.5, unit: "px" },
         ],
       },
@@ -925,6 +926,7 @@ export const pages: Page[] = [
         icon,
         fields: [
           { kind: "custom" as const, editor: `fontPicker:${w}` },
+          { kind: "custom" as const, editor: `fontPicker:${w}:secondary` },
           ...(accent ? [{ kind: "custom" as const, editor: `accentWidget:${w}` }] : []),
         ],
       })),

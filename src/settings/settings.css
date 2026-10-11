@@ -556,3 +556,4 @@ body.maximized { border: 0; border-radius: 0; }
 
 /* Font picker: a line of sample text in the chosen font. */
 .font-preview { padding: 2px 0 8px; color: var(--dim); font-size: 15px; }
+.font-preview.small { font-size: 12px; }

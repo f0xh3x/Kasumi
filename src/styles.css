@@ -783,3 +783,20 @@ html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
 .accent-details .quick-range { background: linear-gradient(to right, var(--accent) var(--fill, 50%), rgba(255, 255, 255, 0.18) var(--fill, 50%)); }
 .accent-details .wx-now-temp,
 .accent-details .hw-temp:not(.warn) { color: var(--accent); }
+
+/* Fonts: main text uses --font ([theme] font, or a widget's own), small details
+   use --font-secondary (else the main font). Icons keep their icon font. */
+.own-font { font-family: var(--font, "Inter"), "Segoe UI", sans-serif; }
+.panel-calendar .cal-dow, .panel-calendar .cal-wk,
+.media-artist, .seek-time,
+.wx-cond, .wx-detail, .wx-place, .wx-hour-time,
+.hw-label, .hw-name, .hw-key, .hw-load-text, .hw-detail, .hw-offline,
+.tasks-title, .tasks-empty, .tray-empty,
+.quick-num, .quick-status, .quick-tile-label, .quick-output-item, .quick-apps-empty,
+.launcher-hint, .launcher-power-note, .launcher-user-name,
+.privacy-what, .privacy-none,
+.claude-head, .claude-col-day,
+.clip-text, .clip-empty, .clip-clear,
+.disk-letter,
+.note-head, .note-body, .note-empty, .note-action, .note-time,
+.osd-note-text { font-family: var(--font-secondary, var(--font, "Inter")), "Segoe UI", sans-serif; }

@@ -139,13 +139,23 @@ export function createPanel(name: string, opts: Options, ctx: PanelContext): Wid
   return accented(factory ? factory(opts, ctx) : { el: el("widget unknown", name) }, opts);
 }
 
+/** A font family name as a CSS value (quoted, quotes and backslashes dropped). */
+export function fontName(family: string): string {
+  return `"${family.replace(/["\\]/g, "")}"`;
+}
+
 /**
  * Per-widget look, resolved by the overlay: accent on details (opts._accent,
- * styles.css does the rest) and its own font (opts._font; icons keep theirs).
+ * styles.css does the rest) and its own fonts (opts._font main, opts._font2
+ * secondary: set as --font / --font-secondary on it, which its text uses).
  */
 function accented(w: Widget, opts: Options): Widget {
   if (opts._accent === true) w.el.classList.add("accent-details");
-  if (typeof opts._font === "string" && opts._font) w.el.style.fontFamily = `"${opts._font.replace(/["\\]/g, "")}", var(--font, "Inter"), "Segoe UI", sans-serif`;
+  const main = typeof opts._font === "string" ? opts._font : "";
+  const second = typeof opts._font2 === "string" ? opts._font2 : "";
+  if (main) w.el.style.setProperty("--font", fontName(main));
+  if (second) w.el.style.setProperty("--font-secondary", fontName(second));
+  if (main || second) w.el.classList.add("own-font");
   return w;
 }
 

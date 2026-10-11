@@ -1366,19 +1366,24 @@ const animWidget: Editor = (ctx) => {
 // --- Font ------------------------------------------------------------------------------
 
 /**
- * The text font: any installed family, with a preview line in it. "fontPicker":
- * everything ([theme] font); "fontPicker:clock": one widget and its panel
- * ([widgets.clock] font), or like everything else.
+ * A text font: any installed family, with a preview line in it. "fontPicker" /
+ * "fontPicker::secondary": everything's main / secondary font ([theme] font /
+ * font_secondary); "fontPicker:clock" / "fontPicker:clock:secondary": one
+ * widget and its panel ([widgets.clock] font / font_secondary), or like global.
  */
 const fontPicker: Editor = (ctx) => {
-  const w = ctx.arg ?? "";
-  const path = w ? ["widgets", w, "font"] : ["theme", "font"];
-  const own = w ? ctx.cfg.widgets?.[w]?.font : ctx.cfg.theme?.font;
+  const [w = "", role = ""] = (ctx.arg ?? "").split(":");
+  const secondary = role === "secondary";
+  const key = secondary ? "font_secondary" : "font";
+  const path = w ? ["widgets", w, key] : ["theme", key];
+  const own = w ? ctx.cfg.widgets?.[w]?.[key] : ctx.cfg.theme?.[key];
   const saved = typeof own === "string" ? own : "";
-  const global = typeof ctx.cfg.theme?.font === "string" && ctx.cfg.theme.font ? ctx.cfg.theme.font : "Inter";
-  const none = w ? `Like global (${global})` : "Default (Inter)";
+  const name = (v: unknown) => (typeof v === "string" && v ? v : "");
+  const globalMain = name(ctx.cfg.theme?.font) || "Inter";
+  const global = secondary ? name(ctx.cfg.theme?.font_secondary) || globalMain : globalMain;
+  const none = w ? `Like global (${global})` : secondary ? "Same as the main font" : "Default (Inter)";
   const pick = select([["", none], ...(saved ? ([[saved, saved]] as [string, string][]) : [])], saved);
-  const preview = $("div", "font-preview", "12:45 · 21° · Now playing");
+  const preview = $("div", `font-preview${secondary ? " small" : ""}`, secondary ? "Feels like 18° · 3 notifications · Tue 14" : "12:45 · 21° · Now playing");
   const show = () => (preview.style.fontFamily = pick.value ? `"${pick.value}", sans-serif` : "");
   show();
   invoke<string[]>("fonts_list")
@@ -1392,8 +1397,12 @@ const fontPicker: Editor = (ctx) => {
     show();
     ctx.save(path, pick.value || null);
   });
-  const help = w ? "This widget's text, and its panel's." : "Any font installed on this PC. Icons keep their own.";
-  return $("div", "stack-tight", row("Font", help, pick), preview);
+  const help = secondary
+    ? "Small details: labels, times, descriptions."
+    : w
+      ? "Titles, values and the widget itself."
+      : "Titles, the clock, values. Any font installed on this PC; icons keep their own.";
+  return $("div", "stack-tight", row(secondary ? "Secondary font" : "Main font", help, pick), preview);
 };
 
 // --- Accent on details, per widget ------------------------------------------------------

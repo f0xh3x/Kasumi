@@ -236,8 +236,11 @@ pub struct Theme {
     pub accent: String,
     /// Use Windows' accent colour (Settings > Personalization > Colors) instead of `accent`.
     pub accent_sync: bool,
-    /// Text font: an installed font family ("" = the built-in one). Icons keep theirs.
+    /// Text fonts, installed families ("" = the built-in one; icons keep theirs):
+    /// main text (titles, the clock, values) and secondary text (small details:
+    /// labels, times, descriptions; "" = like the main font).
     pub font: String,
+    pub font_secondary: String,
     /// Hot readings (temps above their warning level).
     pub warn: String,
     /// Widget details in the accent colour: hover highlights, the task in front's
@@ -258,6 +261,7 @@ impl Default for Theme {
             accent: "#ffffff".into(),
             accent_sync: false,
             font: String::new(),
+            font_secondary: String::new(),
             warn: "#ff9f43".into(),
             accent_details: false,
             font_size: 13.0,

@@ -6,7 +6,7 @@ import { initData } from "./data";
 import { computeFrame, lerp, mirrorPath, type Bump } from "./geometry";
 import { Spring } from "./spring";
 import type { Layout, NotchLayout, Rect } from "./types";
-import { appIcon, createPanel, createWidget, g, languageCode, panelFor, widgetType, type Widget } from "./widgets";
+import { appIcon, createPanel, createWidget, fontName, g, languageCode, panelFor, widgetType, type Widget } from "./widgets";
 import { launcherSetOpen } from "./widgets/launcher";
 
 const svg = document.getElementById("shape") as unknown as SVGSVGElement;
@@ -33,9 +33,11 @@ function applyTheme(t: Layout["theme"]): void {
   root.setProperty("--warn", t.warn);
   root.setProperty("--shape-opacity", String(Math.min(1, Math.max(0, (t.opacity ?? 100) / 100))));
   root.setProperty("--font-size", `${t.fontSize}px`);
-  // An installed font for the text ([theme] font); the built-in one when unset.
-  if (t.font) root.setProperty("--font", `"${t.font.replace(/["\\]/g, "")}"`);
-  else root.removeProperty("--font");
+  // Installed fonts for main and secondary text ([theme] font / font_secondary); built-in when unset.
+  for (const [prop, font] of [["--font", t.font], ["--font-secondary", t.fontSecondary]] as const) {
+    if (font) root.setProperty(prop, fontName(font));
+    else root.removeProperty(prop);
+  }
 }
 
 function div(className: string): HTMLDivElement {
@@ -404,6 +406,7 @@ class Overlay {
       _glide: this.animFor(name, "glide"),
       _accent: this.accentFor(name),
       _font: L.widgets[name.replace(/^calendar/, "clock")]?.font ?? "",
+      _font2: L.widgets[name.replace(/^calendar/, "clock")]?.font_secondary ?? "",
       _nudge: this.animFor(name, "nudge"),
     });
     const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {
