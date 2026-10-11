@@ -152,6 +152,8 @@ export function panelFor(name: string): string | null {
  * it shrinks. Text of another length just switches.
  */
 export function setText(el: HTMLElement, text: string, roll = false): void {
+  // Even digit widths while rolling is on, so the text never changes width mid-roll.
+  if (roll) el.classList.add("rolling");
   if (el.dataset.text === text) return;
   const prev = el.dataset.text ?? el.textContent ?? "";
   el.dataset.text = text;
@@ -161,7 +163,6 @@ export function setText(el: HTMLElement, text: string, roll = false): void {
   }
   const num = (s: string) => Number(s.replace(/\D/g, "")) || 0;
   const up = num(text) >= num(prev);
-  el.classList.add("rolling");
   const parts: Node[] = [];
   for (let i = 0; i < text.length; i++) {
     const a = prev[i];
@@ -183,7 +184,11 @@ export function setText(el: HTMLElement, text: string, roll = false): void {
     box.append(col);
     parts.push(box);
   }
-  el.replaceChildren(...parts);
+  // One inline run: widgets lay out as flex rows with gaps, which would space every digit apart.
+  const run = document.createElement("span");
+  run.className = "roll-run";
+  run.append(...parts);
+  el.replaceChildren(run);
   window.setTimeout(() => {
     if (el.dataset.text === text) el.textContent = text;
   }, 420);

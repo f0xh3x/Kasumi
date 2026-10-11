@@ -719,7 +719,9 @@ html.edge-bottom .launcher-power { padding: 0 4px 6px; margin: 0 0 4px; border-t
 
 /* Rolling numbers ([animation] rolling): changed digits roll to their new value. */
 .rolling { font-variant-numeric: tabular-nums; }
-.roll { display: inline-block; height: 1lh; overflow: hidden; vertical-align: top; }
+.roll-run { white-space: pre; }
+/* inline-flex: its baseline is the digit's own (an inline-block with overflow hidden sits on its bottom edge). */
+.roll { display: inline-flex; align-items: flex-start; height: 1lh; overflow: hidden; vertical-align: baseline; }
 .roll-col { display: flex; flex-direction: column; animation: roll-up 340ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .roll-col.down { animation-name: roll-down; }
 .roll-col > span { height: 1lh; }
