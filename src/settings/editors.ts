@@ -1373,6 +1373,47 @@ const animWidget: Editor = (ctx) => {
   );
 };
 
+// --- Updates ---------------------------------------------------------------------------
+
+/** Settings > About: check GitHub for a newer Kasumi, and install it. */
+const updates: Editor = () => {
+  const status = $("div", "row-help", "");
+  const check = $("button", "button", "Check for updates") as HTMLButtonElement;
+  const install = $("button", "button", "Update now") as HTMLButtonElement;
+  const notes = $("button", "button", "What's new") as HTMLButtonElement;
+  install.hidden = true;
+  notes.hidden = true;
+  let page = "";
+  invoke<string>("app_version").then((v) => (status.textContent = `You have version ${v}.`)).catch(() => {});
+  check.addEventListener("click", () => {
+    check.disabled = true;
+    status.textContent = "Checking…";
+    invoke<{ current: string; latest: string; available: boolean; page: string }>("update_check")
+      .then((r) => {
+        page = r.page;
+        install.hidden = !r.available;
+        notes.hidden = !r.available || !r.page;
+        status.textContent = r.available ? `Version ${r.latest} is available (you have ${r.current}).` : `You're up to date (${r.current}).`;
+      })
+      .catch((e) => (status.textContent = String(e)))
+      .finally(() => (check.disabled = false));
+  });
+  install.addEventListener("click", () => {
+    install.disabled = check.disabled = true;
+    status.textContent = "Downloading…";
+    invoke("update_install")
+      .then(() => (status.textContent = "Installing: Kasumi restarts in a moment."))
+      .catch((e) => {
+        status.textContent = String(e);
+        install.disabled = check.disabled = false;
+      });
+  });
+  notes.addEventListener("click", () => {
+    if (page) invoke("run_action", { action: "open", target: page }).catch(console.error);
+  });
+  return $("div", "stack-tight", $("div", "row", $("div", "row-text", $("div", "row-label", "Version"), status), $("div", "row-control update-buttons", notes, install, check)));
+};
+
 // --- Font ------------------------------------------------------------------------------
 
 /**
@@ -1700,6 +1741,7 @@ export const editors: Record<string, Editor> = {
   animWidget,
   accentWidget,
   fontPicker,
+  updates,
   presets,
   surfaceManager,
   surfaceStyle,

@@ -192,11 +192,15 @@ pub struct General {
     pub corners_attached: bool,
     /// Tooltips when hovering widgets.
     pub tooltips: bool,
+    /// Look for a new version on GitHub when Kasumi starts, and say so (updater.rs).
+    pub check_updates: bool,
+    /// Install new versions from GitHub by itself (updater.rs).
+    pub auto_update: bool,
 }
 
 impl Default for General {
     fn default() -> Self {
-        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0, corners_attached: true, tooltips: true }
+        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0, corners_attached: true, tooltips: true, check_updates: true, auto_update: false }
     }
 }
 

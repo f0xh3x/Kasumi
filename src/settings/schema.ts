@@ -1186,6 +1186,27 @@ export const pages: Page[] = [
     icon: 0xe946,
     sections: [
       {
+        title: "Updates",
+        help: "New versions come from Kasumi's GitHub releases.",
+        fields: [
+          { kind: "custom", editor: "updates" },
+          {
+            kind: "toggle",
+            label: "Check for updates when Kasumi starts",
+            help: "The notch says \"Update is available\" when there's a new version.",
+            path: ["general", "check_updates"],
+            default: true,
+          },
+          {
+            kind: "toggle",
+            label: "Update automatically",
+            help: "Checks now and then and installs a new version by itself (Kasumi restarts).",
+            path: ["general", "auto_update"],
+            default: false,
+          },
+        ],
+      },
+      {
         title: "Files",
         fields: [
           { kind: "action", label: "Config file", help: "Everything here is stored in config.toml.", button: "Open", run: "open_config" },

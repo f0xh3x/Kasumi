@@ -820,3 +820,6 @@ html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
 .ws-numbers .ws:hover, .ws-names .ws:hover { background: rgba(255, 255, 255, 0.1); }
 .accent-details.ws-dots .ws.focused { background: var(--accent); }
 .accent-details.ws-numbers .ws.focused, .accent-details.ws-names .ws.focused { background: var(--hover); }
+
+/* "Update is available" (updater.rs): the OSD in the accent colour. */
+.osd.update { color: var(--accent); }
