@@ -748,3 +748,8 @@ html.edge-bottom .launcher-power { padding: 0 4px 6px; margin: 0 0 4px; border-t
 /* Dock magnify: icons grow from the dock's edge. */
 .tasks.magnify .ico { transition: scale 90ms ease-out; transform-origin: 50% 0; }
 html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
+
+/* Marker glide: the line under the app in front travels to the next one (a dot halfway). */
+.widget.tasks.glides { position: relative; }
+.task-marker { position: absolute; height: 3px; width: 10px; border-radius: 2px; background: var(--fg); pointer-events: none; }
+.task.marker-away .task-dot { visibility: hidden; }

@@ -132,6 +132,8 @@ pub struct Animation {
     pub cascade: bool,
     pub rolling: bool,
     pub magnify: bool,
+    /// The line under the app in front travels to the next one (tasks).
+    pub marker_glide: bool,
     pub notification_nudge: bool,
 }
 
@@ -154,6 +156,7 @@ impl Default for Animation {
             cascade: false,
             rolling: false,
             magnify: false,
+            marker_glide: false,
             notification_nudge: false,
         }
     }

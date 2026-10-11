@@ -71,6 +71,42 @@ export function tasks(opts: Record<string, unknown>): Widget {
   const root = el("widget tasks");
   if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
   if (opts.dim_minimized === true) root.classList.add("dim-minimized");
+  // Marker glide ([animation] marker_glide): when another app comes to the front,
+  // its line travels there from the last one, narrowing to a dot halfway.
+  const glides = opts._glide === true;
+  if (glides) root.classList.add("glides");
+  let lastActive: string | null = null;
+  let gliding: Animation | null = null;
+  const glideMarker = (from: { b: HTMLElement; dots: HTMLElement }, to: { b: HTMLElement; dots: HTMLElement }) => {
+    // Where each line sits, within the widget (offsets: unaffected by a dock's scaling).
+    const spot = (x: { b: HTMLElement; dots: HTMLElement }) => ({
+      x: x.b.offsetLeft + x.dots.offsetLeft + x.dots.offsetWidth / 2,
+      y: x.b.offsetTop + x.dots.offsetTop,
+    });
+    const a = spot(from);
+    const z = spot(to);
+    gliding?.finish();
+    to.b.classList.add("marker-away");
+    const m = el("task-marker");
+    m.style.left = `${a.x}px`;
+    m.style.top = `${z.y}px`;
+    root.append(m);
+    const dx = z.x - a.x;
+    gliding = m.animate(
+      [
+        { transform: "translateX(-50%)", width: "10px" },
+        { transform: `translateX(calc(${(dx * 0.5).toFixed(1)}px - 50%))`, width: "3px", offset: 0.5 },
+        { transform: `translateX(calc(${dx.toFixed(1)}px - 50%))`, width: "10px" },
+      ],
+      { duration: Math.min(420, 220 + Math.abs(dx) * 0.6), easing: "cubic-bezier(0.55, 0, 0.3, 1)" },
+    );
+    const done = () => {
+      m.remove();
+      to.b.classList.remove("marker-away");
+    };
+    gliding.onfinish = done;
+    gliding.oncancel = done;
+  };
   // Magnify ([animation] magnify): icons grow as the cursor passes over them.
   if (opts._magnify === true) {
     root.classList.add("magnify");
@@ -175,6 +211,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
     const t = latest;
     if (!t) return;
     const mine = t.windows.filter((w) => !ownMonitor || !device || w.monitor === device);
+    let nowActive: string | null = null;
     let apps = t.apps.filter((a) => (showPinned && a.pinned) || mine.some((w) => w.app === a.key));
     if (localOrder) {
       const o = localOrder;
@@ -281,6 +318,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
       if (!drag?.moved && root.children[i] !== x.b) root.insertBefore(x.b, root.children[i] ?? null);
       const wins = mine.filter((w) => w.app === a.key);
       const active = wins.find((w) => w.active);
+      if (active) nowActive = a.key;
       x.b.classList.toggle("active", !!active);
       x.b.classList.toggle("idle", wins.length === 0);
       x.b.classList.toggle("minimized", wins.length > 0 && wins.every((w) => w.minimized));
@@ -299,6 +337,12 @@ export function tasks(opts: Record<string, unknown>): Widget {
       const dots = Math.min(3, wins.length);
       x.dots.replaceChildren(...Array.from({ length: dots }, () => el("task-dot")));
     });
+    if (glides && lastActive && nowActive && lastActive !== nowActive) {
+      const from = buttons.get(lastActive);
+      const to = buttons.get(nowActive);
+      if (from && to && from.b.isConnected) glideMarker(from, to);
+    }
+    lastActive = nowActive;
     if (!was) return;
     // Moved buttons glide to their new place; new ones grow in.
     const shift = root.getBoundingClientRect().left - rootWas;

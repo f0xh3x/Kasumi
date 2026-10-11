@@ -1328,6 +1328,7 @@ const ANIM_EFFECTS: Record<string, [string, string]> = {
   cascade: ["Panel content one after another", "cascade"],
   roll: ["Rolling numbers", "rolling"],
   magnify: ["Icons grow under the cursor", "magnify"],
+  glide: ["Focus marker glides between apps", "marker_glide"],
   nudge: ["Bell shakes on a new notification", "notification_nudge"],
 };
 

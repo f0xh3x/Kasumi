@@ -27,6 +27,7 @@ export interface Animation {
   cascade: boolean;
   rolling: boolean;
   magnify: boolean;
+  markerGlide: boolean;
   notificationNudge: boolean;
 }
 

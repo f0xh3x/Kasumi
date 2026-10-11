@@ -76,6 +76,7 @@ const ANIM_GLOBAL = {
   cascade: "cascade",
   roll: "rolling",
   magnify: "magnify",
+  glide: "markerGlide",
   nudge: "notificationNudge",
 } as const;
 
@@ -396,6 +397,7 @@ class Overlay {
       _device: L.device,
       _roll: this.animFor(name, "roll"),
       _magnify: this.animFor(name, "magnify"),
+      _glide: this.animFor(name, "glide"),
       _nudge: this.animFor(name, "nudge"),
     });
     const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {
