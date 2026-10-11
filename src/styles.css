@@ -525,6 +525,8 @@ html.mode-dock .slot > * { pointer-events: auto; }
 /* While it searches, the launcher has its notch to itself (a dock's other widgets
    would leave the field no room); they come back when it closes. */
 .slot:has(.launcher-w.searching) > :not(.launcher-w) { display: none; }
+/* The dock's own search field (no launcher widget placed): there only while searching. */
+.launcher-w.launcher-inline:not(.searching) { display: none; }
 .launcher-field::placeholder, .launcher-own-field::placeholder { color: var(--fg-dim); }
 /* The hotkey launcher's drop point: the middle of the bar, outside the center
    group's layout (as a flex item, the group's gap would push the clock off-center). */

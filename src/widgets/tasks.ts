@@ -82,8 +82,10 @@ export function tasks(opts: Record<string, unknown>): Widget {
   let glideEnd: (() => void) | null = null;
   const glideMarker = (from: { b: HTMLElement; dots: HTMLElement }, to: { b: HTMLElement; dots: HTMLElement }) => {
     // Where a line's center sits, within the widget (offsets: unaffected by a dock's scaling).
+    // The dots sit at left: 50% and are pulled back by half their width with a transform,
+    // which offsets don't include: their offsetLeft is already the center.
     const spot = (x: { b: HTMLElement; dots: HTMLElement }) => ({
-      x: x.b.offsetLeft + x.dots.offsetLeft + x.dots.offsetWidth / 2,
+      x: x.b.offsetLeft + x.dots.offsetLeft,
       y: x.b.offsetTop + x.dots.offsetTop,
     });
     glideEnd?.();

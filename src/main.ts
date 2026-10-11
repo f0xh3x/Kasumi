@@ -565,7 +565,13 @@ class Overlay {
           .filter((d) => d.inHull && d.panels)
           .sort((a, b) => Math.abs(a.x + a.width / 2 - L.width / 2) - Math.abs(b.x + b.width / 2 - L.width / 2))[0];
         if (middle?.panels) {
-          const panel = mountPanel("launcher", undefined, undefined, { _ownField: true });
+          // The search field takes the dock's place while the launcher is open: it
+          // shows only then, and its notch's other widgets step aside (styles.css).
+          const inline = createWidget("launcher", opts("launcher"));
+          inline.el.classList.add("launcher-inline");
+          this.widgets.push(inline);
+          middle.slot?.append(inline.el);
+          const panel = mountPanel("launcher");
           panel.style.visibility = "hidden";
           middle.panels.set("launcher", panel);
           this.openLauncher = () => this.toggleDockPanel(middle, "launcher", true);
