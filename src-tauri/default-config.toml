@@ -32,6 +32,7 @@ text = "#ffffff"
 dim_opacity = 0.45        # secondary text
 accent = "#ffffff"
 warn = "#ff9f43"           # hot temperatures
+accent_details = false    # widget details (hover, the task line, sliders...) in the accent colour
 font_size = 13
 
 [geometry]

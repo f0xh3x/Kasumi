@@ -36,6 +36,24 @@ const ANIM_WIDGETS: [string, string, number, string][] = [
   ["disk", "Disk usage", 0xeda2, "roll"],
 ];
 
+/** Widgets with details the accent colour can go on (Settings > Appearance > Per widget). */
+const ACCENT_WIDGETS: [string, string, number][] = [
+  ["tasks", "Tasks", 0xe737],
+  ["clock", "Clock and calendar", 0xe823],
+  ["weather", "Weather", 0xe706],
+  ["temps", "PC temps", 0xe9ca],
+  ["media", "Media", 0xe8d6],
+  ["quick", "Quick settings", 0xe713],
+  ["menu", "Menu", 0xe700],
+  ["launcher", "Launcher", 0xe721],
+  ["tray", "Tray", 0xe70d],
+  ["buttons", "Buttons", 0xe7e8],
+  ["notifications", "Notifications", 0xea8f],
+  ["clipboard", "Clipboard", 0xe77f],
+  ["disk", "Disk usage", 0xeda2],
+  ["claude", "Claude Code", 0xe8bd],
+];
+
 export type Field =
   | (Base & { kind: "toggle" })
   | (Base & { kind: "slider"; min: number; max: number; step: number; unit?: string })
@@ -840,7 +858,14 @@ export const pages: Page[] = [
           },
           { kind: "color", label: "Text", path: ["theme", "text"], default: "#ffffff" },
           { kind: "slider", label: "Secondary text opacity", path: ["theme", "dim_opacity"], default: 0.45, min: 0.2, max: 0.9, step: 0.05 },
-          { kind: "color", label: "Accent", help: "Today in the calendar, sliders and bars.", path: ["theme", "accent"], default: "#ffffff" },
+          { kind: "color", label: "Accent", help: "Today in the calendar, and widget details when that's on.", path: ["theme", "accent"], default: "#ffffff" },
+          {
+            kind: "toggle",
+            label: "Accent on widget details",
+            help: "Hover highlights, the line under the app in front, sliders, bars and key readings in the accent colour. Each widget can differ under Per widget below.",
+            path: ["theme", "accent_details"],
+            default: false,
+          },
           { kind: "color", label: "Warning", help: "Hot temperatures.", path: ["theme", "warn"], default: "#ff9f43" },
           { kind: "slider", label: "Text size", path: ["theme", "font_size"], default: 13, min: 11, max: 16, step: 0.5, unit: "px" },
         ],
@@ -873,6 +898,13 @@ export const pages: Page[] = [
           { kind: "slider", label: "Large", path: ["sizes", "large"], default: 60, min: 40, max: 96, step: 1, unit: "px" },
         ],
       },
+      ...ACCENT_WIDGETS.map(([w, title, icon]) => ({
+        title,
+        collapsible: true,
+        group: "Per widget",
+        icon,
+        fields: [{ kind: "custom" as const, editor: `accentWidget:${w}` }],
+      })),
     ],
   },
   {

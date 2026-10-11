@@ -236,6 +236,10 @@ pub struct Theme {
     pub accent: String,
     /// Hot readings (temps above their warning level).
     pub warn: String,
+    /// Widget details in the accent colour: hover highlights, the task in front's
+    /// line, sliders, bars, the weather panel's temperature... (each widget can
+    /// differ: `[widgets.<w>] accent_details`).
+    pub accent_details: bool,
     pub font_size: f64,
     /// Opacity of the bars, notches and panels (percent); text stays solid.
     pub opacity: f64,
@@ -249,6 +253,7 @@ impl Default for Theme {
             dim_opacity: 0.45,
             accent: "#ffffff".into(),
             warn: "#ff9f43".into(),
+            accent_details: false,
             font_size: 13.0,
             opacity: 100.0,
         }

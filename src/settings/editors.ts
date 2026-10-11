@@ -1363,6 +1363,25 @@ const animWidget: Editor = (ctx) => {
   );
 };
 
+// --- Accent on details, per widget ------------------------------------------------------
+
+/** One widget's "accent on details" ("accentWidget:clock"): like the global setting, or on / off. */
+const accentWidget: Editor = (ctx) => {
+  const w = ctx.arg ?? "";
+  const v = ctx.cfg.widgets?.[w]?.accent_details;
+  const on = ctx.cfg.theme?.accent_details === true;
+  const sel = select(
+    [
+      ["", `Like global (${on ? "on" : "off"})`],
+      ["on", "On"],
+      ["off", "Off"],
+    ],
+    v === true ? "on" : v === false ? "off" : "",
+  );
+  sel.addEventListener("change", () => ctx.save(["widgets", w, "accent_details"], sel.value === "" ? null : sel.value === "on"));
+  return row("Accent on details", undefined, sel);
+};
+
 // --- Windows setup for notifications --------------------------------------------------
 
 /**
@@ -1627,6 +1646,7 @@ export const editors: Record<string, Editor> = {
   osdPlace,
   windowsGuide,
   animWidget,
+  accentWidget,
   presets,
   surfaceManager,
   surfaceStyle,

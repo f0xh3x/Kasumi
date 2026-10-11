@@ -84,6 +84,7 @@ export interface Theme {
   dimOpacity: number;
   accent: string;
   warn: string;
+  accentDetails: boolean;
   fontSize: number;
   /** Opacity of the bars, notches and panels (percent). */
   opacity: number;

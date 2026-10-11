@@ -398,6 +398,7 @@ class Overlay {
       _roll: this.animFor(name, "roll"),
       _magnify: this.animFor(name, "magnify"),
       _glide: this.animFor(name, "glide"),
+      _accent: this.accentFor(name),
       _nudge: this.animFor(name, "nudge"),
     });
     const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {
@@ -799,6 +800,14 @@ class Overlay {
     const owner = name.replace(/^calendar/, "clock");
     const own = L.widgets[owner]?.[`anim_${key}`];
     return typeof own === "boolean" ? own : L.animation[ANIM_GLOBAL[key]] === true;
+  }
+
+  /** Accent on a widget's details: its own `accent_details`, else [theme]'s. */
+  private accentFor(name: string): boolean {
+    const L = this.layout;
+    if (!L) return false;
+    const own = L.widgets[name.replace(/^calendar/, "clock")]?.accent_details;
+    return typeof own === "boolean" ? own : L.theme.accentDetails === true;
   }
 
   /** Hover nudge: Rust says which notch the cursor is coming near (null: none). */

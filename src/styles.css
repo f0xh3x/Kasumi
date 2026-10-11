@@ -753,3 +753,33 @@ html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
 .widget.tasks.glides { position: relative; }
 .task-marker { position: absolute; left: 0; top: 0; height: 3px; width: 10px; border-radius: 2px; background: var(--fg); pointer-events: none; }
 .task.marker-away .task-dot { visibility: hidden; }
+
+/* Accent on widget details ([theme] accent_details, or the widget's own): hover
+   highlights, the task in front's line, sliders, bars and key readings. */
+.accent-details { --hover: color-mix(in srgb, var(--accent) 30%, transparent); }
+.accent-details .media-btn:hover,
+.accent-details .menu-item:hover,
+.accent-details .tray-icon:hover,
+.accent-details .task:hover,
+.accent-details .tasks-row:hover,
+.accent-details .tasks-action:hover,
+.accent-details .quick-tile:hover,
+.accent-details .quick-output-item:hover,
+.accent-details .btn:hover,
+.accent-details .launcher-row.selected,
+.accent-details .launcher-user:hover,
+.accent-details .launcher-power-button:hover,
+.accent-details .clip-row:hover,
+.accent-details .note-row.clickable:hover,
+.accent-details .note-action:hover { background: var(--hover); }
+.accent-details .task.active .task-dot,
+.accent-details .task-marker,
+.accent-details .seek-fill,
+.accent-details .seek-knob,
+.accent-details .hw-bar-fill,
+.accent-details .meter-bar-fill,
+.accent-details .claude-col-bar { background: var(--accent); }
+.accent-details .high .meter-bar-fill { background: var(--warn); }
+.accent-details .quick-range { background: linear-gradient(to right, var(--accent) var(--fill, 50%), rgba(255, 255, 255, 0.18) var(--fill, 50%)); }
+.accent-details .wx-now-temp,
+.accent-details .hw-temp:not(.warn) { color: var(--accent); }

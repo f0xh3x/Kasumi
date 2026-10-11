@@ -131,12 +131,18 @@ export function languageCode(k: { code: string; code2?: string }, opts: Options 
 
 export function createWidget(name: string, opts: Options = {}): Widget {
   const factory = widgets[widgetType(name)];
-  return factory ? factory(opts) : { el: el("widget unknown", name) };
+  return accented(factory ? factory(opts) : { el: el("widget unknown", name) }, opts);
 }
 
 export function createPanel(name: string, opts: Options, ctx: PanelContext): Widget {
   const factory = panels[widgetType(name)];
-  return factory ? factory(opts, ctx) : { el: el("widget unknown", name) };
+  return accented(factory ? factory(opts, ctx) : { el: el("widget unknown", name) }, opts);
+}
+
+/** Accent on details (opts._accent, resolved by the overlay): styles.css does the rest. */
+function accented(w: Widget, opts: Options): Widget {
+  if (opts._accent === true) w.el.classList.add("accent-details");
+  return w;
 }
 
 /** The panel a widget opens, wherever it's placed (bar dropdown or notch panel). */

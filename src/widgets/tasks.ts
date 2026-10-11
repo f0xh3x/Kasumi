@@ -97,7 +97,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
     root.append(m);
     const start = performance.now();
     const z0 = spot(to);
-    const dur = Math.min(420, 240 + Math.abs(z0.x - a.x) * 0.45);
+    const dur = Math.min(320, 170 + Math.abs(z0.x - a.x) * 0.35);
     glideEnd = () => {
       cancelAnimationFrame(glideFrame);
       m.remove();
