@@ -253,7 +253,8 @@ html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); 
 .tray-empty { color: var(--fg-dim); font-size: 12px; padding: 6px 4px; white-space: nowrap; }
 
 /* OSD in text mode (keyboard layout fallback): no level bar. */
-.osd.text .osd-track { visibility: hidden; }
+.osd.text { justify-content: center; }
+.osd.text .osd-track { display: none; }
 .osd.text .osd-value { width: auto; }
 
 /* Keyboard-layout peek notch content. */
@@ -789,7 +790,7 @@ html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
 .own-font { font-family: var(--font, "Inter"), "Segoe UI", sans-serif; }
 .panel-calendar .cal-dow, .panel-calendar .cal-wk, .panel-calendar .cal-day,
 .media-artist, .seek-time,
-.wx-cond, .wx-detail, .wx-place, .wx-hour-time,
+.wx-cond, .wx-detail, .wx-place, .wx-hour-time, .wx-hour-temp,
 .hw-label, .hw-name, .hw-key, .hw-load-text, .hw-detail, .hw-offline,
 .tasks-title, .tasks-empty, .tray-empty,
 .quick-num, .quick-status, .quick-tile-label, .quick-output-item, .quick-apps-empty,

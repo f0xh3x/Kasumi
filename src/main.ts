@@ -882,6 +882,14 @@ class Overlay {
     this.osdEl.classList.toggle("muted", e.muted);
     this.osdValue.textContent = e.text ?? String(pct);
     this.osdEl.classList.toggle("text", e.text !== undefined);
+    if (e.text !== undefined) {
+      // Text (keyboard layout, Caps Lock): a pill around the text, not the level pill's width.
+      const was = this.osdEl.style.width;
+      this.osdEl.style.width = "max-content";
+      const text = Math.ceil(this.osdEl.getBoundingClientRect().width);
+      this.osdEl.style.width = was;
+      this.osdSize = { w: Math.round(Math.max(100, text + 2 * L.geometry.notchCornerRadius + 8)), h: L.osd.height };
+    }
     this.osd.target = 1;
     clearTimeout(this.osdTimer);
     this.osdTimer = window.setTimeout(() => {
