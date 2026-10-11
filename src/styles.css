@@ -806,3 +806,17 @@ html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
 .disk-letter,
 .note-head, .note-body, .note-empty, .note-action, .note-time,
 .osd-note-text { font-family: var(--font-secondary, var(--font, "Inter")), "Segoe UI", sans-serif; }
+
+/* Komorebi workspaces: dots (the focused one a pill), numbers or names. */
+.widget.workspaces { gap: 5px; }
+.ws { cursor: pointer; flex: none; transition: width 220ms cubic-bezier(0.3, 0.7, 0.2, 1), background-color 160ms ease, color 160ms ease, opacity 160ms ease; }
+.ws-dots .ws { width: 6px; height: 6px; border-radius: 3px; background: var(--fg); opacity: 0.3; }
+.ws-dots .ws.busy { opacity: 0.6; }
+.ws-dots .ws.focused { width: 18px; opacity: 1; }
+.ws-dots .ws:hover { opacity: 0.85; }
+.ws-numbers .ws, .ws-names .ws { padding: 1px 6px; border-radius: 6px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.ws-numbers .ws.busy, .ws-names .ws.busy { color: var(--fg); }
+.ws-numbers .ws.focused, .ws-names .ws.focused { background: rgba(255, 255, 255, 0.16); color: var(--fg); }
+.ws-numbers .ws:hover, .ws-names .ws:hover { background: rgba(255, 255, 255, 0.1); }
+.accent-details.ws-dots .ws.focused { background: var(--accent); }
+.accent-details.ws-numbers .ws.focused, .accent-details.ws-names .ws.focused { background: var(--hover); }

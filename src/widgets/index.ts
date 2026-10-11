@@ -15,6 +15,7 @@ import { launcher, launcherPanel } from "./launcher";
 import { clipboard, clipboardPanel, focus, netspeed, notifications, notificationsPanel, privacy, privacyPanel } from "./extras";
 import { disk } from "./disk";
 import { claude, claudePanel } from "./claude";
+import { workspaces } from "./workspaces";
 import { subscribe } from "../data";
 
 export interface Widget {
@@ -89,6 +90,7 @@ const widgets: Record<string, Factory> = {
   claude,
   clipboard,
   notifications,
+  workspaces,
   language: (opts) => {
     // Click to switch the window you're typing in to the next keyboard layout.
     // Options: icon (a keyboard glyph before the code), format "three" (ENG) | "two" (EN).

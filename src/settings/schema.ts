@@ -55,6 +55,7 @@ const APPEARANCE_WIDGETS: [string, string, number, boolean][] = [
   ["clipboard", "Clipboard", 0xe77f, true],
   ["disk", "Disk usage", 0xeda2, true],
   ["claude", "Claude Code", 0xe8bd, true],
+  ["workspaces", "Workspaces", 0xe8a9, true],
   ["focus", "Focused app", 0xe7c4, false],
   ["netspeed", "Network speed", 0xe74b, false],
   ["language", "Keyboard language", 0xe765, false],
@@ -430,6 +431,26 @@ export const pages: Page[] = [
             ],
           },
           { kind: "slider", label: "Width", help: "Longer titles end in “…”.", path: ["widgets", "focus", "max_width"], default: 300, min: 100, max: 800, step: 10, unit: "px" },
+        ],
+      },
+      {
+        title: "Workspaces (Komorebi)",
+        collapsible: true,
+        icon: 0xe8a9,
+        help: "The Komorebi tiling window manager's workspaces on each bar's monitor. Click one to switch to it, or scroll over them. Hidden while Komorebi isn't running.",
+        fields: [
+          {
+            kind: "select",
+            label: "Shows",
+            path: ["widgets", "workspaces", "show"],
+            default: "dots",
+            options: [
+              { value: "dots", label: "Dots (the current one a pill)" },
+              { value: "numbers", label: "Numbers" },
+              { value: "names", label: "Names" },
+            ],
+          },
+          { kind: "toggle", label: "Hide empty workspaces", help: "The current one always shows.", path: ["widgets", "workspaces", "hide_empty"], default: false },
         ],
       },
       {

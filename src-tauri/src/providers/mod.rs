@@ -6,6 +6,7 @@ pub mod audio;
 pub mod claude;
 pub mod clipboard;
 pub mod extras;
+pub mod komorebi;
 pub mod media;
 pub mod notifications;
 pub mod systray;
@@ -47,6 +48,7 @@ fn consumers(key: &str) -> Option<&'static [&'static str]> {
         "claude" => &["claude"],
         "notifications" => &["notifications"],
         "clipboard" => &["clipboard"],
+        "workspaces" => &["workspaces"],
         _ => return None,
     })
 }
@@ -191,4 +193,5 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     claude::start(app);
     clipboard::start(app);
     notifications::start(app);
+    komorebi::start(app);
 }

@@ -546,6 +546,7 @@ class Overlay {
           w.el.addEventListener("notch:panel", () => this.toggleDockPanel(drop, name, true));
         }
       }
+      if (n.widgets.some((w) => widgetType(w) === "workspaces")) slot.classList.add("clickable");
       this.markHidden(n);
       content.append(slot);
       const drop: Drop = {

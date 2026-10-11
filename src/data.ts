@@ -135,6 +135,8 @@ interface DataMap {
   keyboard: Keyboard | null;
   focus: { title: string; app: string } | null;
   netspeed: { down: number; up: number } | null;
+  /** Komorebi: per monitor ("DISPLAY4"), its workspaces and the focused one. */
+  workspaces: { focused: number; monitors: { name: string; focused: number; workspaces: { name: string; windows: number }[] }[] } | null;
   disks: { id: string; label: string; total: number; free: number }[] | null;
   privacy: { mic: string[]; camera: string[]; location: string[] } | null;
   claude: ClaudeUsage | null;
