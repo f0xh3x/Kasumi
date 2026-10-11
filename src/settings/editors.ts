@@ -1327,7 +1327,6 @@ function presets(ctx: EditorCtx): HTMLElement {
 const ANIM_EFFECTS: Record<string, [string, string]> = {
   cascade: ["Panel content one after another", "cascade"],
   roll: ["Rolling numbers", "rolling"],
-  blur: ["Panel blurs in", "blur_in"],
   magnify: ["Icons grow under the cursor", "magnify"],
   nudge: ["Bell shakes on a new notification", "notification_nudge"],
 };

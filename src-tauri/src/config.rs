@@ -128,11 +128,10 @@ pub struct Animation {
     /// The open bar's widgets appear one after another, from the middle out.
     pub bar_cascade: bool,
     /// Widget effects, each also per widget (`[widgets.<w>] anim_<key>`): a panel
-    /// shows its content one piece after another (cascade) and comes into focus
-    /// (blur); numbers roll to new values (rolling); dock icons grow under the
-    /// cursor (magnify); the bell shakes for a new notification (notification_nudge).
+    /// shows its content one piece after another (cascade); numbers roll to new
+    /// values (rolling); dock icons grow under the cursor (magnify); the bell
+    /// shakes for a new notification (notification_nudge).
     pub cascade: bool,
-    pub blur_in: bool,
     pub rolling: bool,
     pub magnify: bool,
     pub notification_nudge: bool,
@@ -156,7 +155,6 @@ impl Default for Animation {
             hover_nudge: false,
             bar_cascade: false,
             cascade: false,
-            blur_in: false,
             rolling: false,
             magnify: false,
             notification_nudge: false,

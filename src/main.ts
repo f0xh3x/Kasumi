@@ -75,7 +75,6 @@ interface Drop {
 const ANIM_GLOBAL = {
   cascade: "cascade",
   roll: "rolling",
-  blur: "blurIn",
   magnify: "magnify",
   nudge: "notificationNudge",
 } as const;
@@ -96,6 +95,7 @@ const PANEL_ROWS = [
   ".privacy-panel > *",
   ".launcher-list > *",
   ".quick-grid > *",
+  ".quick-tiles > *",
   ".quick-outputs > *",
   ".quick-apps > *",
   ".tray-grid > *",
@@ -109,8 +109,8 @@ const PANEL_ROWS = [
  */
 function cascade(els: ArrayLike<HTMLElement>, start: number, shift: number): number {
   const n = els.length;
-  const step = Math.min(40, 360 / Math.max(1, n));
-  const dur = 220;
+  const step = Math.min(25, 240 / Math.max(1, n));
+  const dur = 160;
   const end = start + (n - 1) * step + dur;
   const t = performance.now() - start;
   for (let i = 0; i < n; i++) {
@@ -406,8 +406,8 @@ class Overlay {
     });
     const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {
       const panel = div(`panel panel-${widgetType(name)}`);
-      // Its open effects (render() reads them): cascade, blur.
-      for (const k of ["cascade", "blur"] as const) if (this.animFor(name, k)) panel.dataset[k] = "1";
+      // Its open effect (render() reads it): cascade.
+      if (this.animFor(name, "cascade")) panel.dataset.cascade = "1";
       if (width) panel.style.width = `${width}px`;
       if (height) panel.style.height = `${height}px`;
       const w = createPanel(name, { ...opts(name), ...extra }, ctx);
@@ -1162,11 +1162,8 @@ class Overlay {
         const near = how === "reveal" || how === "fade" ? (bumps[i].panelTop ?? H) : bf.depth - d.panelHeight;
         d.panelEl.style.opacity = String(how === "reveal" ? 1 : how === "fade" ? clamp01(p * 1.6 - 0.5) : clamp01(p * 1.4 - 0.2));
         d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(how === "slide" ? near : Math.round(near)) * away}px)`;
-        // Effects ([animation] blur_in / cascade, or the widget's own).
-        const q = clamp01(p);
-        const fx = d.panelEl.dataset;
-        d.panelEl.style.filter = fx.blur === "1" && q < 0.995 ? `blur(${((1 - q) * 6).toFixed(2)}px)` : "";
-        if (fx.cascade === "1") this.cascadePanel(d.panelEl, p, d.spring.target, away);
+        // Cascade ([animation] cascade, or the widget's own).
+        if (d.panelEl.dataset.cascade === "1") this.cascadePanel(d.panelEl, p, d.spring.target, away);
       }
     });
   }

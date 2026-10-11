@@ -17,7 +17,7 @@ interface Base {
 }
 
 /** Animation effects per widget (Settings > Animation > Per widget): the ones that apply to each. */
-const PANEL_FX = "cascade,blur";
+const PANEL_FX = "cascade";
 const ANIM_WIDGETS: [string, string, number, string][] = [
   ["clock", "Clock", 0xe823, `roll,${PANEL_FX}`],
   ["weather", "Weather", 0xe706, `roll,${PANEL_FX}`],
@@ -939,7 +939,6 @@ export const pages: Page[] = [
         fields: [
           { kind: "toggle", label: "Hover nudge", help: "A notch grows a little as the cursor comes near it.", path: ["animation", "hover_nudge"], default: false },
           { kind: "toggle", label: "Cascade", help: "A widget's panel shows its content one piece after another: calendar days, weather hours, notifications...", path: ["animation", "cascade"], default: false },
-          { kind: "toggle", label: "Blur in", help: "Panels come into focus as they open.", path: ["animation", "blur_in"], default: false },
           { kind: "toggle", label: "Rolling numbers", help: "Clock, temperatures, battery, counts... roll to their new value.", path: ["animation", "rolling"], default: false },
           { kind: "toggle", label: "Dock magnify", help: "Task icons grow as the cursor passes over them.", path: ["animation", "magnify"], default: false },
           { kind: "toggle", label: "Notification nudge", help: "The bell shakes for a new notification; the pop-up's icon bounces.", path: ["animation", "notification_nudge"], default: false },

@@ -26,7 +26,6 @@ export interface Animation {
   hoverNudge: boolean;
   barCascade: boolean;
   cascade: boolean;
-  blurIn: boolean;
   rolling: boolean;
   magnify: boolean;
   notificationNudge: boolean;
