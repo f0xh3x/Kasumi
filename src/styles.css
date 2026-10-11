@@ -787,7 +787,7 @@ html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
 /* Fonts: main text uses --font ([theme] font, or a widget's own), small details
    use --font-secondary (else the main font). Icons keep their icon font. */
 .own-font { font-family: var(--font, "Inter"), "Segoe UI", sans-serif; }
-.panel-calendar .cal-dow, .panel-calendar .cal-wk,
+.panel-calendar .cal-dow, .panel-calendar .cal-wk, .panel-calendar .cal-day,
 .media-artist, .seek-time,
 .wx-cond, .wx-detail, .wx-place, .wx-hour-time,
 .hw-label, .hw-name, .hw-key, .hw-load-text, .hw-detail, .hw-offline,
