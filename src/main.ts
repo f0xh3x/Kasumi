@@ -7,7 +7,7 @@ import { computeFrame, lerp, mirrorPath, type Bump } from "./geometry";
 import { Spring } from "./spring";
 import type { Layout, NotchLayout, Rect } from "./types";
 import { appIcon, createPanel, createWidget, fontName, g, languageCode, panelFor, widgetType, type Widget } from "./widgets";
-import { launcherSetOpen } from "./widgets/launcher";
+import { launcherHold, launcherSetOpen } from "./widgets/launcher";
 
 const svg = document.getElementById("shape") as unknown as SVGSVGElement;
 const fill = document.getElementById("fill") as unknown as SVGPathElement;
@@ -174,6 +174,8 @@ class Overlay {
   /** When the panels' cascades began (by panel), and when time-driven effects end: keep drawing till then. */
   private cascadeStart = new Map<HTMLElement, number>();
   private holdUntil = 0;
+  /** When a closed launcher started being held in the dock (0: it isn't). */
+  private launcherHeld = 0;
 
   // Keyboard-layout peek: a small notch pops out at the language widget.
   private peek = new Spring(0, 0, 420, 32);
@@ -343,7 +345,26 @@ class Overlay {
   setLauncher(open: boolean): void {
     if (open) this.openLauncher?.();
     else this.closeAll();
+    // A dock keeps showing the search while it closes, then its items come back (releaseLauncher).
+    if (!open && this.layout?.mode === "dock" && document.querySelector(".launcher-w.searching")) {
+      launcherHold(true);
+      this.launcherHeld = performance.now();
+      this.holdUntil = Math.max(this.holdUntil, this.launcherHeld + 1500);
+      this.kick();
+    } else if (open) {
+      this.releaseLauncher(true);
+    }
     launcherSetOpen(open);
+  }
+
+  /** Lets a held launcher go: once the dock has (nearly) closed, or it stays open after all. */
+  private releaseLauncher(now = false): void {
+    if (!this.launcherHeld) return;
+    const since = performance.now() - this.launcherHeld;
+    if (now || this.expand.value < 0.05 || (since > 150 && this.expand.target > 0.5) || since > 1500) {
+      this.launcherHeld = 0;
+      launcherHold(false);
+    }
   }
 
   /** Dock: a notch widget's panel morphs out of its notch (one open at a time). */
@@ -1189,6 +1210,7 @@ class Overlay {
       ...this.drops.flatMap((d) => [d.spring, ...(d.xs ? [d.xs] : []), ...(d.shown ? [d.shown] : [])]),
     ];
     for (const s of springs) s.step(dt);
+    this.releaseLauncher();
     // Time-driven effects (cascades) keep the loop going until they're done.
     if (springs.every((s) => s.settled) && now >= this.holdUntil) {
       for (const s of springs) s.snap();

@@ -26,6 +26,8 @@ const S = {
   max: 8,
   listeners: new Set<() => void>(),
   fields: new Set<HTMLInputElement>(),
+  /** Closed, but still showing in the dock while it collapses (launcherHold). */
+  hold: false,
 };
 const notify = () => S.listeners.forEach((f) => f());
 
@@ -111,6 +113,17 @@ function bindField(input: HTMLInputElement): void {
   });
 }
 
+/**
+ * Keeps a closed launcher showing in its notch (the dock's other items still
+ * aside), so a dock that's closing too shrinks in one motion instead of first
+ * growing back to its items' size. The overlay lets go once the dock has closed.
+ */
+export function launcherHold(on: boolean): void {
+  if (S.hold === on) return;
+  S.hold = on;
+  notify();
+}
+
 /** Called by the overlay when Rust opens or closes the launcher on it. */
 export function launcherSetOpen(open: boolean): void {
   S.open = open;
@@ -148,7 +161,7 @@ export function launcher(opts: Record<string, unknown>): Widget {
     e.stopPropagation();
     if (!S.open) invoke("launcher_open").catch(console.error);
   });
-  const sync = () => root.classList.toggle("searching", S.open);
+  const sync = () => root.classList.toggle("searching", S.open || S.hold);
   S.listeners.add(sync);
   sync();
   return {
