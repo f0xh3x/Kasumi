@@ -19,6 +19,7 @@ export interface Animation {
   panelDamping: number;
   mass: number;
   style: "drop" | "spread";
+  panelContent: "slide" | "reveal" | "fade";
 }
 
 export interface BarWidgets {

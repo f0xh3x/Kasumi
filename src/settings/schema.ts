@@ -873,6 +873,18 @@ export const pages: Page[] = [
               { value: "spread", label: "Spread out of the notches" },
             ],
           },
+          {
+            kind: "select",
+            label: "Panel content",
+            help: "How a widget's panel (calendar, weather...) shows its content while it opens.",
+            path: ["animation", "panel_content"],
+            default: "slide",
+            options: [
+              { value: "slide", label: "Slides in with the panel" },
+              { value: "reveal", label: "Stays in place, the panel uncovers it" },
+              { value: "fade", label: "Stays in place and fades in" },
+            ],
+          },
         ],
       },
       {

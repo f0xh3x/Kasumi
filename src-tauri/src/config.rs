@@ -115,6 +115,9 @@ pub struct Animation {
     /// "drop": the full-width bar slides down out of the top edge.
     /// "spread": the bar grows out of the notches sideways.
     pub style: String,
+    /// How a panel's content shows as it opens: "slide" (moves with the panel's
+    /// edge), "reveal" (stays put, the panel uncovers it), "fade" (stays put, fades in).
+    pub panel_content: String,
 }
 
 impl Default for Animation {
@@ -128,6 +131,7 @@ impl Default for Animation {
             panel_damping: 30.0,
             mass: 1.0,
             style: "drop".into(),
+            panel_content: "slide".into(),
         }
     }
 }

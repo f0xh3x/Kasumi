@@ -996,9 +996,12 @@ class Overlay {
         // Panels hear when they're shut (notch:panel-closed, detail: the panel's box).
         if (!shown && d.panelEl.style.visibility === "visible") window.dispatchEvent(new CustomEvent("notch:panel-closed", { detail: d.panelEl }));
         d.panelEl.style.visibility = shown ? "visible" : "hidden";
-        d.panelEl.style.opacity = String(clamp01(p * 1.4 - 0.2));
-        // Its edge-side end (the far end is `depth`).
-        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(bf.depth - d.panelHeight) * away}px)`;
+        // slide: the content rides the panel's far edge (`depth`). reveal / fade: it waits
+        // in its open spot and the growing shape (content's clip) uncovers it.
+        const how = L.animation.panelContent;
+        const near = how === "reveal" || how === "fade" ? (bumps[i].panelTop ?? H) : bf.depth - d.panelHeight;
+        d.panelEl.style.opacity = String(how === "reveal" ? 1 : how === "fade" ? clamp01(p * 1.6 - 0.5) : clamp01(p * 1.4 - 0.2));
+        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(how === "slide" ? near : Math.round(near)) * away}px)`;
       }
     });
   }
