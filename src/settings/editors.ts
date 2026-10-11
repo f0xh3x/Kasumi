@@ -1321,6 +1321,50 @@ function presets(ctx: EditorCtx): HTMLElement {
 }
 
 /** Quick settings tiles: the chosen ones in order (move, remove), the rest to add. */
+// --- Animation effects per widget -----------------------------------------------------
+
+/** Each effect: its label and its [animation] key (the default the widget follows). */
+const ANIM_EFFECTS: Record<string, [string, string]> = {
+  cascade: ["Cascade in the open bar", "cascade"],
+  roll: ["Rolling numbers", "rolling"],
+  pop: ["Panel pops out of the notch", "panel_pop"],
+  rows: ["Panel rows one after another", "panel_rows"],
+  blur: ["Panel blurs in", "blur_in"],
+  magnify: ["Icons grow under the cursor", "magnify"],
+  nudge: ["Bell shakes on a new notification", "notification_nudge"],
+};
+
+/**
+ * One widget's effects ("animWidget:clock:cascade,roll,..."): like the global
+ * setting, or on / off for this widget ([widgets.<w>] anim_<key>).
+ */
+const animWidget: Editor = (ctx) => {
+  const [w, list = ""] = (ctx.arg ?? "").split(":");
+  const own = ctx.cfg.widgets?.[w] ?? {};
+  const global = ctx.cfg.animation ?? {};
+  return $(
+    "div",
+    "stack-tight",
+    ...list
+      .split(",")
+      .filter((k) => ANIM_EFFECTS[k])
+      .map((k) => {
+        const [label, key] = ANIM_EFFECTS[k];
+        const v = own[`anim_${k}`];
+        const sel = select(
+          [
+            ["", `Like global (${global[key] === true ? "on" : "off"})`],
+            ["on", "On"],
+            ["off", "Off"],
+          ],
+          v === true ? "on" : v === false ? "off" : "",
+        );
+        sel.addEventListener("change", () => ctx.save(["widgets", w, `anim_${k}`], sel.value === "" ? null : sel.value === "on"));
+        return row(label, undefined, sel);
+      }),
+  );
+};
+
 // --- Windows setup for notifications --------------------------------------------------
 
 /**
@@ -1584,6 +1628,7 @@ export const editors: Record<string, Editor> = {
   diskPicker,
   osdPlace,
   windowsGuide,
+  animWidget,
   presets,
   surfaceManager,
   surfaceStyle,

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../data";
-import { appIcon, iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
+import { appIcon, iconUrl, g, el, icon, setText, type PanelContext, type Widget } from "./index";
 
 
 /** The window in front: its title, its app's name, or both. */
@@ -43,8 +43,8 @@ export function netspeed(opts: Record<string, unknown>): Widget {
   const up = part(0xe74a);
   const root = el("widget netspeed", ...(show !== "up" ? [down.wrap] : []), ...(show !== "down" ? [up.wrap] : []));
   const off = subscribe("netspeed", (n) => {
-    down.value.textContent = rate(n?.down ?? 0, bits);
-    up.value.textContent = rate(n?.up ?? 0, bits);
+    setText(down.value, rate(n?.down ?? 0, bits), opts._roll === true);
+    setText(up.value, rate(n?.up ?? 0, bits), opts._roll === true);
   });
   return { el: root, dispose: off };
 }
@@ -163,9 +163,17 @@ export function notifications(opts: Record<string, unknown>): Widget {
   if (typeof opts.color === "string") root.style.setProperty("--new", opts.color);
   // A click opens the panel (the overlay does that); what's there isn't new any more.
   root.addEventListener("click", () => invoke("notifications_seen").catch(console.error));
+  // Nudge ([animation] notification_nudge): the bell shakes when one more arrives.
+  let last = -1;
   const off = subscribe("notifications", (n) => {
     const total = n?.count ?? 0;
-    count.textContent = total ? String(total) : "";
+    if (opts._nudge === true && last >= 0 && total > last) {
+      root.classList.remove("nudge");
+      void root.offsetWidth;
+      root.classList.add("nudge");
+    }
+    last = total;
+    setText(count, total ? String(total) : "", opts._roll === true);
     root.classList.toggle("new", (n?.unseen ?? 0) > 0);
     root.title = total ? `${total} notification${total === 1 ? "" : "s"}` : "No notifications";
   });

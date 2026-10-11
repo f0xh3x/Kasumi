@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Widget } from "./index";
+import { setText, type Widget } from "./index";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -32,7 +32,7 @@ export function clock(opts: Record<string, unknown>): Widget {
     // Windows' own short time format (Region settings).
     invoke<string>("system_time_format").then((f) => {
       format = f;
-      el.textContent = strftime(format, new Date());
+      setText(el, strftime(format, new Date()));
     });
   }
   const el = document.createElement("div");
@@ -40,7 +40,7 @@ export function clock(opts: Record<string, unknown>): Widget {
   let timer = 0;
   const tick = () => {
     const now = new Date();
-    el.textContent = strftime(format, now);
+    setText(el, strftime(format, now), opts._roll === true);
     // Re-align to the next whole second so the minute flips on time.
     timer = window.setTimeout(tick, 1000 - now.getMilliseconds() + 5);
   };

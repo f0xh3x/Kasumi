@@ -12,7 +12,7 @@ import snowShowerDay from "@fluentui/svg-icons/icons/weather_snow_shower_day_20_
 import snowShowerNight from "@fluentui/svg-icons/icons/weather_snow_shower_night_20_regular.svg?raw";
 import thunderstorm from "@fluentui/svg-icons/icons/weather_thunderstorm_20_regular.svg?raw";
 import { subscribe, type Weather } from "../data";
-import { el, Glyph, icon, type Widget } from "./index";
+import { el, Glyph, icon, setText, type Widget } from "./index";
 
 type Visual = { glyph: string } | { svg: string };
 
@@ -74,7 +74,7 @@ const describe = (code: number) => DESCRIPTIONS.find(([codes]) => codes.includes
 const deg = (v: number) => `${Math.round(v)}°`;
 
 /** Current temperature + condition icon from Open-Meteo; details in the tooltip. */
-export function weather(): Widget {
+export function weather(opts: Record<string, unknown> = {}): Widget {
   const iconSlot = el("weather-icon");
   const temp = document.createElement("span");
   const root = el("widget weather", iconSlot, temp);
@@ -82,7 +82,7 @@ export function weather(): Widget {
 
   const render = (w: Weather) => {
     iconSlot.replaceChildren(weatherIcon(w.code, w.isDay));
-    temp.textContent = deg(w.temp);
+    setText(temp, deg(w.temp), opts._roll === true);
     root.title = [
       w.location && `${w.location}: ${describe(w.code)}`.trim(),
       `Feels like ${deg(w.feels)}`,

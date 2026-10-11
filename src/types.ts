@@ -21,6 +21,16 @@ export interface Animation {
   style: "drop" | "spread";
   panelContent: "slide" | "reveal" | "fade";
   barContent: "slide" | "reveal" | "fade";
+  openSpeed: number;
+  closeSpeed: number;
+  hoverNudge: boolean;
+  cascade: boolean;
+  panelPop: boolean;
+  panelRows: boolean;
+  blurIn: boolean;
+  rolling: boolean;
+  magnify: boolean;
+  notificationNudge: boolean;
 }
 
 export interface BarWidgets {

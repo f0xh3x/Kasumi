@@ -71,6 +71,59 @@ interface Drop {
   anchor: HTMLElement | null;
 }
 
+/** [animation] keys behind each per-widget effect (`[widgets.<w>] anim_<key>`). */
+const ANIM_GLOBAL = {
+  cascade: "cascade",
+  roll: "rolling",
+  pop: "panelPop",
+  rows: "panelRows",
+  blur: "blurIn",
+  magnify: "magnify",
+  nudge: "notificationNudge",
+} as const;
+
+/** The rows a panel shows one after another (panel_rows), in page order. */
+const PANEL_ROWS = [
+  ".panel-calendar > :not(.cal-grid)",
+  ".cal-grid > *",
+  ".wx-head",
+  ".wx-hours > *",
+  ".menu-list > *",
+  ".hw-cards > *",
+  ".media-panel > *",
+  ".claude-panel > *",
+  ".note-list > *",
+  ".note-actions",
+  ".clip-list > *",
+  ".privacy-panel > *",
+  ".launcher-list > *",
+  ".quick-grid > *",
+  ".quick-outputs > *",
+  ".quick-apps > *",
+  ".tray-grid > *",
+  ".tasks-panel > *",
+].join(", ");
+
+/** Rows cascade: each row of an opening panel fades and slides in a little after the one before. */
+function cascadeRows(panel: HTMLElement, q: number, away: number): void {
+  const rows = panel.querySelectorAll<HTMLElement>(PANEL_ROWS);
+  const n = rows.length;
+  const done = q <= 0 || q >= 1;
+  if (done && panel.dataset.rowsOn !== "1") return;
+  rows.forEach((r, i) => {
+    if (done) {
+      r.style.opacity = "";
+      r.style.translate = "";
+      return;
+    }
+    const k = clamp01((q - (n > 1 ? (i / (n - 1)) * 0.45 : 0)) / 0.55);
+    r.style.opacity = k.toFixed(3);
+    r.style.translate = `0 ${Math.round((1 - k) * -8 * away)}px`;
+  });
+  if (done) delete panel.dataset.rowsOn;
+  else panel.dataset.rowsOn = "1";
+}
+
 /** Space between a notch's content and the start of its curves, each side. */
 const NOTCH_PAD = 10;
 /**
@@ -101,6 +154,12 @@ class Overlay {
   private osdNotch: string | null = null;
   /** A notification's pill size while one is out (null: the level pill's, [osd] width / height). */
   private osdSize: { w: number; h: number } | null = null;
+  /** Hover nudge: the notch the cursor comes near grows a little (Rust says which). */
+  private nudge = new Spring(0, 0, 600, 30);
+  private nudgeKey: string | null = null;
+  /** The open bar's widgets, for the cascade, and their order from the middle out. */
+  private barEls: { el: HTMLElement; cascade: boolean }[] = [];
+  private barOrder: HTMLElement[] | null = null;
 
   // Keyboard-layout peek: a small notch pops out at the language widget.
   private peek = new Spring(0, 0, 420, 32);
@@ -149,6 +208,8 @@ class Overlay {
     const a = layout.animation;
     this.expand.configure(a.expandStiffness, a.expandDamping, a.mass);
     this.spread.configure(a.spreadStiffness, a.spreadDamping, a.mass);
+    this.expand.speed(a.openSpeed, a.closeSpeed);
+    this.spread.speed(a.openSpeed, a.closeSpeed);
     this.osd.configure(a.expandStiffness, a.expandDamping, a.mass);
     this.peek.configure(a.expandStiffness, a.expandDamping, a.mass);
 
@@ -312,18 +373,29 @@ class Overlay {
     this.notchEls = [];
     this.openLauncher = null;
     this.lastWidths = "";
+    this.barEls = [];
+    this.barOrder = null;
     content.replaceChildren();
 
     const a = L.animation;
     const spring = (key: string) => {
       const sp = prevSprings.get(key) ?? new Spring(0, 0, a.panelStiffness, a.panelDamping, a.mass);
       sp.configure(a.panelStiffness, a.panelDamping, a.mass);
+      sp.speed(a.openSpeed, a.closeSpeed);
       return sp;
     };
     const ctx = { close: this.closeAll, resize: () => this.resizeDrops() };
-    const opts = (name: string): Record<string, unknown> => ({ ...(L.widgets[name] ?? {}), _device: L.device });
+    const opts = (name: string): Record<string, unknown> => ({
+      ...(L.widgets[name] ?? {}),
+      _device: L.device,
+      _roll: this.animFor(name, "roll"),
+      _magnify: this.animFor(name, "magnify"),
+      _nudge: this.animFor(name, "nudge"),
+    });
     const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {
       const panel = div(`panel panel-${widgetType(name)}`);
+      // Its open effects (render() reads them): pop, rows, blur.
+      for (const k of ["pop", "rows", "blur"] as const) if (this.animFor(name, k)) panel.dataset[k] = "1";
       if (width) panel.style.width = `${width}px`;
       if (height) panel.style.height = `${height}px`;
       const w = createPanel(name, { ...opts(name), ...extra }, ctx);
@@ -379,6 +451,7 @@ class Overlay {
         const w = createWidget(name, opts(name));
         this.widgets.push(w);
         group.append(w.el);
+        this.barEls.push({ el: w.el, cascade: this.animFor(name, "cascade") });
         if (name === "language") this.langEl = w.el;
         dropdown(name, w);
       }
@@ -709,6 +782,56 @@ class Overlay {
   }
 
   /** The notch that grows into the OSD pill. */
+  /**
+   * Whether an animation effect is on for a widget (or its panel: "calendar" is
+   * the clock's): its own `anim_<key>` in [widgets.<name>], else [animation]'s.
+   */
+  private animFor(name: string, key: keyof typeof ANIM_GLOBAL): boolean {
+    const L = this.layout;
+    if (!L) return false;
+    const owner = name.replace(/^calendar/, "clock");
+    const own = L.widgets[owner]?.[`anim_${key}`];
+    return typeof own === "boolean" ? own : L.animation[ANIM_GLOBAL[key]] === true;
+  }
+
+  /** Hover nudge: Rust says which notch the cursor is coming near (null: none). */
+  setNudge(notch: string | null): void {
+    if (notch) {
+      if (this.nudgeKey !== `notch:${notch}`) this.nudge.value = 0;
+      this.nudgeKey = `notch:${notch}`;
+    }
+    this.nudge.target = notch ? 1 : 0;
+    this.kick();
+  }
+
+  /** Cascade: the open bar's widgets appear one after another, from the middle out. */
+  private cascadeBar(ex: number, away: number): void {
+    const els = this.barEls.filter((b) => b.cascade).map((b) => b.el);
+    if (!els.length) return;
+    if (ex <= 0.001 || ex >= 0.999) {
+      for (const el of els) {
+        el.style.opacity = "";
+        el.style.translate = "";
+      }
+      if (ex <= 0.001) this.barOrder = null;
+      return;
+    }
+    if (!this.barOrder) {
+      const mid = (this.layout?.width ?? 0) / 2;
+      const off = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        return Math.abs(r.left + r.width / 2 - mid);
+      };
+      this.barOrder = els.map((el) => ({ el, d: off(el) })).sort((a, b) => a.d - b.d).map((x) => x.el);
+    }
+    const n = this.barOrder.length;
+    this.barOrder.forEach((el, i) => {
+      const k = clamp01((ex - (n > 1 ? (i / (n - 1)) * 0.4 : 0)) / 0.6);
+      el.style.opacity = k.toFixed(3);
+      el.style.translate = `0 ${Math.round((1 - k) * -6 * away)}px`;
+    });
+  }
+
   /** The corner a notch drop hugs ("left" / "right"), null for the others. */
   private notchSide(d: Drop): "left" | "right" | null {
     return this.layout?.notches.find((n) => d.key === `notch:${n.id}`)?.edge ?? null;
@@ -793,6 +916,7 @@ class Overlay {
     } else {
       parts = [pic, text("osd-note-app", n.app), text("osd-note-text", [n.title, n.body].filter(Boolean).join(" — "))];
     }
+    if (this.animFor("notifications", "nudge")) pic.classList.add("bounce");
     this.osdEl.className = `osd note note-${style}`;
     this.osdEl.replaceChildren(...parts);
     // The pill around the text (osd inner width = w - 2 * corner radius - 8), or always the widest.
@@ -881,6 +1005,13 @@ class Overlay {
       let x = d.xs ? (useTarget ? d.xs.target : d.xs.value) : d.x;
       let width = d.width;
       let height = d.height;
+      if (d.key === this.nudgeKey && !this.expanded) {
+        // Hover nudge: the notch the cursor comes near grows a little.
+        const v = Math.max(0, useTarget ? this.nudge.target : this.nudge.value);
+        x -= 5 * v;
+        width += 10 * v;
+        height += 4 * v;
+      }
       let scale: number | undefined;
       let panelTop: number | undefined;
       if (L.mode === "dock" && d.notch) {
@@ -958,6 +1089,7 @@ class Overlay {
     const ex = this.expand.value;
     this.bar.style.transform = barHow === "slide" ? `translateY(${(frame.base - H) * away}px)` : "none";
     this.bar.style.opacity = String(barHow === "reveal" ? clamp01(ex * 5) : barHow === "fade" ? clamp01((ex - 0.35) / 0.55) : clamp01((ex - 0.25) / 0.6));
+    this.cascadeBar(ex, away);
 
     const od = this.osdDrop();
     const o = clamp01(this.osd.value);
@@ -1006,7 +1138,14 @@ class Overlay {
         const how = L.animation.panelContent;
         const near = how === "reveal" || how === "fade" ? (bumps[i].panelTop ?? H) : bf.depth - d.panelHeight;
         d.panelEl.style.opacity = String(how === "reveal" ? 1 : how === "fade" ? clamp01(p * 1.6 - 0.5) : clamp01(p * 1.4 - 0.2));
-        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(how === "slide" ? near : Math.round(near)) * away}px)`;
+        // Effects ([animation] panel_pop / blur_in / panel_rows, or the widget's own).
+        const q = clamp01(p);
+        const fx = d.panelEl.dataset;
+        const pop = fx.pop === "1" && q < 1 ? ` scale(${(0.94 + 0.06 * q).toFixed(4)})` : "";
+        if (pop) d.panelEl.style.transformOrigin = bottom ? "50% 100%" : "50% 0";
+        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(how === "slide" ? near : Math.round(near)) * away}px)${pop}`;
+        d.panelEl.style.filter = fx.blur === "1" && q < 0.995 ? `blur(${((1 - q) * 6).toFixed(2)}px)` : "";
+        if (fx.rows === "1") cascadeRows(d.panelEl, q, away);
       }
     });
   }
@@ -1026,6 +1165,7 @@ class Overlay {
       this.spread,
       this.osd,
       this.peek,
+      this.nudge,
       ...this.drops.flatMap((d) => [d.spring, ...(d.xs ? [d.xs] : []), ...(d.shown ? [d.shown] : [])]),
     ];
     for (const s of springs) s.step(dt);
@@ -1103,6 +1243,7 @@ async function main(): Promise<void> {
   await win.listen<{ kind: "volume" | "brightness" | "caps"; level: number; muted: boolean; text?: string; notch?: string | null }>("notch://osd", (e) =>
     overlay.showOsd(e.payload),
   );
+  await win.listen<{ notch: string | null }>("notch://nudge", (e) => overlay.setNudge(e.payload.notch));
   await win.listen<{ app: string; aumid: string; title: string; body: string; notch?: string | null }>("notch://notification", (e) => overlay.showNotification(e.payload));
   await initData().catch((e) => report(`data: ${e}`));
   overlay.apply(await invoke<Layout>("get_layout"));

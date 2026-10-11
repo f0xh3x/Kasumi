@@ -16,6 +16,29 @@ interface Base {
   default: unknown;
 }
 
+/** Animation effects per widget (Settings > Animation > Per widget): the ones that apply to each. */
+const PANEL_FX = "pop,rows,blur";
+const ANIM_WIDGETS: [string, string, number, string][] = [
+  ["clock", "Clock", 0xe823, `cascade,roll,${PANEL_FX}`],
+  ["weather", "Weather", 0xe706, `cascade,roll,${PANEL_FX}`],
+  ["temps", "PC temps", 0xe9ca, `cascade,roll,${PANEL_FX}`],
+  ["media", "Media", 0xe8d6, `cascade,${PANEL_FX}`],
+  ["notifications", "Notifications", 0xea8f, `cascade,roll,nudge,${PANEL_FX}`],
+  ["quick", "Quick settings", 0xe713, `cascade,roll,${PANEL_FX}`],
+  ["tasks", "Tasks", 0xe737, `cascade,magnify,${PANEL_FX}`],
+  ["tray", "Tray", 0xe70d, `cascade,${PANEL_FX}`],
+  ["menu", "Menu", 0xe700, `cascade,${PANEL_FX}`],
+  ["launcher", "Launcher", 0xe721, `cascade,${PANEL_FX}`],
+  ["clipboard", "Clipboard", 0xe77f, `cascade,${PANEL_FX}`],
+  ["privacy", "Privacy", 0xe720, `cascade,${PANEL_FX}`],
+  ["claude", "Claude Code", 0xe8bd, `cascade,${PANEL_FX}`],
+  ["netspeed", "Network speed", 0xe74b, "cascade,roll"],
+  ["disk", "Disk usage", 0xeda2, "cascade,roll"],
+  ["focus", "Focused app", 0xe7c4, "cascade"],
+  ["language", "Keyboard language", 0xe765, "cascade"],
+  ["buttons", "Buttons", 0xe7e8, "cascade"],
+];
+
 export type Field =
   | (Base & { kind: "toggle" })
   | (Base & { kind: "slider"; min: number; max: number; step: number; unit?: string })
@@ -900,6 +923,27 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Speed",
+        fields: [
+          { kind: "slider", label: "Opening speed", help: "Faster or slower than the springs below, same bounce.", path: ["animation", "open_speed"], default: 1, min: 0.5, max: 2, step: 0.1, unit: "×" },
+          { kind: "slider", label: "Closing speed", path: ["animation", "close_speed"], default: 1, min: 0.5, max: 2, step: 0.1, unit: "×" },
+        ],
+      },
+      {
+        title: "Effects",
+        help: "For every widget; each can differ under Per widget below.",
+        fields: [
+          { kind: "toggle", label: "Hover nudge", help: "A notch grows a little as the cursor comes near it.", path: ["animation", "hover_nudge"], default: false },
+          { kind: "toggle", label: "Cascade", help: "The open bar's widgets appear one after another, from the middle out.", path: ["animation", "cascade"], default: false },
+          { kind: "toggle", label: "Panel pop", help: "Panels grow out of their notch as they open.", path: ["animation", "panel_pop"], default: false },
+          { kind: "toggle", label: "Panel rows", help: "A panel's rows (calendar weeks, weather hours, notifications...) appear one after another.", path: ["animation", "panel_rows"], default: false },
+          { kind: "toggle", label: "Blur in", help: "Panels come into focus as they open.", path: ["animation", "blur_in"], default: false },
+          { kind: "toggle", label: "Rolling numbers", help: "Clock, temperatures, battery, counts... roll to their new value.", path: ["animation", "rolling"], default: false },
+          { kind: "toggle", label: "Dock magnify", help: "Task icons grow as the cursor passes over them.", path: ["animation", "magnify"], default: false },
+          { kind: "toggle", label: "Notification nudge", help: "The bell shakes for a new notification; the pop-up's icon bounces.", path: ["animation", "notification_nudge"], default: false },
+        ],
+      },
+      {
         title: "Springs",
         help: "Higher stiffness is faster; lower damping is bouncier.",
         fields: [
@@ -911,6 +955,13 @@ export const pages: Page[] = [
           { kind: "slider", label: "Panel damping", path: ["animation", "panel_damping"], default: 43, min: 10, max: 160, step: 1 },
         ],
       },
+      ...ANIM_WIDGETS.map(([w, title, icon, effects]) => ({
+        title,
+        collapsible: true,
+        group: "Per widget",
+        icon,
+        fields: [{ kind: "custom" as const, editor: `animWidget:${w}:${effects}` }],
+      })),
     ],
   },
   {

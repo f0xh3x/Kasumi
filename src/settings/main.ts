@@ -92,7 +92,8 @@ const fieldRow = (f: { label: string; help?: string }, control: HTMLElement) => 
 function control(f: Field): HTMLElement | null {
   if (f.kind === "custom") {
     // "name:arg": one editor for several settings (e.g. osdPlace:volume).
-    const [name, arg] = f.editor.split(":");
+    const [name, ...rest] = f.editor.split(":");
+    const arg = rest.length ? rest.join(":") : undefined;
     const editor = editors[name];
     if (!editor) return null;
     return editor({

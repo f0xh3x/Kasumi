@@ -120,6 +120,23 @@ pub struct Animation {
     pub panel_content: String,
     /// The same for the open bar's row of widgets.
     pub bar_content: String,
+    /// Speed of opening and of closing (springs run this many times faster; 1 = as tuned).
+    pub open_speed: f64,
+    pub close_speed: f64,
+    /// A notch grows a little as the cursor comes near it.
+    pub hover_nudge: bool,
+    /// Effects, each also per widget (`[widgets.<w>] anim_<key>`): the open bar's
+    /// widgets appear one after another (cascade); panels grow out of the notch
+    /// (pop), show their rows one after another (rows) and come into focus (blur);
+    /// numbers roll to new values (rolling); dock icons grow under the cursor
+    /// (magnify); the bell shakes for a new notification (notification_nudge).
+    pub cascade: bool,
+    pub panel_pop: bool,
+    pub panel_rows: bool,
+    pub blur_in: bool,
+    pub rolling: bool,
+    pub magnify: bool,
+    pub notification_nudge: bool,
 }
 
 impl Default for Animation {
@@ -135,6 +152,16 @@ impl Default for Animation {
             style: "drop".into(),
             panel_content: "slide".into(),
             bar_content: "slide".into(),
+            open_speed: 1.0,
+            close_speed: 1.0,
+            hover_nudge: false,
+            cascade: false,
+            panel_pop: false,
+            panel_rows: false,
+            blur_in: false,
+            rolling: false,
+            magnify: false,
+            notification_nudge: false,
         }
     }
 }

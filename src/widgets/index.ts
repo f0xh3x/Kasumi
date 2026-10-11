@@ -146,6 +146,49 @@ export function panelFor(name: string): string | null {
   return type in panels ? name : null;
 }
 
+/**
+ * Sets an element's text. With `roll` ([animation] rolling), digits that change
+ * roll to their new value like an odometer: up when the number grows, down when
+ * it shrinks. Text of another length just switches.
+ */
+export function setText(el: HTMLElement, text: string, roll = false): void {
+  if (el.dataset.text === text) return;
+  const prev = el.dataset.text ?? el.textContent ?? "";
+  el.dataset.text = text;
+  if (!roll || prev.length !== text.length || prev === text) {
+    el.textContent = text;
+    return;
+  }
+  const num = (s: string) => Number(s.replace(/\D/g, "")) || 0;
+  const up = num(text) >= num(prev);
+  el.classList.add("rolling");
+  const parts: Node[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const a = prev[i];
+    const b = text[i];
+    if (a === b || !/\d/.test(a) || !/\d/.test(b)) {
+      parts.push(document.createTextNode(b));
+      continue;
+    }
+    const from = document.createElement("span");
+    from.textContent = a;
+    const to = document.createElement("span");
+    to.textContent = b;
+    const col = document.createElement("span");
+    col.className = up ? "roll-col" : "roll-col down";
+    if (up) col.append(from, to);
+    else col.append(to, from);
+    const box = document.createElement("span");
+    box.className = "roll";
+    box.append(col);
+    parts.push(box);
+  }
+  el.replaceChildren(...parts);
+  window.setTimeout(() => {
+    if (el.dataset.text === text) el.textContent = text;
+  }, 420);
+}
+
 /** An icon from Rust ({ w, h, rgba: base64 RGBA }) as a PNG data URL, cached per pixel payload. */
 const urls = new Map<string, string>();
 export function iconUrl(i: { w: number; h: number; rgba: string }): string {

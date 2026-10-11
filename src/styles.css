@@ -716,3 +716,33 @@ html.edge-bottom .launcher-power { padding: 0 4px 6px; margin: 0 0 4px; border-t
 .note-dismiss { width: 16px; height: 16px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: 4px; opacity: 0.5; }
 .note-dismiss .icon { font-size: 9px; transform: none; }
 .note-dismiss:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
+
+/* Rolling numbers ([animation] rolling): changed digits roll to their new value. */
+.rolling { font-variant-numeric: tabular-nums; }
+.roll { display: inline-block; height: 1lh; overflow: hidden; vertical-align: top; }
+.roll-col { display: flex; flex-direction: column; animation: roll-up 340ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.roll-col.down { animation-name: roll-down; }
+.roll-col > span { height: 1lh; }
+@keyframes roll-up { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+@keyframes roll-down { from { transform: translateY(-50%); } to { transform: translateY(0); } }
+
+/* Notification nudge: the bell shakes, the pop-up's icon bounces. */
+.notifications.nudge .icon { animation: bell-shake 700ms ease; transform-origin: 50% 15%; }
+@keyframes bell-shake {
+  0%, 100% { rotate: 0deg; }
+  15% { rotate: 16deg; }
+  30% { rotate: -14deg; }
+  45% { rotate: 10deg; }
+  60% { rotate: -6deg; }
+  75% { rotate: 3deg; }
+}
+.osd-note-icon.bounce { animation: note-bounce 650ms ease 150ms both; }
+@keyframes note-bounce {
+  0%, 55%, 100% { translate: 0 0; }
+  30% { translate: 0 -5px; }
+  75% { translate: 0 -2px; }
+}
+
+/* Dock magnify: icons grow from the dock's edge. */
+.tasks.magnify .ico { transition: scale 90ms ease-out; transform-origin: 50% 0; }
+html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }

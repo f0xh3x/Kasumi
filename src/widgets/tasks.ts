@@ -71,6 +71,20 @@ export function tasks(opts: Record<string, unknown>): Widget {
   const root = el("widget tasks");
   if (opts.icons === "mono" || opts.icons === "accent") root.classList.add(`icons-${opts.icons}`);
   if (opts.dim_minimized === true) root.classList.add("dim-minimized");
+  // Magnify ([animation] magnify): icons grow as the cursor passes over them.
+  if (opts._magnify === true) {
+    root.classList.add("magnify");
+    root.addEventListener("mousemove", (e) => {
+      for (const ico of root.querySelectorAll<HTMLElement>(".task > .ico")) {
+        const r = ico.getBoundingClientRect();
+        const d = Math.abs(e.clientX - (r.left + r.width / 2));
+        ico.style.scale = (1 + 0.35 * Math.max(0, 1 - d / 70)).toFixed(3);
+      }
+    });
+    root.addEventListener("mouseleave", () => {
+      for (const ico of root.querySelectorAll<HTMLElement>(".task > .ico")) ico.style.scale = "";
+    });
+  }
   const buttons = new Map<string, { b: HTMLElement; img: HTMLImageElement; label: HTMLElement; dots: HTMLElement }>();
   // Dragging an app to a new place: it follows the pointer, the others slide aside.
   type Drag = {

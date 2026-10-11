@@ -55,6 +55,18 @@ mass = 1
 style = "drop"            # drop: bar slides out of the top edge | spread: grows sideways out of the notches
 panel_content = "slide"   # panels' content: slide (with the panel's edge) | reveal (stays, uncovered) | fade (stays, fades in)
 bar_content = "slide"     # the open bar's widgets: the same choices
+open_speed = 1            # faster (> 1) or slower opening
+close_speed = 1           # ... and closing
+hover_nudge = false       # a notch grows a little as the cursor comes near
+# Effects (each widget can differ: [widgets.<name>] anim_cascade / anim_pop / anim_rows /
+# anim_blur / anim_roll / anim_magnify / anim_nudge = true | false):
+cascade = false           # the open bar's widgets appear one after another
+panel_pop = false         # panels grow out of the notch
+panel_rows = false        # panels show their rows one after another
+blur_in = false           # panels come into focus as they open
+rolling = false           # numbers roll to their new value
+magnify = false           # dock icons grow under the cursor
+notification_nudge = false # the bell shakes for a new notification
 
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]

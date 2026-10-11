@@ -42,7 +42,7 @@ apps (Premiere, Illustrator) while you work: see "Testing without the user".
 
 | Where | What |
 |---|---|
-| `widgets/index.ts` | `el(cls, ...kids)` (div), `icon(glyph)` (span.icon), `g(code)` glyph char, `Glyph.*` common glyphs, `iconUrl({w,h,rgba})` Rust icon → cached PNG data URL, `meter(kind, length)` small bar / ring for a 0..1 share (.high = warning colour), `formatBytes` (as Explorer), `languageCode`, `confirmClick` (second click for destructive actions), `createWidget` / `createPanel` / `panelFor` / `widgetType` (`"buttons#2"` → `"buttons"`), types `Widget`, `PanelContext` |
+| `widgets/index.ts` | `el(cls, ...kids)` (div), `icon(glyph)` (span.icon), `g(code)` glyph char, `Glyph.*` common glyphs, `iconUrl({w,h,rgba})` Rust icon → cached PNG data URL, `meter(kind, length)` small bar / ring for a 0..1 share (.high = warning colour), `formatBytes` (as Explorer), `languageCode`, `confirmClick` (second click for destructive actions), `setText(el, text, roll)` (set a number's text; rolls digits when the widget's `opts._roll`), `appIcon(aumid)`, `createWidget` / `createPanel` / `panelFor` / `widgetType` (`"buttons#2"` → `"buttons"`), types `Widget`, `PanelContext` |
 | `data.ts` | `subscribe(key, cb)` → unsubscribe (call it in `dispose`). Typed `DataMap`: system, tasks, taskIcons, temps, media, weather, tray, keyboard, focus, netspeed, disks, privacy, claude, notifications, clipboard |
 | `geometry.ts` | `computeFrame` (the one SVG path), `lerp`, `mirrorPath` (bottom surfaces' clip path; M/L/C/Z only) |
 | `spring.ts` | `Spring`: every animation |
@@ -76,6 +76,12 @@ Tooltips are plain `title`s (stripped globally when `[general] tooltips = false`
 | `config_edit.rs` | `config_write` / `config_write_many`: comment-preserving, validated |
 
 New commands must be listed in `main.rs`'s `generate_handler!`.
+
+Animation effects: a widget gets `opts._roll`, `_magnify`, `_nudge` (already
+resolved: its own `[widgets.<w>] anim_<key>`, else `[animation]`); panels get
+`data-pop/rows/blur` and render() applies them. A panel's rows for `panel_rows`
+are listed in `PANEL_ROWS` (main.ts): add a new panel's list there. Springs that
+open / close take `spring.speed(open, close)`.
 
 ## 3. How to…
 

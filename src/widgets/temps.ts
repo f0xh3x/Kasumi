@@ -1,5 +1,5 @@
 import { subscribe } from "../data";
-import { el, Glyph, icon, type Widget } from "./index";
+import { el, Glyph, icon, setText, type Widget } from "./index";
 
 /** CPU · GPU temperatures from LibreHardwareMonitor. `warn` (°C) highlights hot readings. */
 export function temps(opts: Record<string, unknown>): Widget {
@@ -16,7 +16,7 @@ export function temps(opts: Record<string, unknown>): Widget {
   const root = el("widget temps", cpu.wrap, el("sep", "·"), gpu.wrap);
 
   const show = (r: { wrap: HTMLElement; value: HTMLElement }, v: number | null | undefined) => {
-    r.value.textContent = v == null ? "–" : `${Math.round(v)}°`;
+    setText(r.value, v == null ? "–" : `${Math.round(v)}°`, opts._roll === true);
     r.wrap.classList.toggle("warn", v != null && v >= warn);
   };
   const unsubscribe = subscribe("temps", (t) => {

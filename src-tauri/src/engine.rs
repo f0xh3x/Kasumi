@@ -148,6 +148,8 @@ struct Overlay {
     hwnd: Option<isize>,
     /// Docking notches currently pushed out of their corner by a window.
     undocked: Vec<String>,
+    /// The notch the cursor is coming near ([animation] hover_nudge), told to the page.
+    nudge: Option<String>,
     /// When a fullscreen window was first seen on this monitor (hide is debounced).
     fullscreen_since: Option<Instant>,
     /// This monitor's notches, as resolved from the config (for docking).
@@ -940,6 +942,7 @@ impl Engine {
                                 ignoring: true,
                                 hwnd: None,
                                 undocked: Vec::new(),
+                                nudge: None,
                                 fullscreen_since: None,
                                 defs,
                                 measured: HashMap::new(),
@@ -1297,6 +1300,8 @@ impl Engine {
         let grace = Duration::from_millis(t.grace_ms);
 
         let mut emits: Vec<(String, bool)> = Vec::new();
+        let mut nudges: Vec<(String, Option<String>)> = Vec::new();
+        let nudging = self.cfg.animation.hover_nudge;
         let mut click_through: Vec<(String, isize, bool)> = Vec::new();
         let mut raise: Vec<isize> = Vec::new();
         {
@@ -1357,6 +1362,21 @@ impl Engine {
                 calm &= !always && !o.pinned && matches!(next, Hover::Idle) && !near;
 
                 let expanded = matches!(next, Hover::Open | Hover::Leave(_));
+                // Hover nudge: within NUDGE_PX of the edge, over (or beside) a closed notch.
+                let nudge = if nudging && on_monitor && !expanded && !o.hidden && ly >= 0.0 && ly < NUDGE_PX {
+                    o.layout
+                        .notches
+                        .iter()
+                        .filter(|n| !n.hidden && lx >= n.x - NUDGE_SIDE_PX && lx < n.x + n.width + NUDGE_SIDE_PX)
+                        .min_by(|a, b| (lx - (a.x + a.width / 2.0)).abs().total_cmp(&(lx - (b.x + b.width / 2.0)).abs()))
+                        .map(|n| n.id.clone())
+                } else {
+                    None
+                };
+                if nudge != o.nudge {
+                    o.nudge = nudge.clone();
+                    nudges.push((label.clone(), nudge));
+                }
                 if expanded != o.expanded {
                     o.expanded = expanded;
                     if !expanded {
@@ -1379,6 +1399,9 @@ impl Engine {
 
         for h in raise {
             win::raise_topmost(h);
+        }
+        for (label, notch) in nudges {
+            let _ = self.app.emit_to(EventTarget::WebviewWindow { label }, "notch://nudge", serde_json::json!({ "notch": notch }));
         }
         let toggled = !emits.is_empty();
         for (label, expanded) in emits {
@@ -1409,6 +1432,9 @@ impl Engine {
 /// = 5000 px/s. Windows rounds sleeps up, so a calm look is ~45-60 ms apart.
 const CALM_POLL_MS: u64 = 40;
 const NEAR_EDGE_PX: f64 = 200.0;
+/// Hover nudge: how near the edge, and how far beside a notch, the cursor counts as coming to it.
+const NUDGE_PX: f64 = 70.0;
+const NUDGE_SIDE_PX: f64 = 40.0;
 
 /// Widget settings as the bars get them: without the tasks pin list, which the
 /// widget gets with its data (so pinning or reordering doesn't rebuild the bar).

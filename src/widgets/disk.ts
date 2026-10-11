@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { subscribe } from "../data";
-import { el, formatBytes, meter, type Widget } from "./index";
+import { el, formatBytes, meter, setText, type Widget } from "./index";
 
 /**
  * Disk usage, per chosen fixed drive ([widgets.disk] disks; all of them when none
@@ -39,8 +39,11 @@ export function disk(opts: Record<string, unknown>): Widget {
       const used = d.total - d.free;
       const share = d.total ? used / d.total : 0;
       m?.set(share);
-      text.textContent =
-        show === "used" ? `${formatBytes(used)} / ${formatBytes(d.total)}` : show === "free" ? `${formatBytes(d.free)} free` : `${Math.round(share * 100)}%`;
+      setText(
+        text,
+        show === "used" ? `${formatBytes(used)} / ${formatBytes(d.total)}` : show === "free" ? `${formatBytes(d.free)} free` : `${Math.round(share * 100)}%`,
+        opts._roll === true,
+      );
       row.classList.toggle("high", share >= 0.9);
       row.title = `${d.id}${d.label ? ` ${d.label}` : ""}: ${formatBytes(used)} of ${formatBytes(d.total)} used, ${formatBytes(d.free)} free`;
     });

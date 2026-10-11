@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
 import { subscribe, type SystemStatus } from "../data";
-import { iconUrl, g, el, icon, type PanelContext, type Widget } from "./index";
+import { iconUrl, g, el, icon, setText, type PanelContext, type Widget } from "./index";
 
 /**
  * Quick settings. The button shows the battery (on PCs that have one) or a
@@ -37,11 +37,11 @@ export function quick(opts: Record<string, unknown>): Widget {
   const off = subscribe("system", (s) => {
     const battery = s?.battery ?? null;
     const show = mode === "auto" ? (battery ? "battery" : "settings") : mode;
-    value.textContent = "";
+    let text = "";
     root.title = "Quick settings";
     if (show === "battery" && battery && battery.percent != null) {
       glyph.textContent = batteryGlyph(battery.percent, battery.charging);
-      value.textContent = `${battery.percent}%`;
+      text = `${battery.percent}%`;
       root.title = `Battery ${battery.percent}%${battery.charging ? ", charging" : ""}`;
     } else if (show === "volume" && s?.volume) {
       glyph.textContent = volumeGlyph(s.volume.level, s.volume.muted);
@@ -53,6 +53,7 @@ export function quick(opts: Record<string, unknown>): Widget {
     } else {
       glyph.textContent = g(0xe713);
     }
+    setText(value, text, opts._roll === true);
   });
   return { el: root, dispose: off };
 }
