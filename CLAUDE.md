@@ -77,8 +77,8 @@ Tooltips are plain `title`s (stripped globally when `[general] tooltips = false`
 
 New commands must be listed in `main.rs`'s `generate_handler!`.
 
-Animation effects: a widget gets `opts._roll`, `_magnify`, `_glide`, `_nudge` (and `_accent`: its
-root and panel get `.accent-details`, styled in styles.css) (already
+Animation effects: a widget gets `opts._roll`, `_magnify`, `_glide`, `_nudge` (and `_accent` / `_font`: its
+root and panel get `.accent-details` / their own font, in widgets/index.ts `accented`) (already
 resolved: its own `[widgets.<w>] anim_<key>`, else `[animation]`); panels get
 `data-cascade` and render() applies it. The pieces a panel cascades by
 are listed in `PANEL_ROWS` (main.ts): add a new panel's list there. Springs that

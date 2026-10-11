@@ -36,22 +36,28 @@ const ANIM_WIDGETS: [string, string, number, string][] = [
   ["disk", "Disk usage", 0xeda2, "roll"],
 ];
 
-/** Widgets with details the accent colour can go on (Settings > Appearance > Per widget). */
-const ACCENT_WIDGETS: [string, string, number][] = [
-  ["tasks", "Tasks", 0xe737],
-  ["clock", "Clock and calendar", 0xe823],
-  ["weather", "Weather", 0xe706],
-  ["temps", "PC temps", 0xe9ca],
-  ["media", "Media", 0xe8d6],
-  ["quick", "Quick settings", 0xe713],
-  ["menu", "Menu", 0xe700],
-  ["launcher", "Launcher", 0xe721],
-  ["tray", "Tray", 0xe70d],
-  ["buttons", "Buttons", 0xe7e8],
-  ["notifications", "Notifications", 0xea8f],
-  ["clipboard", "Clipboard", 0xe77f],
-  ["disk", "Disk usage", 0xeda2],
-  ["claude", "Claude Code", 0xe8bd],
+/**
+ * Settings > Appearance > Per widget: each widget's font, and its accent on
+ * details where it has some (the last column).
+ */
+const APPEARANCE_WIDGETS: [string, string, number, boolean][] = [
+  ["clock", "Clock and calendar", 0xe823, true],
+  ["tasks", "Tasks", 0xe737, true],
+  ["weather", "Weather", 0xe706, true],
+  ["temps", "PC temps", 0xe9ca, true],
+  ["media", "Media", 0xe8d6, true],
+  ["quick", "Quick settings", 0xe713, true],
+  ["menu", "Menu", 0xe700, true],
+  ["launcher", "Launcher", 0xe721, true],
+  ["tray", "Tray", 0xe70d, true],
+  ["buttons", "Buttons", 0xe7e8, true],
+  ["notifications", "Notifications", 0xea8f, true],
+  ["clipboard", "Clipboard", 0xe77f, true],
+  ["disk", "Disk usage", 0xeda2, true],
+  ["claude", "Claude Code", 0xe8bd, true],
+  ["focus", "Focused app", 0xe7c4, false],
+  ["netspeed", "Network speed", 0xe74b, false],
+  ["language", "Keyboard language", 0xe765, false],
 ];
 
 export type Field =
@@ -912,12 +918,15 @@ export const pages: Page[] = [
           { kind: "slider", label: "Large", path: ["sizes", "large"], default: 60, min: 40, max: 96, step: 1, unit: "px" },
         ],
       },
-      ...ACCENT_WIDGETS.map(([w, title, icon]) => ({
+      ...APPEARANCE_WIDGETS.map(([w, title, icon, accent]) => ({
         title,
         collapsible: true,
         group: "Per widget",
         icon,
-        fields: [{ kind: "custom" as const, editor: `accentWidget:${w}` }],
+        fields: [
+          { kind: "custom" as const, editor: `fontPicker:${w}` },
+          ...(accent ? [{ kind: "custom" as const, editor: `accentWidget:${w}` }] : []),
+        ],
       })),
     ],
   },

@@ -403,6 +403,7 @@ class Overlay {
       _magnify: this.animFor(name, "magnify"),
       _glide: this.animFor(name, "glide"),
       _accent: this.accentFor(name),
+      _font: L.widgets[name.replace(/^calendar/, "clock")]?.font ?? "",
       _nudge: this.animFor(name, "nudge"),
     });
     const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {

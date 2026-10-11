@@ -1365,25 +1365,35 @@ const animWidget: Editor = (ctx) => {
 
 // --- Font ------------------------------------------------------------------------------
 
-/** The text font: any installed family ([theme] font), with a preview line in it. */
+/**
+ * The text font: any installed family, with a preview line in it. "fontPicker":
+ * everything ([theme] font); "fontPicker:clock": one widget and its panel
+ * ([widgets.clock] font), or like everything else.
+ */
 const fontPicker: Editor = (ctx) => {
-  const saved = typeof ctx.cfg.theme?.font === "string" ? ctx.cfg.theme.font : "";
-  const pick = select([["", "Default (Inter)"], ...(saved ? ([[saved, saved]] as [string, string][]) : [])], saved);
+  const w = ctx.arg ?? "";
+  const path = w ? ["widgets", w, "font"] : ["theme", "font"];
+  const own = w ? ctx.cfg.widgets?.[w]?.font : ctx.cfg.theme?.font;
+  const saved = typeof own === "string" ? own : "";
+  const global = typeof ctx.cfg.theme?.font === "string" && ctx.cfg.theme.font ? ctx.cfg.theme.font : "Inter";
+  const none = w ? `Like global (${global})` : "Default (Inter)";
+  const pick = select([["", none], ...(saved ? ([[saved, saved]] as [string, string][]) : [])], saved);
   const preview = $("div", "font-preview", "12:45 · 21° · Now playing");
   const show = () => (preview.style.fontFamily = pick.value ? `"${pick.value}", sans-serif` : "");
   show();
   invoke<string[]>("fonts_list")
     .then((fonts) => {
-      pick.replaceChildren(new Option("Default (Inter)", ""), ...fonts.map((f) => new Option(f, f)));
+      pick.replaceChildren(new Option(none, ""), ...fonts.map((f) => new Option(f, f)));
       if (saved && !fonts.includes(saved)) pick.append(new Option(`${saved} (not installed)`, saved));
       pick.value = saved;
     })
     .catch(console.error);
   pick.addEventListener("change", () => {
     show();
-    ctx.save(["theme", "font"], pick.value || null);
+    ctx.save(path, pick.value || null);
   });
-  return $("div", "stack-tight", row("Font", "Any font installed on this PC. Icons keep their own.", pick), preview);
+  const help = w ? "This widget's text, and its panel's." : "Any font installed on this PC. Icons keep their own.";
+  return $("div", "stack-tight", row("Font", help, pick), preview);
 };
 
 // --- Accent on details, per widget ------------------------------------------------------

@@ -139,9 +139,13 @@ export function createPanel(name: string, opts: Options, ctx: PanelContext): Wid
   return accented(factory ? factory(opts, ctx) : { el: el("widget unknown", name) }, opts);
 }
 
-/** Accent on details (opts._accent, resolved by the overlay): styles.css does the rest. */
+/**
+ * Per-widget look, resolved by the overlay: accent on details (opts._accent,
+ * styles.css does the rest) and its own font (opts._font; icons keep theirs).
+ */
 function accented(w: Widget, opts: Options): Widget {
   if (opts._accent === true) w.el.classList.add("accent-details");
+  if (typeof opts._font === "string" && opts._font) w.el.style.fontFamily = `"${opts._font.replace(/["\\]/g, "")}", var(--font, "Inter"), "Segoe UI", sans-serif`;
   return w;
 }
 
