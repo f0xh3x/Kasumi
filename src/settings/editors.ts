@@ -1325,10 +1325,8 @@ function presets(ctx: EditorCtx): HTMLElement {
 
 /** Each effect: its label and its [animation] key (the default the widget follows). */
 const ANIM_EFFECTS: Record<string, [string, string]> = {
-  cascade: ["Cascade in the open bar", "cascade"],
+  cascade: ["Panel content one after another", "cascade"],
   roll: ["Rolling numbers", "rolling"],
-  pop: ["Panel pops out of the notch", "panel_pop"],
-  rows: ["Panel rows one after another", "panel_rows"],
   blur: ["Panel blurs in", "blur_in"],
   magnify: ["Icons grow under the cursor", "magnify"],
   nudge: ["Bell shakes on a new notification", "notification_nudge"],

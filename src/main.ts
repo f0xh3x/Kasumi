@@ -75,16 +75,14 @@ interface Drop {
 const ANIM_GLOBAL = {
   cascade: "cascade",
   roll: "rolling",
-  pop: "panelPop",
-  rows: "panelRows",
   blur: "blurIn",
   magnify: "magnify",
   nudge: "notificationNudge",
 } as const;
 
-/** The rows a panel shows one after another (panel_rows), in page order. */
+/** The pieces a panel shows one after another (cascade), in page order. */
 const PANEL_ROWS = [
-  ".panel-calendar > :not(.cal-grid)",
+  ".panel > .panel-calendar > :not(.cal-grid)",
   ".cal-grid > *",
   ".wx-head",
   ".wx-hours > *",
@@ -104,7 +102,7 @@ const PANEL_ROWS = [
   ".tasks-panel > *",
 ].join(", ");
 
-/** Rows cascade: each row of an opening panel fades and slides in a little after the one before. */
+/** Cascade: each piece of an opening panel fades and slides in a little after the one before. */
 function cascadeRows(panel: HTMLElement, q: number, away: number): void {
   const rows = panel.querySelectorAll<HTMLElement>(PANEL_ROWS);
   const n = rows.length;
@@ -394,8 +392,8 @@ class Overlay {
     });
     const mountPanel = (name: string, width?: number, height?: number, extra: Record<string, unknown> = {}) => {
       const panel = div(`panel panel-${widgetType(name)}`);
-      // Its open effects (render() reads them): pop, rows, blur.
-      for (const k of ["pop", "rows", "blur"] as const) if (this.animFor(name, k)) panel.dataset[k] = "1";
+      // Its open effects (render() reads them): cascade, blur.
+      for (const k of ["cascade", "blur"] as const) if (this.animFor(name, k)) panel.dataset[k] = "1";
       if (width) panel.style.width = `${width}px`;
       if (height) panel.style.height = `${height}px`;
       const w = createPanel(name, { ...opts(name), ...extra }, ctx);
@@ -451,7 +449,7 @@ class Overlay {
         const w = createWidget(name, opts(name));
         this.widgets.push(w);
         group.append(w.el);
-        this.barEls.push({ el: w.el, cascade: this.animFor(name, "cascade") });
+        this.barEls.push({ el: w.el, cascade: L.animation.barCascade === true });
         if (name === "language") this.langEl = w.el;
         dropdown(name, w);
       }
@@ -804,7 +802,7 @@ class Overlay {
     this.kick();
   }
 
-  /** Cascade: the open bar's widgets appear one after another, from the middle out. */
+  /** Bar cascade: the open bar's widgets appear one after another, from the middle out. */
   private cascadeBar(ex: number, away: number): void {
     const els = this.barEls.filter((b) => b.cascade).map((b) => b.el);
     if (!els.length) return;
@@ -1138,14 +1136,12 @@ class Overlay {
         const how = L.animation.panelContent;
         const near = how === "reveal" || how === "fade" ? (bumps[i].panelTop ?? H) : bf.depth - d.panelHeight;
         d.panelEl.style.opacity = String(how === "reveal" ? 1 : how === "fade" ? clamp01(p * 1.6 - 0.5) : clamp01(p * 1.4 - 0.2));
-        // Effects ([animation] panel_pop / blur_in / panel_rows, or the widget's own).
+        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(how === "slide" ? near : Math.round(near)) * away}px)`;
+        // Effects ([animation] blur_in / cascade, or the widget's own).
         const q = clamp01(p);
         const fx = d.panelEl.dataset;
-        const pop = fx.pop === "1" && q < 1 ? ` scale(${(0.94 + 0.06 * q).toFixed(4)})` : "";
-        if (pop) d.panelEl.style.transformOrigin = bottom ? "50% 100%" : "50% 0";
-        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(how === "slide" ? near : Math.round(near)) * away}px)${pop}`;
         d.panelEl.style.filter = fx.blur === "1" && q < 0.995 ? `blur(${((1 - q) * 6).toFixed(2)}px)` : "";
-        if (fx.rows === "1") cascadeRows(d.panelEl, q, away);
+        if (fx.cascade === "1") cascadeRows(d.panelEl, q, away);
       }
     });
   }

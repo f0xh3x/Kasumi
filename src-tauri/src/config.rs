@@ -125,14 +125,13 @@ pub struct Animation {
     pub close_speed: f64,
     /// A notch grows a little as the cursor comes near it.
     pub hover_nudge: bool,
-    /// Effects, each also per widget (`[widgets.<w>] anim_<key>`): the open bar's
-    /// widgets appear one after another (cascade); panels grow out of the notch
-    /// (pop), show their rows one after another (rows) and come into focus (blur);
-    /// numbers roll to new values (rolling); dock icons grow under the cursor
-    /// (magnify); the bell shakes for a new notification (notification_nudge).
+    /// The open bar's widgets appear one after another, from the middle out.
+    pub bar_cascade: bool,
+    /// Widget effects, each also per widget (`[widgets.<w>] anim_<key>`): a panel
+    /// shows its content one piece after another (cascade) and comes into focus
+    /// (blur); numbers roll to new values (rolling); dock icons grow under the
+    /// cursor (magnify); the bell shakes for a new notification (notification_nudge).
     pub cascade: bool,
-    pub panel_pop: bool,
-    pub panel_rows: bool,
     pub blur_in: bool,
     pub rolling: bool,
     pub magnify: bool,
@@ -155,9 +154,8 @@ impl Default for Animation {
             open_speed: 1.0,
             close_speed: 1.0,
             hover_nudge: false,
+            bar_cascade: false,
             cascade: false,
-            panel_pop: false,
-            panel_rows: false,
             blur_in: false,
             rolling: false,
             magnify: false,

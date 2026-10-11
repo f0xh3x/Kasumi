@@ -24,9 +24,8 @@ export interface Animation {
   openSpeed: number;
   closeSpeed: number;
   hoverNudge: boolean;
+  barCascade: boolean;
   cascade: boolean;
-  panelPop: boolean;
-  panelRows: boolean;
   blurIn: boolean;
   rolling: boolean;
   magnify: boolean;

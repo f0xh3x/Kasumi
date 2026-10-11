@@ -17,26 +17,23 @@ interface Base {
 }
 
 /** Animation effects per widget (Settings > Animation > Per widget): the ones that apply to each. */
-const PANEL_FX = "pop,rows,blur";
+const PANEL_FX = "cascade,blur";
 const ANIM_WIDGETS: [string, string, number, string][] = [
-  ["clock", "Clock", 0xe823, `cascade,roll,${PANEL_FX}`],
-  ["weather", "Weather", 0xe706, `cascade,roll,${PANEL_FX}`],
-  ["temps", "PC temps", 0xe9ca, `cascade,roll,${PANEL_FX}`],
-  ["media", "Media", 0xe8d6, `cascade,${PANEL_FX}`],
-  ["notifications", "Notifications", 0xea8f, `cascade,roll,nudge,${PANEL_FX}`],
-  ["quick", "Quick settings", 0xe713, `cascade,roll,${PANEL_FX}`],
-  ["tasks", "Tasks", 0xe737, `cascade,magnify,${PANEL_FX}`],
-  ["tray", "Tray", 0xe70d, `cascade,${PANEL_FX}`],
-  ["menu", "Menu", 0xe700, `cascade,${PANEL_FX}`],
-  ["launcher", "Launcher", 0xe721, `cascade,${PANEL_FX}`],
-  ["clipboard", "Clipboard", 0xe77f, `cascade,${PANEL_FX}`],
-  ["privacy", "Privacy", 0xe720, `cascade,${PANEL_FX}`],
-  ["claude", "Claude Code", 0xe8bd, `cascade,${PANEL_FX}`],
-  ["netspeed", "Network speed", 0xe74b, "cascade,roll"],
-  ["disk", "Disk usage", 0xeda2, "cascade,roll"],
-  ["focus", "Focused app", 0xe7c4, "cascade"],
-  ["language", "Keyboard language", 0xe765, "cascade"],
-  ["buttons", "Buttons", 0xe7e8, "cascade"],
+  ["clock", "Clock", 0xe823, `roll,${PANEL_FX}`],
+  ["weather", "Weather", 0xe706, `roll,${PANEL_FX}`],
+  ["temps", "PC temps", 0xe9ca, `roll,${PANEL_FX}`],
+  ["media", "Media", 0xe8d6, `${PANEL_FX}`],
+  ["notifications", "Notifications", 0xea8f, `roll,nudge,${PANEL_FX}`],
+  ["quick", "Quick settings", 0xe713, `roll,${PANEL_FX}`],
+  ["tasks", "Tasks", 0xe737, `magnify,${PANEL_FX}`],
+  ["tray", "Tray", 0xe70d, `${PANEL_FX}`],
+  ["menu", "Menu", 0xe700, `${PANEL_FX}`],
+  ["launcher", "Launcher", 0xe721, `${PANEL_FX}`],
+  ["clipboard", "Clipboard", 0xe77f, `${PANEL_FX}`],
+  ["privacy", "Privacy", 0xe720, `${PANEL_FX}`],
+  ["claude", "Claude Code", 0xe8bd, `${PANEL_FX}`],
+  ["netspeed", "Network speed", 0xe74b, "roll"],
+  ["disk", "Disk usage", 0xeda2, "roll"],
 ];
 
 export type Field =
@@ -909,6 +906,13 @@ export const pages: Page[] = [
             ],
           },
           {
+            kind: "toggle",
+            label: "Bar widgets one after another",
+            help: "The open bar's widgets appear one by one, from the middle out.",
+            path: ["animation", "bar_cascade"],
+            default: false,
+          },
+          {
             kind: "select",
             label: "Panel content",
             help: "How a widget's panel (calendar, weather...) shows its content while it opens.",
@@ -931,12 +935,10 @@ export const pages: Page[] = [
       },
       {
         title: "Effects",
-        help: "For every widget; each can differ under Per widget below.",
+        help: "For every widget's panel and numbers; each widget can differ under Per widget below.",
         fields: [
           { kind: "toggle", label: "Hover nudge", help: "A notch grows a little as the cursor comes near it.", path: ["animation", "hover_nudge"], default: false },
-          { kind: "toggle", label: "Cascade", help: "The open bar's widgets appear one after another, from the middle out.", path: ["animation", "cascade"], default: false },
-          { kind: "toggle", label: "Panel pop", help: "Panels grow out of their notch as they open.", path: ["animation", "panel_pop"], default: false },
-          { kind: "toggle", label: "Panel rows", help: "A panel's rows (calendar weeks, weather hours, notifications...) appear one after another.", path: ["animation", "panel_rows"], default: false },
+          { kind: "toggle", label: "Cascade", help: "A widget's panel shows its content one piece after another: calendar days, weather hours, notifications...", path: ["animation", "cascade"], default: false },
           { kind: "toggle", label: "Blur in", help: "Panels come into focus as they open.", path: ["animation", "blur_in"], default: false },
           { kind: "toggle", label: "Rolling numbers", help: "Clock, temperatures, battery, counts... roll to their new value.", path: ["animation", "rolling"], default: false },
           { kind: "toggle", label: "Dock magnify", help: "Task icons grow as the cursor passes over them.", path: ["animation", "magnify"], default: false },
