@@ -58,7 +58,6 @@ bar_content = "slide"     # the open bar's widgets: the same choices
 open_speed = 1            # faster (> 1) or slower opening
 close_speed = 1           # ... and closing
 hover_nudge = false       # a notch grows a little as the cursor comes near
-bar_cascade = false       # the open bar's widgets appear one after another
 # Widget effects (each widget can differ: [widgets.<name>] anim_cascade /
 # anim_roll / anim_magnify / anim_nudge = true | false):
 cascade = false           # a panel shows its content one piece after another

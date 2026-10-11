@@ -906,13 +906,6 @@ export const pages: Page[] = [
             ],
           },
           {
-            kind: "toggle",
-            label: "Bar widgets one after another",
-            help: "The open bar's widgets appear one by one, from the middle out.",
-            path: ["animation", "bar_cascade"],
-            default: false,
-          },
-          {
             kind: "select",
             label: "Panel content",
             help: "How a widget's panel (calendar, weather...) shows its content while it opens.",

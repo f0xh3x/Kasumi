@@ -165,10 +165,6 @@ class Overlay {
   /** Hover nudge: the notch the cursor comes near grows a little (Rust says which). */
   private nudge = new Spring(0, 0, 600, 30);
   private nudgeKey: string | null = null;
-  /** The open bar's widgets, for the cascade, and their order from the middle out. */
-  private barEls: { el: HTMLElement; cascade: boolean }[] = [];
-  private barOrder: HTMLElement[] | null = null;
-  private barStart = 0;
   /** When the panels' cascades began (by panel), and when time-driven effects end: keep drawing till then. */
   private cascadeStart = new Map<HTMLElement, number>();
   private holdUntil = 0;
@@ -385,8 +381,6 @@ class Overlay {
     this.notchEls = [];
     this.openLauncher = null;
     this.lastWidths = "";
-    this.barEls = [];
-    this.barOrder = null;
     content.replaceChildren();
 
     const a = L.animation;
@@ -463,7 +457,6 @@ class Overlay {
         const w = createWidget(name, opts(name));
         this.widgets.push(w);
         group.append(w.el);
-        this.barEls.push({ el: w.el, cascade: L.animation.barCascade === true });
         if (name === "language") this.langEl = w.el;
         dropdown(name, w);
       }
@@ -816,29 +809,6 @@ class Overlay {
     this.kick();
   }
 
-  /** Bar cascade: the open bar's widgets appear one after another, from the middle out. */
-  private cascadeBar(ex: number, away: number): void {
-    const els = this.barEls.filter((b) => b.cascade).map((b) => b.el);
-    if (!els.length) return;
-    // Closed (or closing): back to normal, ready to start over next time.
-    if (ex <= 0.001 || this.expand.target < 0.5) {
-      if (this.barOrder) for (const el of els) clearCascade(el);
-      this.barOrder = null;
-      this.barStart = 0;
-      return;
-    }
-    if (!this.barOrder) {
-      const mid = (this.layout?.width ?? 0) / 2;
-      const off = (el: HTMLElement) => {
-        const r = el.getBoundingClientRect();
-        return Math.abs(r.left + r.width / 2 - mid);
-      };
-      this.barOrder = els.map((el) => ({ el, d: off(el) })).sort((a, b) => a.d - b.d).map((x) => x.el);
-      this.barStart = performance.now();
-    }
-    this.holdUntil = Math.max(this.holdUntil, cascade(this.barOrder, this.barStart, -6 * away));
-  }
-
   /** A panel's cascade: starts as it begins to open, reset once it's shut. */
   private cascadePanel(panel: HTMLElement, p: number, target: number, away: number): void {
     const rows = panel.querySelectorAll<HTMLElement>(PANEL_ROWS);
@@ -1028,24 +998,23 @@ class Overlay {
       let x = d.xs ? (useTarget ? d.xs.target : d.xs.value) : d.x;
       let width = d.width;
       let height = d.height;
-      if (d.key === this.nudgeKey && !this.expanded) {
-        // Hover nudge: the notch the cursor comes near grows a little.
-        const v = Math.max(0, useTarget ? this.nudge.target : this.nudge.value);
-        x -= 5 * v;
-        width += 10 * v;
-        height += 4 * v;
-      }
+      // Hover nudge: the notch the cursor comes near grows a little (a dock opens a little).
+      const nudged = d.key === this.nudgeKey && !this.expanded ? Math.max(0, useTarget ? this.nudge.target : this.nudge.value) : 0;
       let scale: number | undefined;
       let panelTop: number | undefined;
       if (L.mode === "dock" && d.notch) {
         // Grow from the rest size to the open size in place.
-        const e = Math.max(0, useTarget ? this.expand.target : this.expand.value);
+        const e = Math.min(1, Math.max(0, useTarget ? this.expand.target : this.expand.value) + 0.15 * nudged);
         const n = d.notch;
         x = lerp(x, n.openX, e);
         width = lerp(n.width, n.openWidth, e);
         height = lerp(n.height, n.openHeight, e);
         scale = height / L.geometry.notchHeight;
         panelTop = height;
+      } else if (nudged > 0) {
+        x -= 5 * nudged;
+        width += 10 * nudged;
+        height += 4 * nudged;
       }
       if (d.shown) {
         // Retracting (hidden under a window): shrink into the top edge around the center.
@@ -1112,7 +1081,6 @@ class Overlay {
     const ex = this.expand.value;
     this.bar.style.transform = barHow === "slide" ? `translateY(${(frame.base - H) * away}px)` : "none";
     this.bar.style.opacity = String(barHow === "reveal" ? clamp01(ex * 5) : barHow === "fade" ? clamp01((ex - 0.35) / 0.55) : clamp01((ex - 0.25) / 0.6));
-    this.cascadeBar(ex, away);
 
     const od = this.osdDrop();
     const o = clamp01(this.osd.value);

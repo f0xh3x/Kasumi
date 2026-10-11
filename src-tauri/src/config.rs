@@ -125,8 +125,6 @@ pub struct Animation {
     pub close_speed: f64,
     /// A notch grows a little as the cursor comes near it.
     pub hover_nudge: bool,
-    /// The open bar's widgets appear one after another, from the middle out.
-    pub bar_cascade: bool,
     /// Widget effects, each also per widget (`[widgets.<w>] anim_<key>`): a panel
     /// shows its content one piece after another (cascade); numbers roll to new
     /// values (rolling); dock icons grow under the cursor (magnify); the bell
@@ -153,7 +151,6 @@ impl Default for Animation {
             open_speed: 1.0,
             close_speed: 1.0,
             hover_nudge: false,
-            bar_cascade: false,
             cascade: false,
             rolling: false,
             magnify: false,
