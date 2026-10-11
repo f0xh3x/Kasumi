@@ -17,7 +17,7 @@ use windows::Win32::Storage::FileSystem::{ReadFile, PIPE_ACCESS_INBOUND};
 use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-const PIPE: &str = "statusnotch-komorebi";
+const PIPE: &str = "kasumi-komorebi";
 
 fn komorebic(args: &[&str]) -> std::io::Result<std::process::Output> {
     Command::new("komorebic").args(args).creation_flags(CREATE_NO_WINDOW).output()
@@ -64,7 +64,7 @@ fn publish(app: &AppHandle, state: Option<&Value>) {
 /// closes (komorebi quit or restarted).
 fn listen(app: &AppHandle) {
     unsafe {
-        let pipe = CreateNamedPipeW(w!(r"\\.\pipe\statusnotch-komorebi"), PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 0, 1 << 20, 0, None);
+        let pipe = CreateNamedPipeW(w!(r"\\.\pipe\kasumi-komorebi"), PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 0, 1 << 20, 0, None);
         if pipe == INVALID_HANDLE_VALUE {
             return;
         }
@@ -119,7 +119,7 @@ fn listen(app: &AppHandle) {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-komorebi".into())
+        .name("kasumi-komorebi".into())
         .spawn(move || loop {
             if !super::placed(&app, "workspaces") {
                 std::thread::sleep(Duration::from_secs(2));

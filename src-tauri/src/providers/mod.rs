@@ -179,7 +179,7 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     let spawn = |name: &str, f: fn(AppHandle)| {
         let app = app.clone();
         std::thread::Builder::new()
-            .name(format!("statusnotch-{name}"))
+            .name(format!("kasumi-{name}"))
             .spawn(move || f(app))
             .expect("spawn provider thread");
     };

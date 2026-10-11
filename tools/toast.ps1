@@ -1,8 +1,8 @@
-# Sends a Windows notification (as PowerShell), to test StatusNotch's notification
+# Sends a Windows notification (as PowerShell), to test Kasumi's notification
 # widget and pop-ups. Windows keeps it only while its notifications are on
 # (Do not disturb is fine: it just doesn't show its own pop-up then).
 #   powershell -File tools/toast.ps1 [-title "Mia"] [-text "Lunch?"]
-param([string]$title = "StatusNotch test", [string]$text = "A notification to try the notch with.")
+param([string]$title = "Kasumi test", [string]$text = "A notification to try the notch with.")
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
 $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
 $lines = $xml.GetElementsByTagName("text")

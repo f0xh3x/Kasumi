@@ -416,7 +416,7 @@ export function surfaceName(id: string, _s?: any): string {
 }
 const surfaceIcon = (id: string) => (id === "bottom" ? 0xe70d : 0xe70e); // chevron down / up
 
-/** Per-monitor: StatusNotch on/off, custom layout, follow global while unchanged. */
+/** Per-monitor: Kasumi on/off, custom layout, follow global while unchanged. */
 const monitorToggles: Editor = (ctx) => {
   const name = scope.monitor!;
   const r = ownRule(ctx.cfg, name)?.[1];
@@ -428,7 +428,7 @@ const monitorToggles: Editor = (ctx) => {
   const setOwn = (update: (o: any) => void) => set((x) => update(((x.surfaces ??= {})[scope.surface] ??= {})));
   const box = $("div", "stack-tight");
   box.append(
-    row("StatusNotch on this monitor", undefined, sw(effective?.enabled !== false, (on) => set((x) => (x.enabled = on)))),
+    row("Kasumi on this monitor", undefined, sw(effective?.enabled !== false, (on) => set((x) => (x.enabled = on)))),
     ...(surfaceIds(ctx.cfg).length > 1
       ? [
           row(
@@ -946,7 +946,7 @@ const tempsSensors: Editor = (ctx) => {
 
 const ACTIONS: [string, string][] = [
   ["open", "Open folder or file"],
-  ["settings", "StatusNotch settings"],
+  ["settings", "Kasumi settings"],
   ["lock", "Lock"],
   ["sleep", "Sleep"],
   ["hibernate", "Hibernate"],
@@ -1437,7 +1437,7 @@ const accentWidget: Editor = (ctx) => {
 // --- Windows setup for notifications --------------------------------------------------
 
 /**
- * How to set Windows up so StatusNotch shows the notifications and Windows
+ * How to set Windows up so Kasumi shows the notifications and Windows
  * doesn't (it has to keep storing them: that's where they're read from).
  */
 const windowsGuide: Editor = () => {
@@ -1456,11 +1456,11 @@ const windowsGuide: Editor = () => {
     "div",
     "guide",
     $("div", "guide-head", glyph(0xe946), $("span", "", "Set up Windows for this")),
-    step("1", "Notifications on", "StatusNotch reads notifications from Windows. While they're off, Windows keeps none, so there's nothing to show.", status),
+    step("1", "Notifications on", "Kasumi reads notifications from Windows. While they're off, Windows keeps none, so there's nothing to show.", status),
     step(
       "2",
       "Do not disturb on",
-      "Windows keeps every notification but shows no pop-ups of its own; StatusNotch shows them instead. Apps on its priority list (calls, reminders, alarms) still get Windows' pop-ups.",
+      "Windows keeps every notification but shows no pop-ups of its own; Kasumi shows them instead. Apps on its priority list (calls, reminders, alarms) still get Windows' pop-ups.",
     ),
     step(
       "",

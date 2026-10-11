@@ -139,7 +139,7 @@ export const pages: Page[] = [
           {
             kind: "toggle",
             label: "Hide the Windows taskbar",
-            help: "Hidden while StatusNotch runs and restored when it quits. The Win key and Start menu keep working. Turn off Windhawk mods that show the taskbar (e.g. “Taskbar auto-hide when maximized”).",
+            help: "Hidden while Kasumi runs and restored when it quits. The Win key and Start menu keep working. Turn off Windhawk mods that show the taskbar (e.g. “Taskbar auto-hide when maximized”).",
             path: ["shell", "hide_taskbar"],
             default: false,
           },
@@ -546,14 +546,14 @@ export const pages: Page[] = [
           {
             kind: "toggle",
             label: "Keep until cleared",
-            help: "Off: the list mirrors Windows, so what an app takes back (Discord once you've read the message) goes. On: StatusNotch keeps them until you dismiss them (× or Clear all).",
+            help: "Off: the list mirrors Windows, so what an app takes back (Discord once you've read the message) goes. On: Kasumi keeps them until you dismiss them (× or Clear all).",
             path: ["widgets", "notifications", "keep"],
             default: false,
           },
           {
             kind: "toggle",
             label: "Clear after checking",
-            help: "Opening the panel and closing it clears what it showed (from StatusNotch's list, not Windows').",
+            help: "Opening the panel and closing it clears what it showed (from Kasumi's list, not Windows').",
             path: ["widgets", "notifications", "clear_on_close"],
             default: false,
           },
@@ -1077,7 +1077,7 @@ export const pages: Page[] = [
           {
             kind: "toggle",
             label: "Take over the volume keys",
-            help: "Hides the Windows volume flyout; StatusNotch sets the volume.",
+            help: "Hides the Windows volume flyout; Kasumi sets the volume.",
             path: ["osd", "replace_volume_keys"],
             default: true,
           },

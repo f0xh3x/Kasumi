@@ -19,7 +19,7 @@ pub fn open(app: &AppHandle) {
         // Frameless with our own title bar (settings.html); Windows still draws the
         // shadow, and rounded corners are requested below.
         let built = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("settings.html".into()))
-            .title("StatusNotch Settings")
+            .title("Kasumi Settings")
             .inner_size(940.0, 680.0)
             .min_inner_size(760.0, 500.0)
             .decorations(false)
@@ -37,7 +37,7 @@ pub fn open(app: &AppHandle) {
                 }
                 let _ = w.set_focus();
             }
-            Err(e) => eprintln!("[statusnotch] settings window: {e}"),
+            Err(e) => eprintln!("[kasumi] settings window: {e}"),
         }
     });
 }

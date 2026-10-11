@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds StatusNotch and swaps it into the installed copy, then checks it came up.
+# Builds Kasumi and swaps it into the installed copy, then checks it came up.
 #   tools/install.sh          typecheck, frontend build, release build, install, check
 #   tools/install.sh --test   the same, with the Rust tests first
 # Never force-kills: the new instance asks the running one to quit (it hands the
@@ -7,8 +7,8 @@
 set -euo pipefail
 export PATH="/c/Program Files/nodejs:$HOME/.cargo/bin:$PATH"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$LOCALAPPDATA/Programs/StatusNotch"
-LOG="$APPDATA/StatusNotch/statusnotch.log"
+APP="$LOCALAPPDATA/Programs/Kasumi"
+LOG="$APPDATA/Kasumi/kasumi.log"
 
 cd "$ROOT"
 npx tsc --noEmit
@@ -19,14 +19,14 @@ if [[ "${1:-}" == "--test" ]]; then
 fi
 cargo build --release --features tauri/custom-protocol 2>&1 | grep -E "^(warning|error)|Finished"
 
-rm -f "$APP/StatusNotch.old.exe"
-mv "$APP/StatusNotch.exe" "$APP/StatusNotch.old.exe"
-cp target/release/statusnotch.exe "$APP/StatusNotch.exe"
+rm -f "$APP/Kasumi.old.exe"
+mv "$APP/Kasumi.exe" "$APP/Kasumi.old.exe"
+cp target/release/kasumi.exe "$APP/Kasumi.exe"
 START=$(wc -l < "$LOG")
-powershell -NoProfile -Command "Start-Process -FilePath '$APP\StatusNotch.exe' -WorkingDirectory '$APP'; Start-Sleep 10"
+powershell -NoProfile -Command "Start-Process -FilePath '$APP\Kasumi.exe' -WorkingDirectory '$APP'; Start-Sleep 10"
 
 # Each overlay window: bars ~345 px tall, docks ~709 (room for panels). Only
 # 78 / 93 px means the page's script never ran (nothing drawn): see the log.
 powershell -NoProfile -ExecutionPolicy Bypass -File "$ROOT/tools/windows.ps1"
-# Page errors since this start ("[statusnotch:<window>] ..." lines come from the pages).
-tail -n +"$START" "$LOG" | grep "^\[statusnotch:" || echo "no page errors logged"
+# Page errors since this start ("[kasumi:<window>] ..." lines come from the pages).
+tail -n +"$START" "$LOG" | grep "^\[kasumi:" || echo "no page errors logged"

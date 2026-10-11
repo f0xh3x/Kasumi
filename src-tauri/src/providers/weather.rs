@@ -97,7 +97,7 @@ pub fn run(app: AppHandle) {
                     fetched = Some((q, Instant::now()));
                 }
                 Err(e) => {
-                    eprintln!("[statusnotch] weather: {e}");
+                    eprintln!("[kasumi] weather: {e}");
                     next_try = Instant::now() + RETRY;
                 }
             }

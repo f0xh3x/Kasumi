@@ -491,7 +491,7 @@ pub async fn launcher_close(window: tauri::WebviewWindow, refocus: bool) {
 /// Frontend console errors, forwarded to the app log.
 #[tauri::command]
 pub async fn fe_log(window: tauri::WebviewWindow, message: String) {
-    eprintln!("[statusnotch:{}] {message}", window.label());
+    eprintln!("[kasumi:{}] {message}", window.label());
 }
 
 pub fn start(app: &AppHandle) {
@@ -502,7 +502,7 @@ pub fn start(app: &AppHandle) {
 
     // Load first: on first run it creates the directory the watcher needs.
     let cfg = config::load().unwrap_or_else(|e| {
-        eprintln!("[statusnotch] config error, using defaults: {e}");
+        eprintln!("[kasumi] config error, using defaults: {e}");
         config::fallback()
     });
     let shared_cfg: SharedConfig = Arc::new(RwLock::new(cfg.clone()));
@@ -510,11 +510,11 @@ pub fn start(app: &AppHandle) {
 
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-engine".into())
+        .name("kasumi-engine".into())
         .spawn(move || {
             let watcher = config::watch(tx);
             if watcher.is_none() {
-                eprintln!("[statusnotch] config hot-reload unavailable");
+                eprintln!("[kasumi] config hot-reload unavailable");
             }
             Engine { app, shared, cfg, shared_cfg, monitors: Vec::new(), reload_rx: rx, _watcher: watcher }.run();
         })
@@ -606,7 +606,7 @@ impl Engine {
                 crate::settings::open(&self.app);
             }
             if crate::instance::quit_requested() {
-                eprintln!("[statusnotch] quitting: a new instance took over");
+                eprintln!("[kasumi] quitting: a new instance took over");
                 self.app.exit(0);
                 return;
             }
@@ -622,9 +622,9 @@ impl Engine {
                         *self.shared_cfg.write().unwrap() = cfg.clone();
                         self.cfg = cfg;
                         self.reconcile();
-                        eprintln!("[statusnotch] config reloaded");
+                        eprintln!("[kasumi] config reloaded");
                     }
-                    Err(e) => eprintln!("[statusnotch] config error, keeping previous: {e}"),
+                    Err(e) => eprintln!("[kasumi] config error, keeping previous: {e}"),
                 }
             }
 
@@ -890,7 +890,7 @@ impl Engine {
         for (i, m) in self.monitors.iter().enumerate() {
             let rule = self.rule_for(m, i);
             eprintln!(
-                "[statusnotch] monitor #{} {} '{}'{} -> rule {:?}",
+                "[kasumi] monitor #{} {} '{}'{} -> rule {:?}",
                 i + 1,
                 m.device,
                 m.friendly,
@@ -996,7 +996,7 @@ impl Engine {
         }
         for (label, m, layout) in to_create {
             if let Err(e) = self.create_window(&label, &m, &layout) {
-                eprintln!("[statusnotch] failed to create overlay {label}: {e}");
+                eprintln!("[kasumi] failed to create overlay {label}: {e}");
                 self.shared.lock().unwrap().overlays.remove(&label);
             }
         }
@@ -1004,9 +1004,9 @@ impl Engine {
     }
 
     fn create_window(&self, label: &str, m: &Monitor, layout: &Layout) -> tauri::Result<()> {
-        eprintln!("[statusnotch] creating {label}");
+        eprintln!("[kasumi] creating {label}");
         let window = WebviewWindowBuilder::new(&self.app, label, WebviewUrl::App("index.html".into()))
-            .title("StatusNotch")
+            .title("Kasumi")
             .transparent(true)
             .decorations(false)
             .shadow(false)
@@ -1024,7 +1024,7 @@ impl Engine {
             .additional_browser_args(win::BROWSER_ARGS)
             .build()?;
         let hwnd = window.hwnd()?.0 as isize;
-        eprintln!("[statusnotch] built {label}");
+        eprintln!("[kasumi] built {label}");
         if let Some(o) = self.shared.lock().unwrap().overlays.get_mut(label) {
             o.hwnd = Some(hwnd);
         }
@@ -1038,7 +1038,7 @@ impl Engine {
             // Show through tao so its visibility flag stays in sync; it re-applies
             // that flag whenever window styles change (e.g. click-through toggles).
             let _ = window.show();
-            eprintln!("[statusnotch] shown {}", window.label());
+            eprintln!("[kasumi] shown {}", window.label());
         })?;
         Ok(())
     }
@@ -1083,7 +1083,7 @@ impl Engine {
             for (label, o) in sh.overlays.iter().filter(|(_, o)| !o.hidden) {
                 if let Some(h) = o.hwnd {
                     if win::unminimize(h) {
-                        eprintln!("[statusnotch] {label} was minimized; restored");
+                        eprintln!("[kasumi] {label} was minimized; restored");
                         win::raise_topmost(h);
                     }
                 }
@@ -1101,8 +1101,8 @@ impl Engine {
                     && o.fullscreen_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(500));
                 if hide != o.hidden {
                     match (&fs, hide) {
-                        (Some((_, why)), true) => eprintln!("[statusnotch] hiding {label}: {why}"),
-                        _ => eprintln!("[statusnotch] showing {label}"),
+                        (Some((_, why)), true) => eprintln!("[kasumi] hiding {label}: {why}"),
+                        _ => eprintln!("[kasumi] showing {label}"),
                     }
                     o.hidden = hide;
                     changes.push((label.clone(), o.hwnd, hide));
@@ -1283,13 +1283,13 @@ impl Engine {
                     if let Some((class, r)) = windows.iter().find(|(_, r)| intersects(r, px(zx0), zy0, px(zx1), zy1) && under(r)) {
                         if !o.undocked.contains(&n.id) {
                             eprintln!(
-                                "[statusnotch] {label}: '{}' undocked by {class} at ({},{})-({},{})",
+                                "[kasumi] {label}: '{}' undocked by {class} at ({},{})-({},{})",
                                 n.id, r.left, r.top, r.right, r.bottom
                             );
                         }
                         undocked.push(n.id.clone());
                     } else if o.undocked.contains(&n.id) && !o.expanded {
-                        eprintln!("[statusnotch] {label}: '{}' docked again", n.id);
+                        eprintln!("[kasumi] {label}: '{}' docked again", n.id);
                     }
                 }
                 if undocked != o.undocked {

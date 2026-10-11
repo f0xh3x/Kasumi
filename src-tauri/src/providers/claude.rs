@@ -184,7 +184,7 @@ impl State {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-claude".into())
+        .name("kasumi-claude".into())
         .spawn(move || {
             let mut state: Option<State> = None;
             let mut last_scan = Instant::now() - Duration::from_secs(60);

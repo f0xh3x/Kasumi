@@ -50,7 +50,7 @@ pub fn start(app: &AppHandle) {
     app.manage(MediaSender(Mutex::new(tx)));
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-media".into())
+        .name("kasumi-media".into())
         .spawn(move || run(app, rx))
         .expect("spawn media thread");
 }
@@ -154,7 +154,7 @@ fn run(app: AppHandle, rx: Receiver<Command>) {
         match SessionManager::RequestAsync().and_then(|op| op.get()) {
             Ok(m) => break m,
             Err(e) => {
-                eprintln!("[statusnotch] media: session manager unavailable: {e}");
+                eprintln!("[kasumi] media: session manager unavailable: {e}");
                 std::thread::sleep(Duration::from_secs(10));
             }
         }
@@ -163,12 +163,12 @@ fn run(app: AppHandle, rx: Receiver<Command>) {
     loop {
         match snapshot(&mgr, &mut cache) {
             Ok(v) => publish(&app, "media", v),
-            Err(e) => eprintln!("[statusnotch] media: {e}"),
+            Err(e) => eprintln!("[kasumi] media: {e}"),
         }
         match rx.recv_timeout(POLL) {
             Ok(cmd) => {
                 if let Err(e) = execute(&mgr, cmd) {
-                    eprintln!("[statusnotch] media command failed: {e}");
+                    eprintln!("[kasumi] media command failed: {e}");
                 }
                 // Let the player update its state before we read it back.
                 std::thread::sleep(Duration::from_millis(150));

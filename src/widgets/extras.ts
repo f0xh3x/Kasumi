@@ -187,7 +187,7 @@ export function notifications(opts: Record<string, unknown>): Widget {
  */
 export function notificationsPanel(opts: Record<string, unknown>, ctx: PanelContext): Widget {
   const opens = opts.click !== "nothing";
-  // [widgets.notifications] keep: StatusNotch's own list, dismissed here (× / Clear all).
+  // [widgets.notifications] keep: Kasumi's own list, dismissed here (× / Clear all).
   const keeps = opts.keep === true;
   const dismiss = (ids: number[] | null) => invoke("notifications_dismiss", { ids }).catch(console.error);
   // [widgets.notifications] clear_on_close: what the panel showed goes once it's shut.

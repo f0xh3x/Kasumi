@@ -6,7 +6,7 @@ use windows::Win32::System::Registry::{
 };
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const VALUE: PCWSTR = w!("StatusNotch");
+const VALUE: PCWSTR = w!("Kasumi");
 
 fn command() -> Vec<u16> {
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();

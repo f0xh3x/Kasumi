@@ -190,7 +190,7 @@ fn seen() -> i64 {
 
 static LATEST: Mutex<Vec<(i64, i64)>> = Mutex::new(Vec::new());
 
-/// StatusNotch's own list ([widgets.notifications] keep): what it has shown,
+/// Kasumi's own list ([widgets.notifications] keep): what it has shown,
 /// kept when an app takes its notification back (Discord once you've read the
 /// message), until dismissed. In the config folder, so a restart keeps it.
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -266,7 +266,7 @@ fn pop(app: &AppHandle, n: &Note) {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-notifications".into())
+        .name("kasumi-notifications".into())
         .spawn(move || {
             let path = db_path();
             // The newest notification already handled: only ones after it pop out
@@ -319,7 +319,7 @@ pub async fn notifications_windows_on() -> bool {
     crate::win::reg_dword(HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled") != Some(0)
 }
 
-/// Dismisses notifications from StatusNotch's list (`ids`; none: all of them).
+/// Dismisses notifications from Kasumi's list (`ids`; none: all of them).
 /// Windows' own notification center isn't touched.
 #[tauri::command]
 pub async fn notifications_dismiss(app: AppHandle, ids: Option<Vec<i64>>) -> Result<(), String> {

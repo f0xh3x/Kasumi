@@ -1,5 +1,5 @@
 [package]
-name = "statusnotch"
+name = "kasumi"
 version = "0.3.2"
 description = "Notch-style status bar for Windows"
 edition = "2021"
@@ -8,7 +8,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }  # keep key order when rewriting config sections
 toml = "0.8"

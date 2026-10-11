@@ -18,7 +18,7 @@ param(
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
 Add-Type 'using System; using System.Runtime.InteropServices; public static class HoverCap { [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); public struct POINT { public int X; public int Y; } }'
 [HoverCap]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null
-if (-not $out) { $out = if ($env:CLAUDE_JOB_DIR) { "$env:CLAUDE_JOB_DIR\tmp\hover" } else { "$env:TEMP\statusnotch-hover" } }
+if (-not $out) { $out = if ($env:CLAUDE_JOB_DIR) { "$env:CLAUDE_JOB_DIR\tmp\hover" } else { "$env:TEMP\kasumi-hover" } }
 New-Item -ItemType Directory -Force $out | Out-Null
 Get-ChildItem $out -Filter *.png -ErrorAction SilentlyContinue | Remove-Item
 

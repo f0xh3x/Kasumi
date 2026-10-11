@@ -1,4 +1,4 @@
-# Lists StatusNotch's visible windows: position, size, and whether they have a frame
+# Lists Kasumi's visible windows: position, size, and whether they have a frame
 # (they must not). Bars are ~345 px tall and docks ~709 once their page has run.
 # A 16x16 window "with a frame" is a hidden helper window: normal.
 Add-Type @"
@@ -27,4 +27,4 @@ public static class NC {
   }
 }
 "@
-foreach ($p in Get-Process statusnotch) { [NC]::Run([uint32]$p.Id) }
+foreach ($p in Get-Process kasumi) { [NC]::Run([uint32]$p.Id) }

@@ -1,6 +1,6 @@
-# StatusNotch as a modular shell — plan
+# Kasumi as a modular shell — plan
 
-Goal: grow StatusNotch from a top status bar into a small, modular shell with a
+Goal: grow Kasumi from a top status bar into a small, modular shell with a
 **top status bar** and a **bottom dock** by default, both built from the same parts,
 plus the widgets needed to live without the Windows taskbar: **tasks**, **quick
 settings** and a **launcher**. Same philosophy as today: minimal, pure black,
@@ -8,7 +8,7 @@ everything optional and configurable, nothing in Windows replaced or broken.
 
 Safety net: `main` is tagged **`v0.1.0`** (the working app). Work happens on the
 **`shell`** branch. Binaries, installer, config and presets are copied to
-`C:\Users\Kip\dev\StatusNotch-backups\v0.1.0\` (with a git bundle of the source).
+`C:\Users\Kip\dev\Kasumi-backups\v0.1.0\` (with a git bundle of the source).
 
 ---
 
@@ -196,7 +196,7 @@ interface WidgetContext {
 ## 8. Hiding the Windows taskbar
 
 * Option `[shell] hide_taskbar` (dock settings): hides Explorer's taskbar while
-  StatusNotch runs — **not removed or replaced**; Win key and Start keep working.
+  Kasumi runs — **not removed or replaced**; Win key and Start keep working.
 * How: set the taskbar to auto-hide through the official AppBar API (frees the
   screen area) **and** hide its window, so it doesn't pop up when the dock is hovered.
   Only Explorer's real `Shell_TrayWnd` (by process) is touched — never our own tray host.

@@ -1,11 +1,11 @@
-//! Hiding the Windows taskbar while StatusNotch provides its own (`[shell]
+//! Hiding the Windows taskbar while Kasumi provides its own (`[shell]
 //! hide_taskbar`). Explorer's taskbars are set to auto-hide, so maximized windows
 //! get the whole screen, and their windows are hidden outright, so they never
 //! slide back in at the screen edge. A WinEvent hook hides them again the moment
 //! Explorer shows them (also after an Explorer restart).
 //!
 //! Nothing is removed or replaced: the Win key and Start menu keep working, and
-//! the taskbar comes back when the option is switched off, when StatusNotch quits
+//! the taskbar comes back when the option is switched off, when Kasumi quits
 //! or panics, and — through a marker file holding the original auto-hide state —
 //! on the next start after a crash.
 //!
@@ -46,7 +46,7 @@ pub struct Reservation {
 static RESERVE_WANT: std::sync::Mutex<Vec<Reservation>> = std::sync::Mutex::new(Vec::new());
 static RESERVED: std::sync::Mutex<Vec<Reservation>> = std::sync::Mutex::new(Vec::new());
 
-/// Sets the strips StatusNotch surfaces reserve (applied on this module's thread).
+/// Sets the strips Kasumi surfaces reserve (applied on this module's thread).
 pub fn reserve(list: Vec<Reservation>) {
     *RESERVE_WANT.lock().unwrap() = list;
 }
@@ -191,7 +191,7 @@ fn apply_work_areas() {
             st.resets.push(at);
             if st.resets.len() > 5 {
                 eprintln!(
-                    "[statusnotch] work area of ({l},{t})-({r},{b}) keeps being reset (Explorer / a taskbar mod); leaving it for {} s",
+                    "[kasumi] work area of ({l},{t})-({r},{b}) keeps being reset (Explorer / a taskbar mod); leaving it for {} s",
                     st.pause.as_secs()
                 );
                 st.paused_until = Some(at + st.pause);
@@ -204,11 +204,11 @@ fn apply_work_areas() {
         st.got = work_area(&mon).unwrap_or(want);
         refit_maximized(&mon);
         if st.got == want {
-            eprintln!("[statusnotch] work area of ({l},{t})-({r},{b}) set to keep reserved strips");
+            eprintln!("[kasumi] work area of ({l},{t})-({r},{b}) set to keep reserved strips");
         } else {
             let g = st.got;
             eprintln!(
-                "[statusnotch] work area of ({l},{t})-({r},{b}) set to keep reserved strips (Windows made it ({},{})-({},{}))",
+                "[kasumi] work area of ({l},{t})-({r},{b}) set to keep reserved strips (Windows made it ({},{})-({},{}))",
                 g.left, g.top, g.right, g.bottom
             );
         }
@@ -279,7 +279,7 @@ fn sync_appbars() {
             SHAppBarMessage(ABM_SETPOS, &mut d);
         }
     }
-    eprintln!("[statusnotch] reserved screen space: {} strip(s), {} through the work area", want.len(), refused.len());
+    eprintln!("[kasumi] reserved screen space: {} strip(s), {} through the work area", want.len(), refused.len());
     *FALLBACK.lock().unwrap() = refused;
     *REGISTERED_AT.lock().unwrap() = Some(std::time::Instant::now());
     *have = want;
@@ -308,7 +308,7 @@ fn check_reservations() {
         let Some(work) = work_area(&RECT { left: l, top: t, right: rt, bottom: b }) else { continue };
         let kept = if r.bottom_edge { work.bottom <= r.top } else { work.top >= r.bottom };
         if !kept {
-            eprintln!("[statusnotch] reservation on ({l},{t})-({rt},{b}) not honoured by Explorer; using the work area");
+            eprintln!("[kasumi] reservation on ({l},{t})-({rt},{b}) not honoured by Explorer; using the work area");
             fallback.push(r);
         }
     }
@@ -344,7 +344,7 @@ pub fn want(hide: bool) {
 }
 
 pub fn start() {
-    std::thread::Builder::new().name("statusnotch-taskbar".into()).spawn(run).expect("spawn taskbar thread");
+    std::thread::Builder::new().name("kasumi-taskbar".into()).spawn(run).expect("spawn taskbar thread");
 }
 
 fn is_taskbar_class(h: HWND) -> bool {
@@ -411,7 +411,7 @@ fn enable() {
     set_autohide(true);
     hide_all();
     ACTIVE.store(true, Ordering::Relaxed);
-    eprintln!("[statusnotch] taskbar hidden");
+    eprintln!("[kasumi] taskbar hidden");
 }
 
 /// Shows the taskbar again and puts auto-hide back the way it was; frees reserved space.
@@ -427,7 +427,7 @@ pub fn restore() {
     }
     set_autohide(original.trim() == "1");
     let _ = std::fs::remove_file(marker());
-    eprintln!("[statusnotch] taskbar restored");
+    eprintln!("[kasumi] taskbar restored");
 }
 
 unsafe extern "system" fn on_show(_: HWINEVENTHOOK, _: u32, h: HWND, object: i32, child: i32, _: u32, _: u32) {

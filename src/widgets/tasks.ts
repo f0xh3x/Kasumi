@@ -405,7 +405,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
         if (!mine() || !hasFiles(e)) return;
         e.preventDefault();
         const webview = (window as unknown as { chrome?: { webview?: { postMessageWithAdditionalObjects?: (m: string, o: FileList) => void } } }).chrome?.webview;
-        webview?.postMessageWithAdditionalObjects?.("statusnotch-drop", e.dataTransfer!.files);
+        webview?.postMessageWithAdditionalObjects?.("kasumi-drop", e.dataTransfer!.files);
       }],
     );
     for (const [type, f] of dropListeners) document.addEventListener(type, f as EventListener);
@@ -497,7 +497,7 @@ export function tasksPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
       });
       return a;
     };
-    // Pin / unpin: StatusNotch's own pin list (starts from the Windows taskbar's).
+    // Pin / unpin: Kasumi's own pin list (starts from the Windows taskbar's).
     const pins = pinEntries(t);
     const mine = app.pin ?? app.key;
     const pinAction = pinning

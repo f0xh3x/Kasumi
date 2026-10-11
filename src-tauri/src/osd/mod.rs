@@ -37,7 +37,7 @@ pub fn show(app: &AppHandle, kind: &str, level: f32, muted: bool) {
         return;
     }
     let n = emit(app, kind, "notch://osd", json!({ "kind": kind, "level": level.clamp(0.0, 1.0), "muted": muted }));
-    eprintln!("[statusnotch] osd {kind} {:.0}%{} -> {n} overlay(s)", level * 100.0, if muted { " muted" } else { "" });
+    eprintln!("[kasumi] osd {kind} {:.0}%{} -> {n} overlay(s)", level * 100.0, if muted { " muted" } else { "" });
 }
 
 /// Watches the foreground window's keyboard layout. Publishes it as data

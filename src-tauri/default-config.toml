@@ -1,4 +1,4 @@
-# StatusNotch config. Hot-reloaded on save.
+# Kasumi config. Hot-reloaded on save.
 # All sizes are logical px (DIPs) and scale with each monitor's DPI.
 
 [timing]
@@ -15,7 +15,7 @@ corners_attached = true   # part of the bars (their tint, opacity, animations) |
 tooltips = true           # hints when hovering widgets
 
 [shell]
-hide_taskbar = true       # hide the Windows taskbar while StatusNotch runs (restored on quit)
+hide_taskbar = true       # hide the Windows taskbar while Kasumi runs (restored on quit)
 
 # App launcher: opens from the launcher widget, or with the hotkey (from the
 # middle of the dock / bar when no launcher widget is placed). hotkey = "" for
@@ -145,7 +145,7 @@ offset = 0                # shift from the middle
 
 # Per-monitor rules; first match wins. match = "*", "primary", "#2" (index, left to right),
 # a device name, or part of the monitor's friendly name (e.g. "DELL").
-# enabled = false hides StatusNotch there; surfaces = { top = { left = [...], ... } } gives a
+# enabled = false hides Kasumi there; surfaces = { top = { left = [...], ... } } gives a
 # monitor its own layout for a surface, surfaces = { bottom = { enabled = false } } turns one off.
 [[monitors]]
 match = "*"

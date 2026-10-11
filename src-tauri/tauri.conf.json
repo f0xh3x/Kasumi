@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "StatusNotch",
+  "productName": "Kasumi",
   "version": "0.3.2",
-  "identifier": "com.kip.statusnotch",
+  "identifier": "com.kip.kasumi",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -26,8 +26,8 @@
       "icons/128x128.png",
       "icons/icon.ico"
     ],
-    "shortDescription": "A notch status bar for Windows",
-    "longDescription": "StatusNotch: a black notch at the top of the screen that opens into a status bar.",
+    "shortDescription": "A notch-style taskbar, Start menu and status bar for Windows",
+    "longDescription": "Kasumi: notches at the edges of the screen that open into a status bar, a dock with your apps, a launcher and pop-ups, in place of the Windows taskbar.",
     "copyright": "© 2026 Kip",
     "windows": {
       "nsis": {

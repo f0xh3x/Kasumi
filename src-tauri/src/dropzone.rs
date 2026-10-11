@@ -11,7 +11,7 @@ use webview2_com::{take_pwstr, WebMessageReceivedEventHandler};
 use windows_core_062::{Interface, PWSTR};
 
 /// What the page posts along with the dropped files.
-const MESSAGE: &str = "statusnotch-drop";
+const MESSAGE: &str = "kasumi-drop";
 
 #[derive(Clone, Serialize)]
 struct DropEvent {
@@ -46,16 +46,16 @@ pub fn attach(window: &WebviewWindow) {
                     }
                 }
             }
-            eprintln!("[statusnotch] {label}: dropped {paths:?}");
+            eprintln!("[kasumi] {label}: dropped {paths:?}");
             let _ = app.emit_to(EventTarget::WebviewWindow { label: label.clone() }, "notch://drop", DropEvent { kind: "drop", paths });
             Ok(())
         }));
         let mut token = Default::default();
         if let Err(e) = core.add_WebMessageReceived(&handler, &mut token) {
-            eprintln!("[statusnotch] couldn't accept dropped files: {e}");
+            eprintln!("[kasumi] couldn't accept dropped files: {e}");
         }
     });
     if let Err(e) = result {
-        eprintln!("[statusnotch] couldn't accept dropped files: {e}");
+        eprintln!("[kasumi] couldn't accept dropped files: {e}");
     }
 }

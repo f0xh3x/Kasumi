@@ -76,7 +76,7 @@ fn pins_dir() -> std::path::PathBuf {
         .join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar")
 }
 
-/// The pinned apps: StatusNotch's own list (`[widgets.tasks] pins`, app keys
+/// The pinned apps: Kasumi's own list (`[widgets.tasks] pins`, app keys
 /// in order) once the user has pinned or unpinned something, until then the
 /// Windows taskbar's pins. None while `pinning = false`.
 fn pins(app: &AppHandle) -> Vec<Pin> {
@@ -102,7 +102,7 @@ fn pins(app: &AppHandle) -> Vec<Pin> {
     }
 }
 
-/// One entry of StatusNotch's pin list: an app key (AppUserModelID or exe), or a
+/// One entry of Kasumi's pin list: an app key (AppUserModelID or exe), or a
 /// file dropped onto the tasks widget (a shortcut, a program, an internet link).
 fn own_pin(entry: &str) -> Option<Pin> {
     let lower = entry.to_lowercase();
@@ -233,7 +233,7 @@ fn state() -> &'static Mutex<State> {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-tasks".into())
+        .name("kasumi-tasks".into())
         .spawn(move || run(app))
         .expect("spawn tasks thread");
 }
@@ -580,7 +580,7 @@ fn activate(h: HWND) {
         // In front of the other windows even if focus was refused.
         let _ = SetWindowPos(h, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         if GetForegroundWindow() != h {
-            eprintln!("[statusnotch] tasks: Windows refused to bring a window to the front");
+            eprintln!("[kasumi] tasks: Windows refused to bring a window to the front");
         }
     }
 }
@@ -598,7 +598,7 @@ pub async fn task_activate(hwnd_id: isize, toggle: bool) -> Result<(), String> {
         } else {
             activate(h);
             if GetForegroundWindow() != h {
-                eprintln!("[statusnotch] tasks: couldn't bring {:#x} ('{}') to the front", hwnd_id, crate::win::window_title(h));
+                eprintln!("[kasumi] tasks: couldn't bring {:#x} ('{}') to the front", hwnd_id, crate::win::window_title(h));
             }
         }
     }

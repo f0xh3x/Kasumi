@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThre
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-extras".into())
+        .name("kasumi-extras".into())
         .spawn(move || run(app))
         .expect("spawn extras thread");
 }

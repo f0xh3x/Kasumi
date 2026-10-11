@@ -50,7 +50,7 @@ pub fn set(list: Vec<Corner>) {
 }
 
 pub fn start() {
-    std::thread::Builder::new().name("statusnotch-corners".into()).spawn(run).expect("spawn corners thread");
+    std::thread::Builder::new().name("kasumi-corners".into()).spawn(run).expect("spawn corners thread");
 }
 
 unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -114,7 +114,7 @@ fn paint(h: HWND, c: &Corner) {
 fn run() {
     unsafe {
         let instance = GetModuleHandleW(None).unwrap_or_default();
-        let class = w!("StatusNotchCorner");
+        let class = w!("KasumiCorner");
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: instance.into(), lpszClassName: class, ..Default::default() });
         SetTimer(None, 0, 100, None);
         let mut shown: Vec<(HWND, Corner)> = Vec::new();

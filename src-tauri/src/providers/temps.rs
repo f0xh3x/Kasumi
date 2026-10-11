@@ -77,7 +77,7 @@ pub fn run(app: AppHandle) {
             }
             Err(e) => {
                 if e != last_error {
-                    eprintln!("[statusnotch] temps: {url}: {e}");
+                    eprintln!("[kasumi] temps: {url}: {e}");
                     last_error = e;
                 }
                 json!({ "cpu": null, "gpu": null, "ok": false })

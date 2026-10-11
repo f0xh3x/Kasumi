@@ -11,7 +11,7 @@ param(
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
 Add-Type 'using System; using System.Runtime.InteropServices; public static class SnapDpi { [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v); }'
 [SnapDpi]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null
-if (-not $out) { $out = if ($env:CLAUDE_JOB_DIR) { "$env:CLAUDE_JOB_DIR\tmp\snaps" } else { "$env:TEMP\statusnotch-snaps" } }
+if (-not $out) { $out = if ($env:CLAUDE_JOB_DIR) { "$env:CLAUDE_JOB_DIR\tmp\snaps" } else { "$env:TEMP\kasumi-snaps" } }
 New-Item -ItemType Directory -Force $out | Out-Null
 $i = 0
 foreach ($s in [System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }) {

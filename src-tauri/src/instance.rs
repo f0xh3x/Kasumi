@@ -1,4 +1,4 @@
-//! Single instance with a graceful handoff: a newly started StatusNotch asks the
+//! Single instance with a graceful handoff: a newly started Kasumi asks the
 //! running one to quit (so it removes its tray icon and windows cleanly) and
 //! waits for it to exit before taking over.
 
@@ -24,7 +24,7 @@ static HANDLES: std::sync::OnceLock<Handles> = std::sync::OnceLock::new();
 pub fn claim() {
     let want_settings = std::env::args().any(|a| a == "--settings");
     unsafe {
-        let settings = CreateEventW(None, false, false, w!(r"Local\StatusNotch.Settings")).expect("create settings event");
+        let settings = CreateEventW(None, false, false, w!(r"Local\Kasumi.Settings")).expect("create settings event");
         let already_running = GetLastError() == ERROR_ALREADY_EXISTS;
         if want_settings {
             let _ = SetEvent(settings);
@@ -32,22 +32,22 @@ pub fn claim() {
                 std::process::exit(0);
             }
         }
-        let quit = CreateEventW(None, false, false, w!("Local\\StatusNotch.Quit")).expect("create quit event");
-        let mutex = CreateMutexW(None, false, w!("Local\\StatusNotch.Instance")).expect("create instance mutex");
+        let quit = CreateEventW(None, false, false, w!("Local\\Kasumi.Quit")).expect("create quit event");
+        let mutex = CreateMutexW(None, false, w!("Local\\Kasumi.Instance")).expect("create instance mutex");
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            eprintln!("[statusnotch] another instance is running; asking it to quit");
+            eprintln!("[kasumi] another instance is running; asking it to quit");
             let _ = SetEvent(quit);
         }
         // Owned (or abandoned) once the previous instance has exited.
         let r = WaitForSingleObject(mutex, Duration::from_secs(10).as_millis() as u32);
         if r != WAIT_OBJECT_0 && r.0 != 0x80 {
-            eprintln!("[statusnotch] previous instance did not exit; continuing anyway");
+            eprintln!("[kasumi] previous instance did not exit; continuing anyway");
         }
         let _ = HANDLES.set(Handles { quit, settings });
     }
 }
 
-/// True when something (`StatusNotch.exe --settings`) asked for the settings window.
+/// True when something (`Kasumi.exe --settings`) asked for the settings window.
 pub fn settings_requested() -> bool {
     HANDLES.get().is_some_and(|h| unsafe { WaitForSingleObject(h.settings, 0) } == WAIT_OBJECT_0)
 }

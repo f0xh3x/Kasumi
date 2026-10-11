@@ -1,4 +1,4 @@
-# StatusNotch: working notes for Claude
+# Kasumi: working notes for Claude
 
 How to change this codebase without re-inventing what's already here. **How it
 works** (windows, engine, events, config model) is in `ARCHITECTURE.md`; read it
@@ -28,7 +28,7 @@ apps (Premiere, Illustrator) while you work: see "Testing without the user".
 5. **Verify, then claim.** Build, install, check the window sizes and the log
    (§5). Measure screenshots/frames instead of eyeballing (§6). Say plainly what
    you could not test (usually anything needing clicks).
-6. **Never** `taskkill /F` StatusNotch (the graceful quit hands the tray back to
+6. **Never** `taskkill /F` Kasumi (the graceful quit hands the tray back to
    Explorer and restores the taskbar). Install with `tools/install.sh`.
 7. Dead code goes. When a feature is removed, grep for its leftovers: options
    nobody reads, CSS hints (`will-change`), comments describing it.
@@ -131,11 +131,11 @@ tools/install.sh --test     # + cargo tests (22; 2 hardware tests are #[ignore]d
 
 After it starts: `tools/windows.ps1` lists the windows. Bars ~345 px tall,
 docks ~709. **78 / 93 px means the page script never ran**: nothing is drawn.
-The log is `%APPDATA%\StatusNotch\statusnotch.log`; lines starting
-`[statusnotch:<window>]` come from the pages (errors, `report()`).
+The log is `%APPDATA%\Kasumi\kasumi.log`; lines starting
+`[kasumi:<window>]` come from the pages (errors, `report()`).
 
 Installer: `npx tauri build`; silent test install
-`/S /D=%LOCALAPPDATA%\Programs\StatusNotch`.
+`/S /D=%LOCALAPPDATA%\Programs\Kasumi`.
 
 ## 6. Testing without the user
 
@@ -177,7 +177,7 @@ Installer: `npx tauri build`; silent test install
 2. `default-config.toml` = the Default preset minus `[[monitors]]`;
    `python -I tools/ship_presets.py` regenerates the shipped presets.
 3. Merge `shell` → `main` (fast-forward), tag `vX.Y.Z`, `npx tauri build`.
-4. Back up to `C:\Users\Kip\dev\StatusNotch-backups\<version>\`: exe, installer,
+4. Back up to `C:\Users\Kip\dev\Kasumi-backups\<version>\`: exe, installer,
    `config.toml`, presets, `git bundle create … --all`. Before a risky change:
    same, plus a `backup/<name>` tag.
 

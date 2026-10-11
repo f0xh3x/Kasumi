@@ -5,7 +5,7 @@
 # Keys: names from System.Windows.Forms.Keys (LWin, LMenu = left Alt, Space,
 # Escape, A..Z, F1..). Avoid Win+D / Alt+F4 style combos (they act on the user's windows).
 param([string]$steps, [int]$waitMs = 800, [string]$front = "", [switch]$physical)
-# -front zen: bring that program to the front first. -physical: StatusNotch's
+# -front zen: bring that program to the front first. -physical: Kasumi's
 # keyboard helper treats these keys as real key presses (it ignores simulated
 # Windows key presses otherwise: keyhook.rs AS_PHYSICAL).
 Add-Type -AssemblyName System.Windows.Forms

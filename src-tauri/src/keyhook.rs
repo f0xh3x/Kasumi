@@ -1,4 +1,4 @@
-//! The keyboard hook, in a small helper process (`StatusNotch.exe --keyhook <pid>`):
+//! The keyboard hook, in a small helper process (`Kasumi.exe --keyhook <pid>`):
 //! the volume keys (osd/volume.rs) and the Windows key opening the launcher
 //! instead of Start ([launcher] start_menu).
 //!
@@ -58,7 +58,7 @@ fn events() -> &'static Events {
     static EVENTS: OnceLock<Events> = OnceLock::new();
     EVENTS.get_or_init(|| {
         let make = |name: &str, manual: bool| unsafe {
-            let n = wide(&format!("Local\\StatusNotch.KeyHook.{name}"));
+            let n = wide(&format!("Local\\Kasumi.KeyHook.{name}"));
             CreateEventW(None, manual, false, PCWSTR(n.as_ptr())).unwrap_or_default()
         };
         Events {
@@ -92,11 +92,11 @@ pub fn start(on_volume: fn(VolumeKey)) {
     };
     match exe.and_then(spawn) {
         Ok(_) => {}
-        Err(e) => eprintln!("[statusnotch] keyboard helper didn't start: {e}"),
+        Err(e) => eprintln!("[kasumi] keyboard helper didn't start: {e}"),
     }
     let volume = ev.volume.map(|h| h.0 as isize);
     std::thread::Builder::new()
-        .name("statusnotch-volumekeys".into())
+        .name("kasumi-volumekeys".into())
         .spawn(move || loop {
             let handles = volume.map(|h| HANDLE(h as *mut _));
             let r = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
@@ -204,7 +204,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// `StatusNotch.exe --keyhook <app pid>`: runs the hook until the app exits.
+/// `Kasumi.exe --keyhook <app pid>`: runs the hook until the app exits.
 pub fn helper(app_pid: u32) {
     // Exit with the app (however it ends).
     std::thread::spawn(move || unsafe {
@@ -217,7 +217,7 @@ pub fn helper(app_pid: u32) {
     unsafe {
         let module = GetModuleHandleW(None).ok();
         if let Err(e) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module.map(Into::into), 0) {
-            eprintln!("[statusnotch] keyboard hook failed: {e}");
+            eprintln!("[kasumi] keyboard hook failed: {e}");
             return;
         }
         // Low-level hooks are called through this thread's message loop.

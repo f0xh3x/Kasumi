@@ -16,7 +16,7 @@ struct BrightnessEvent {
 
 pub fn start(app: &AppHandle) {
     let app = app.clone();
-    std::thread::Builder::new().name("statusnotch-brightness".into()).spawn(move || run(app)).expect("spawn brightness");
+    std::thread::Builder::new().name("kasumi-brightness".into()).spawn(move || run(app)).expect("spawn brightness");
 }
 
 fn listen(app: &AppHandle) -> wmi::WMIResult<()> {
@@ -33,7 +33,7 @@ fn listen(app: &AppHandle) -> wmi::WMIResult<()> {
 fn run(app: AppHandle) {
     loop {
         if let Err(e) = listen(&app) {
-            eprintln!("[statusnotch] brightness events unavailable: {e}");
+            eprintln!("[kasumi] brightness events unavailable: {e}");
         }
         // The subscription ended or failed (e.g. no WMI brightness provider); retry later.
         std::thread::sleep(Duration::from_secs(60));

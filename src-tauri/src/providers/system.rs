@@ -22,7 +22,7 @@ use wmi::WMIConnection;
 
 pub fn start(app: &AppHandle) {
     let app = app.clone();
-    std::thread::Builder::new().name("statusnotch-system".into()).spawn(move || run(app)).expect("spawn system thread");
+    std::thread::Builder::new().name("kasumi-system".into()).spawn(move || run(app)).expect("spawn system thread");
 }
 
 /// The output volume (level 0..=1, muted) as the OSD's audio watcher last saw it;

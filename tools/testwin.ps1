@@ -10,7 +10,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $screens = [System.Windows.Forms.Screen]::AllScreens
 $screen = if ($monitor -ge 0) { $screens[$monitor] } else { [System.Windows.Forms.Screen]::PrimaryScreen }
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "StatusNotch test window"
+$form.Text = "Kasumi test window"
 $form.StartPosition = "Manual"
 if ($maximize) {
   $form.Location = New-Object System.Drawing.Point(($screen.Bounds.X + 100), ($screen.Bounds.Y + 100))

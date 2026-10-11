@@ -1,4 +1,4 @@
-//! Presets: named copies of the whole config, kept in `%APPDATA%\StatusNotch\presets`.
+//! Presets: named copies of the whole config, kept in `%APPDATA%\Kasumi\presets`.
 //! Applying one writes it over config.toml, which the engine hot-reloads.
 
 use std::fs;
@@ -23,7 +23,7 @@ fn dir() -> PathBuf {
     config::dir().join("presets")
 }
 
-/// Presets that come with StatusNotch (made from the author's, minus personal bits).
+/// Presets that come with Kasumi (made from the author's, minus personal bits).
 const SHIPPED: &[(&str, &str)] = &[
     ("Classic status bar", include_str!("../presets/Classic status bar.toml")),
     ("Classic taskbar", include_str!("../presets/Classic taskbar.toml")),
@@ -46,7 +46,7 @@ pub fn install_shipped() {
             if fs::create_dir_all(dir()).is_err() || fs::write(&path, text).is_err() {
                 continue;
             }
-            eprintln!("[statusnotch] added preset {name}");
+            eprintln!("[kasumi] added preset {name}");
         }
         added.push(name);
         changed = true;

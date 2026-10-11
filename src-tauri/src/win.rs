@@ -302,7 +302,7 @@ pub fn unminimize(h: isize) -> bool {
     false
 }
 
-/// WebView2 flags for every StatusNotch window (they share one browser process, so
+/// WebView2 flags for every Kasumi window (they share one browser process, so
 /// they must match). wry's defaults, plus: all pages are one site, so they share one
 /// renderer process instead of one each (the bars are tiny; a renderer is ~70 MB).
 pub const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --process-per-site";

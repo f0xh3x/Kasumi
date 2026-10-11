@@ -1,4 +1,4 @@
-# StatusNotch — how it works
+# Kasumi — how it works
 
 A small Windows shell shaped like notches. By default each monitor gets a **top
 status bar** (a black notch that morphs into a full-width bar on hover or a hot
@@ -38,11 +38,11 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
   rendering is off too). Never use `skip_taskbar`.
 * **Rust decides *where*, the frontend decides *how it looks*.** The engine computes
   layouts, notch positions, hover/open state; the overlay animates them with springs.
-* **Config** lives in `%APPDATA%\StatusNotch\config.toml`, hot-reloaded on save.
+* **Config** lives in `%APPDATA%\Kasumi\config.toml`, hot-reloaded on save.
   Built-in defaults: `src-tauri/default-config.toml` (written on first run).
-* **Single instance:** a named mutex + events (`Local\StatusNotch.Quit`,
-  `Local\StatusNotch.Settings`). Starting a new instance asks the old one to quit;
-  `StatusNotch.exe --settings` opens settings in the running one.
+* **Single instance:** a named mutex + events (`Local\Kasumi.Quit`,
+  `Local\Kasumi.Settings`). Starting a new instance asks the old one to quit;
+  `Kasumi.exe --settings` opens settings in the running one.
 
 ## 2. File map
 
@@ -58,13 +58,13 @@ config_edit.rs  comment-preserving config writes ◄── (invoke)
 | `src-tauri/src/corners.rs` | Rounded screen corners as native layered windows (when not attached to the bars) |
 | `src-tauri/src/dropzone.rs` | Files dropped on a bar (to pin them): WebView2 takes the drop, the page posts the files back (`postMessageWithAdditionalObjects`), this reads their paths |
 | `src-tauri/src/osd/` | `mod.rs` OSD + keyboard-layout watch; `volume.rs` Core Audio; `brightness.rs` WMI |
-| `src-tauri/src/keyhook.rs` | The low-level keyboard hook, in a helper process (`StatusNotch.exe --keyhook <pid>`, started by the app, exits with it): volume keys, and the Windows key opening the launcher (`[launcher] start_menu`). Talks to the app through named events |
+| `src-tauri/src/keyhook.rs` | The low-level keyboard hook, in a helper process (`Kasumi.exe --keyhook <pid>`, started by the app, exits with it): volume keys, and the Windows key opening the launcher (`[launcher] start_menu`). Talks to the app through named events |
 | `src-tauri/src/actions.rs` | `run_action(action, target)`: open, settings, sleep, hibernate, lock, restart, shutdown, sign_out, open_config, open_log, open_config_folder |
 | `src-tauri/src/settings.rs` | Opens the settings window; `monitors_list`, `lhm_sensors`, `system_time_format`, `app_version` |
-| `src-tauri/src/presets.rs` | Presets = full config copies in `%APPDATA%\StatusNotch\presets\<name>.toml`. Shipped presets (`src-tauri/presets/*.toml`, the author's minus monitor rules, pins and weather city) are added once each on start (`presets/.shipped`). Applying a preset keeps your pins and weather city if it has none |
+| `src-tauri/src/presets.rs` | Presets = full config copies in `%APPDATA%\Kasumi\presets\<name>.toml`. Shipped presets (`src-tauri/presets/*.toml`, the author's minus monitor rules, pins and weather city) are added once each on start (`presets/.shipped`). Applying a preset keeps your pins and weather city if it has none |
 | `src-tauri/src/win.rs` | Win32 helpers: monitors/DPI, overlay styles, z-order, app windows (DWM frame bounds), fullscreen detection, keyboard layouts, and the small shared ones (UTF-16 strings, window title / class / process, bitmap pixels) |
 | `src-tauri/src/webmem.rs` | Asks WebView2 to keep its memory low while a bar is closed (`set_low`, called by the engine on open / close) |
-| `src-tauri/src/{tray,autostart,instance,logfile}.rs` | Own tray icon menu, Run-key autostart, single instance, release log → `%APPDATA%\StatusNotch\statusnotch.log` |
+| `src-tauri/src/{tray,autostart,instance,logfile}.rs` | Own tray icon menu, Run-key autostart, single instance, release log → `%APPDATA%\Kasumi\kasumi.log` |
 | `src/main.ts` | `Overlay`: builds DOM from a `Layout`, springs, drops (notches/panels), OSD, keyboard peek, region reporting, notch width measuring |
 | `src/geometry.ts` | `computeFrame()` → the one SVG path: notch profile (from the reference SVG), bar, panels, merging of overlapping notches |
 | `src/spring.ts` | Damped spring used for every animation |
@@ -240,7 +240,7 @@ order by `settings/main.ts` when settings opens.
 * **Tray hosting:** a hidden `Shell_TrayWnd` receives apps' `Shell_NotifyIcon` calls,
   forwards them to Explorer, and publishes icons (`tray` data key). It must stay *quiet*
   (no z-order churn) — a noisy host once cost Explorer ~50% CPU.
-* **Never force-kill** StatusNotch (`taskkill /F`) — the graceful quit hands the tray back
+* **Never force-kill** Kasumi (`taskkill /F`) — the graceful quit hands the tray back
   to Explorer. The installer's hooks use the quit event.
 * Fullscreen apps hide the overlay (shell processes excluded, 500 ms debounce).
 * Window rects use `DWMWA_EXTENDED_FRAME_BOUNDS` (maximized windows' invisible borders
@@ -261,7 +261,7 @@ order by `settings/main.ts` when settings opens.
 npm install
 npm run build                                   # tsc + vite → dist/
 cd src-tauri && cargo test --features tauri/custom-protocol
-cargo build --release --features tauri/custom-protocol   # → target/release/statusnotch.exe
+cargo build --release --features tauri/custom-protocol   # → target/release/kasumi.exe
 npx tauri build                                 # NSIS installer → target/release/bundle/nsis/
 ```
 

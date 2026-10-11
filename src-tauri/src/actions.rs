@@ -47,7 +47,7 @@ pub async fn run_action(app: tauri::AppHandle, action: String, target: Option<St
             return Ok(());
         }
         "open_config" => notepad(crate::config::path()),
-        "open_log" => notepad(crate::config::dir().join("statusnotch.log")),
+        "open_log" => notepad(crate::config::dir().join("kasumi.log")),
         "open_config_folder" => Command::new("explorer.exe").arg(crate::config::dir()).spawn(),
         other => return Err(format!("unknown action '{other}'")),
     };

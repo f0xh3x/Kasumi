@@ -173,7 +173,7 @@ const START_HOTKEY_ID: i32 = 2;
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
-        .name("statusnotch-launcher".into())
+        .name("kasumi-launcher".into())
         .spawn(move || unsafe {
             // Warm the app index so the first search is instant.
             let _ = std::thread::spawn(|| {
@@ -198,7 +198,7 @@ pub fn start(app: &AppHandle) {
                             if start {
                                 let (mods, vk) = crate::keyhook::START_HOTKEY;
                                 if let Err(e) = RegisterHotKey(None, START_HOTKEY_ID, mods | MOD_NOREPEAT, vk.0 as u32) {
-                                    eprintln!("[statusnotch] Windows key for the launcher unavailable: {e}");
+                                    eprintln!("[kasumi] Windows key for the launcher unavailable: {e}");
                                 }
                             } else {
                                 let _ = UnregisterHotKey(None, START_HOTKEY_ID);
@@ -215,12 +215,12 @@ pub fn start(app: &AppHandle) {
                             match parse_hotkey(&hk) {
                                 Some((mods, vk)) => {
                                     if let Err(e) = RegisterHotKey(None, 1, mods | MOD_NOREPEAT, vk) {
-                                        eprintln!("[statusnotch] launcher hotkey {hk} unavailable (in use?): {e}");
+                                        eprintln!("[kasumi] launcher hotkey {hk} unavailable (in use?): {e}");
                                     } else {
-                                        eprintln!("[statusnotch] launcher hotkey: {hk}");
+                                        eprintln!("[kasumi] launcher hotkey: {hk}");
                                     }
                                 }
-                                None => eprintln!("[statusnotch] launcher hotkey '{hk}' not understood"),
+                                None => eprintln!("[kasumi] launcher hotkey '{hk}' not understood"),
                             }
                         }
                     }

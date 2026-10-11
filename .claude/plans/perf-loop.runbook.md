@@ -51,7 +51,7 @@ Stop and report when ANY of these is true:
 
 | Phase | Status | Commit | Before → after |
 |---|---|---|---|
-| 0 | done (idle only; hover capture needs the mouse) | 6830497 | idle: 1.31 CPU-s / 20 s; 6 WebView2 221 MB, statusnotch 116 MB |
+| 0 | done (idle only; hover capture needs the mouse) | 6830497 | idle: 1.31 CPU-s / 20 s; 6 WebView2 221 MB, kasumi 116 MB |
 | 1 | done, reviewed (2 findings fixed) | b1b6a57 | not yet measured (needs install) |
 | 2 | done, reviewed (flick latency: band widened to 200 px, 40 ms calm poll, side borders, zone sizes) | 609807f + follow-up | not yet measured (needs install) |
 | 3 | **dropped**: a ResizeObserver already exists; the 2 s check is the deliberate fix from 6e2ce6e | | |
@@ -76,8 +76,8 @@ Stop and report when ANY of these is true:
   that 60 % fewer of them does not show in CPU: the engine loop was not the cost.
 - **Not tested:** widgets moving between monitors / a layout change while running (needs a
   config.toml edit; the rule is to ask first).
-- **Measuring trap:** `StatusNotch.old.exe` has process name `StatusNotch.old`; filtering
-  on `statusnotch.exe` silently leaves the old main process out of the numbers.
+- **Measuring trap:** `Kasumi.old.exe` has process name `Kasumi.old`; filtering
+  on `kasumi.exe` silently leaves the old main process out of the numbers.
 
 ## Still open
 

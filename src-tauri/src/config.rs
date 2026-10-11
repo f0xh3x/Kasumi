@@ -200,11 +200,11 @@ impl Default for General {
     }
 }
 
-/// `[shell]`: StatusNotch standing in for parts of the Windows shell.
+/// `[shell]`: Kasumi standing in for parts of the Windows shell.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Shell {
-    /// Hide the Windows taskbar while StatusNotch runs (restored when it quits).
+    /// Hide the Windows taskbar while Kasumi runs (restored when it quits).
     pub hide_taskbar: bool,
 }
 
@@ -851,7 +851,7 @@ impl Config {
 }
 
 pub fn dir() -> PathBuf {
-    PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".into())).join("StatusNotch")
+    PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".into())).join("Kasumi")
 }
 
 pub fn path() -> PathBuf {

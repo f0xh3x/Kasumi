@@ -30,7 +30,7 @@ pub fn start(app: &AppHandle) {
     let (tx, rx) = mpsc::channel();
     let _ = KEY_TX.set(Mutex::new(tx));
     let a = app.clone();
-    std::thread::Builder::new().name("statusnotch-audio".into()).spawn(move || run_audio(a, rx)).expect("spawn audio");
+    std::thread::Builder::new().name("kasumi-audio".into()).spawn(move || run_audio(a, rx)).expect("spawn audio");
 }
 
 /// A volume key press from the keyboard helper (keyhook.rs), for the audio thread.
@@ -127,7 +127,7 @@ fn run_audio(app: AppHandle, rx: Receiver<Key>) {
     let enumerator: IMMDeviceEnumerator = match unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) } {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("[statusnotch] Core Audio unavailable: {e}");
+            eprintln!("[kasumi] Core Audio unavailable: {e}");
             return;
         }
     };
@@ -147,7 +147,7 @@ fn run_audio(app: AppHandle, rx: Receiver<Key>) {
             endpoint = match bind(&app, &enumerator, endpoint.take()) {
                 Ok(ep) => Some(ep),
                 Err(e) => {
-                    eprintln!("[statusnotch] no default audio device: {e}");
+                    eprintln!("[kasumi] no default audio device: {e}");
                     crate::providers::system::volume_changed(None);
                     None
                 }
@@ -158,7 +158,7 @@ fn run_audio(app: AppHandle, rx: Receiver<Key>) {
             Ok(key) => {
                 if let Some(ep) = &endpoint {
                     if let Err(e) = apply(&app, &ep.volume, key, step) {
-                        eprintln!("[statusnotch] volume change failed: {e}");
+                        eprintln!("[kasumi] volume change failed: {e}");
                     }
                 }
             }

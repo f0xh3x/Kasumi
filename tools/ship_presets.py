@@ -5,7 +5,7 @@ import os
 import re
 import tomllib
 
-src = os.path.join(os.environ["APPDATA"], "StatusNotch", "presets")
+src = os.path.join(os.environ["APPDATA"], "Kasumi", "presets")
 dst = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src-tauri", "presets")
 os.makedirs(dst, exist_ok=True)
 

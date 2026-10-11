@@ -57,18 +57,18 @@ fn opts(app: &AppHandle) -> (usize, bool) {
 
 pub fn start(app: &AppHandle) {
     let _ = APP.set(app.clone());
-    std::thread::Builder::new().name("statusnotch-clipboard".into()).spawn(run).expect("spawn clipboard thread");
+    std::thread::Builder::new().name("kasumi-clipboard".into()).spawn(run).expect("spawn clipboard thread");
 }
 
 fn run() {
     unsafe {
-        let class = w!("StatusNotchClipboard");
+        let class = w!("KasumiClipboard");
         let wc = WNDCLASSW { lpfnWndProc: Some(wndproc), lpszClassName: class, ..Default::default() };
         RegisterClassW(&wc);
         let Ok(hwnd) =
             CreateWindowExW(WINDOW_EX_STYLE(0), class, PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None)
         else {
-            eprintln!("[statusnotch] clipboard: could not create its window");
+            eprintln!("[kasumi] clipboard: could not create its window");
             return;
         };
         HWND_ID.store(hwnd.0 as isize, Ordering::Relaxed);

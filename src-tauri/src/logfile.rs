@@ -1,5 +1,5 @@
 //! Release builds have no console; send stderr (all `eprintln!` logging) to
-//! %APPDATA%\StatusNotch\statusnotch.log so problems can be diagnosed after the fact.
+//! %APPDATA%\Kasumi\kasumi.log so problems can be diagnosed after the fact.
 
 use std::os::windows::io::IntoRawHandle;
 use windows::Win32::Foundation::HANDLE;
@@ -14,7 +14,7 @@ pub fn init() {
     }
     let dir = crate::config::dir();
     let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join("statusnotch.log");
+    let path = dir.join("kasumi.log");
     // Start fresh once the log grows past 1 MB.
     let append = std::fs::metadata(&path).is_ok_and(|m| m.len() < MAX_BYTES);
     let file = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(&path);
@@ -24,6 +24,6 @@ pub fn init() {
             let _ = SetStdHandle(STD_ERROR_HANDLE, handle);
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        eprintln!("[statusnotch] --- started (unix {now}) ---");
+        eprintln!("[kasumi] --- started (unix {now}) ---");
     }
 }

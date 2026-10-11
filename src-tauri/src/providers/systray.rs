@@ -321,7 +321,7 @@ fn sync_with_explorer(ours: HWND, st: &mut SyncState) {
             st.raises.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
             st.raises.push(now);
             if st.raises.len() > 10 {
-                eprintln!("[statusnotch] tray: taskbar keeps moving above us; backing off for 60s");
+                eprintln!("[kasumi] tray: taskbar keeps moving above us; backing off for 60s");
                 st.backed_off_until = Some(now + Duration::from_secs(60));
                 st.raises.clear();
                 return;
@@ -344,7 +344,7 @@ fn run() {
         let class = w!("Shell_TrayWnd");
         let wc = WNDCLASSW { lpfnWndProc: Some(wndproc), lpszClassName: class, ..Default::default() };
         if RegisterClassW(&wc) == 0 {
-            eprintln!("[statusnotch] tray: could not register Shell_TrayWnd class");
+            eprintln!("[kasumi] tray: could not register Shell_TrayWnd class");
             return;
         }
         // Hidden (never shown); WS_POPUP so it has no frame and can mirror the taskbar rect.
@@ -364,7 +364,7 @@ fn run() {
         ) {
             Ok(h) => h,
             Err(e) => {
-                eprintln!("[statusnotch] tray: could not create window: {e}");
+                eprintln!("[kasumi] tray: could not create window: {e}");
                 return;
             }
         };
@@ -373,7 +373,7 @@ fn run() {
         // Ask running apps to re-add their icons (they now reach us first).
         let created = RegisterWindowMessageW(w!("TaskbarCreated"));
         let _ = SendNotifyMessageW(HWND_BROADCAST, created, WPARAM(0), LPARAM(0));
-        eprintln!("[statusnotch] tray: hosting started");
+        eprintln!("[kasumi] tray: hosting started");
 
         // Block on the queue so apps' (synchronous) tray calls are answered at once;
         // housekeeping runs on a timer.
@@ -409,12 +409,12 @@ pub fn start(app: &AppHandle) {
     // Hosting intercepts system-wide tray messages; only do it when the tray widget is used.
     // (Changing this takes effect on the next start.)
     if !widget_enabled(app, "tray") || widget_opts(app, "tray").get("host").and_then(|v| v.as_bool()) == Some(false) {
-        eprintln!("[statusnotch] tray: hosting disabled in config");
+        eprintln!("[kasumi] tray: hosting disabled in config");
         publish(app, "tray", Value::Array(vec![]));
         return;
     }
     publish(app, "tray", Value::Array(vec![]));
-    std::thread::Builder::new().name("statusnotch-tray".into()).spawn(run).expect("spawn tray thread");
+    std::thread::Builder::new().name("kasumi-tray".into()).spawn(run).expect("spawn tray thread");
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +443,7 @@ pub async fn tray_click(
     };
     let (sx, sy) = crate::engine::to_screen(window.app_handle(), window.label(), x, y).unwrap_or((0, 0));
     eprintln!(
-        "[statusnotch] tray click {button} {} v{} cb={:#x} hwnd={:#x} uid={} at {sx},{sy}",
+        "[kasumi] tray click {button} {} v{} cb={:#x} hwnd={:#x} uid={} at {sx},{sy}",
         icon.exe, icon.version, icon.callback, icon.hwnd, icon.uid
     );
     unsafe {

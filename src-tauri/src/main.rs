@@ -10,6 +10,7 @@ mod engine;
 mod instance;
 mod keyhook;
 mod launcher;
+mod legacy;
 mod logfile;
 mod osd;
 mod presets;
@@ -27,7 +28,9 @@ fn main() {
         keyhook::helper(args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(0));
         return;
     }
+    legacy::migrate();
     logfile::init();
+    legacy::report();
     instance::claim();
     // A panic must never leave the Windows taskbar hidden.
     let default_hook = std::panic::take_hook();
@@ -50,7 +53,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("failed to build StatusNotch")
+        .expect("failed to build Kasumi")
         .run(|_app, event| {
             // Overlays come and go with monitors; only exit on an explicit app.exit().
             match event {
