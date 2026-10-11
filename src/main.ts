@@ -250,6 +250,7 @@ class Overlay {
 
   setExpanded(expanded: boolean): void {
     this.expanded = expanded;
+    if (expanded) this.nudge.target = 0;
     document.documentElement.classList.toggle("bar-open", expanded);
     this.layoutBar();
     this.expand.target = expanded ? 1 : 0;
@@ -1010,12 +1011,13 @@ class Overlay {
       let width = d.width;
       let height = d.height;
       // Hover nudge: the notch the cursor comes near grows a little (a dock opens a little).
-      const nudged = d.key === this.nudgeKey && !this.expanded ? Math.max(0, useTarget ? this.nudge.target : this.nudge.value) : 0;
+      // Not cut off when the bar opens: it fades on its own spring as the opening takes over.
+      const nudged = d.key === this.nudgeKey ? Math.max(0, useTarget ? this.nudge.target : this.nudge.value) : 0;
       let scale: number | undefined;
       let panelTop: number | undefined;
       if (L.mode === "dock" && d.notch) {
         // Grow from the rest size to the open size in place.
-        const e = Math.min(1, Math.max(0, useTarget ? this.expand.target : this.expand.value) + 0.15 * nudged);
+        const e = Math.min(1, Math.max(0, useTarget ? this.expand.target : this.expand.value, 0.15 * nudged));
         const n = d.notch;
         x = lerp(x, n.openX, e);
         width = lerp(n.width, n.openWidth, e);
