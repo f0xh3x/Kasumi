@@ -33,6 +33,8 @@ Kasumi runs and comes back when it quits.
 - **Make it yours**: colours, fonts (any installed font, separately for main and
   secondary text), the Windows accent colour, and animations with per-widget options.
 - **Presets** to switch between whole setups in one click.
+- **Updates** from GitHub releases: the notch tells you when a new version is out, or
+  Kasumi installs it by itself if you turn that on.
 
 ## Install
 
