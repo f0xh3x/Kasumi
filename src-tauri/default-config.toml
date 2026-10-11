@@ -182,9 +182,6 @@ scroll = true                                # long titles scroll instead of end
 # Open-Meteo, no API key. Pick your city in Settings > Widgets > Weather.
 [widgets.weather]
 enabled = false
-location = "Vilnius"
-latitude = 54.68916
-longitude = 25.2798
 units = "metric"                             # metric | imperial
 interval_min = 15
 hours = 8                                    # hours shown in the weather panel
