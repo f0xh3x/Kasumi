@@ -522,6 +522,9 @@ html.mode-dock .slot > * { pointer-events: auto; }
 }
 .launcher-field { width: 0; padding: 0; opacity: 0; transition: width 180ms ease, opacity 140ms ease, margin 180ms ease; }
 .launcher-w.searching .launcher-field { width: 190px; margin-left: 8px; opacity: 1; }
+/* While it searches, the launcher has its notch to itself (a dock's other widgets
+   would leave the field no room); they come back when it closes. */
+.slot:has(.launcher-w.searching) > :not(.launcher-w) { display: none; }
 .launcher-field::placeholder, .launcher-own-field::placeholder { color: var(--fg-dim); }
 /* The hotkey launcher's drop point: the middle of the bar, outside the center
    group's layout (as a flex item, the group's gap would push the clock off-center). */
