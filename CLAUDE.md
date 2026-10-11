@@ -177,9 +177,15 @@ Installer: `npx tauri build`; silent test install
 2. `default-config.toml` = the Default preset minus `[[monitors]]`;
    `python -I tools/ship_presets.py` regenerates the shipped presets.
 3. Merge `shell` → `main` (fast-forward), tag `vX.Y.Z`, `npx tauri build`.
-4. Back up to `C:\Users\Kip\dev\Kasumi-backups\<version>\`: exe, installer,
+4. Back up to `C:\Users\Kip\dev\StatusNotch-backups\<version>\`: exe, installer,
    `config.toml`, presets, `git bundle create … --all`. Before a risky change:
    same, plus a `backup/<name>` tag.
+5. Publish (only when the user says so): `git push origin main vX.Y.Z`, then
+   `python -I tools/release.py vX.Y.Z <installer> <notes.md>` creates the GitHub
+   release with the installer attached (its token comes from Git Credential
+   Manager, never printed). The app's updater (updater.rs) finds new versions
+   there: the asset name must end in `-setup.exe`. Commits use the GitHub
+   no-reply email (repo-local `user.email`), never the user's own address.
 
 ## 8. Environment notes
 
