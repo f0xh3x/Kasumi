@@ -951,8 +951,13 @@ class Overlay {
     cornersPath.setAttribute("d", frame.corners);
     content.style.clipPath = `path("${bottom ? mirrorPath(frame.d, STAGE_HEIGHT) : frame.d}")`;
 
-    this.bar.style.transform = `translateY(${(frame.base - H) * away}px)`;
-    this.bar.style.opacity = String(clamp01((this.expand.value - 0.25) / 0.6));
+    // slide: the row rides the bar's far edge. reveal / fade: it waits in its open
+    // spot and the growing shape (content's clip) uncovers it; reveal shows it at
+    // once (just enough fade that nothing flashes inside the notches' flares).
+    const barHow = L.animation.barContent;
+    const ex = this.expand.value;
+    this.bar.style.transform = barHow === "slide" ? `translateY(${(frame.base - H) * away}px)` : "none";
+    this.bar.style.opacity = String(barHow === "reveal" ? clamp01(ex * 5) : barHow === "fade" ? clamp01((ex - 0.35) / 0.55) : clamp01((ex - 0.25) / 0.6));
 
     const od = this.osdDrop();
     const o = clamp01(this.osd.value);

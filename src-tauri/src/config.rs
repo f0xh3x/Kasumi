@@ -118,6 +118,8 @@ pub struct Animation {
     /// How a panel's content shows as it opens: "slide" (moves with the panel's
     /// edge), "reveal" (stays put, the panel uncovers it), "fade" (stays put, fades in).
     pub panel_content: String,
+    /// The same for the open bar's row of widgets.
+    pub bar_content: String,
 }
 
 impl Default for Animation {
@@ -132,6 +134,7 @@ impl Default for Animation {
             mass: 1.0,
             style: "drop".into(),
             panel_content: "slide".into(),
+            bar_content: "slide".into(),
         }
     }
 }

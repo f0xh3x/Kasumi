@@ -54,6 +54,7 @@ panel_damping = 43
 mass = 1
 style = "drop"            # drop: bar slides out of the top edge | spread: grows sideways out of the notches
 panel_content = "slide"   # panels' content: slide (with the panel's edge) | reveal (stays, uncovered) | fade (stays, fades in)
+bar_content = "slide"     # the open bar's widgets: the same choices
 
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]

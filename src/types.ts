@@ -20,6 +20,7 @@ export interface Animation {
   mass: number;
   style: "drop" | "spread";
   panelContent: "slide" | "reveal" | "fade";
+  barContent: "slide" | "reveal" | "fade";
 }
 
 export interface BarWidgets {

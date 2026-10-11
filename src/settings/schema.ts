@@ -875,6 +875,18 @@ export const pages: Page[] = [
           },
           {
             kind: "select",
+            label: "Bar content",
+            help: "How the open bar's widgets show while it opens.",
+            path: ["animation", "bar_content"],
+            default: "slide",
+            options: [
+              { value: "slide", label: "Slide in with the bar" },
+              { value: "reveal", label: "Stay in place, the bar uncovers them" },
+              { value: "fade", label: "Stay in place and fade in" },
+            ],
+          },
+          {
+            kind: "select",
             label: "Panel content",
             help: "How a widget's panel (calendar, weather...) shows its content while it opens.",
             path: ["animation", "panel_content"],
