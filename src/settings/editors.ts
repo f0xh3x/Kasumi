@@ -711,7 +711,9 @@ export function migrationOpsV3(cfg: Cfg): Op[] {
     ops.push({ path: ["widgets", w, "notch"], value: null });
   }
   const t = cfg.timing ?? {};
-  if (t.hot_top_left === undefined && t.hot_top_right === undefined && t.hot_top_edge === undefined) {
+  // Not once there are [surfaces]: v5 keeps hot corners there (and would take these
+  // straight back out, which made every reload "update" the config again).
+  if (!cfg.surfaces && t.hot_top_left === undefined && t.hot_top_right === undefined && t.hot_top_edge === undefined) {
     const on = t.hot_corner_enabled !== false;
     const pos = t.hot_corner_position ?? "top_left";
     ops.push({ path: ["timing", "hot_top_left"], value: on && pos === "top_left" });

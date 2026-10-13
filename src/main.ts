@@ -271,7 +271,9 @@ class Overlay {
     // Dock notches with no pinned widget come out as the dock opens and tuck away as it closes.
     for (const d of this.drops) if (d.shown && d.notch) d.shown.target = this.notchShown(d.notch) ? 1 : 0;
     if (expanded) this.nudge.target = 0;
-    document.documentElement.classList.toggle("bar-open", expanded);
+    // Open-only parts come at once; they go once the bar has closed (render), the
+    // shrinking shape covering them meanwhile, so nothing pops as it closes.
+    if (expanded) document.documentElement.classList.add("bar-open");
     this.layoutBar();
     this.expand.target = expanded ? 1 : 0;
     this.spread.target = this.spreadTarget();
@@ -337,11 +339,29 @@ class Overlay {
       if (e && shown) sp.style.width = `${e.el.offsetWidth}px`;
     }
     const barLeft = this.bar.getBoundingClientRect().left;
+    // Open-only parts (the media keys) widen a notch's content past its closed width,
+    // which re-centers everything in it. The glides start where the widgets were in
+    // the closed notch: each slot's content is offset by what its widgets that kept
+    // their width moved (read with the bar closed; nothing is painted in between).
+    const html = document.documentElement;
+    const closed = new Map<HTMLElement, [number, number]>();
+    if (html.classList.contains("bar-open")) {
+      html.classList.remove("bar-open");
+      for (const e of this.notchEls) closed.set(e.el, [e.el.offsetLeft, e.el.offsetWidth]);
+      html.classList.add("bar-open");
+    }
+    const offsets = new Map<HTMLDivElement, number>();
+    for (const e of this.notchEls) {
+      const c = closed.get(e.el);
+      if (!c || offsets.has(e.slot) || !c[1] || Math.abs(c[1] - e.el.offsetWidth) > 1) continue;
+      offsets.set(e.slot, c[0] - e.el.offsetLeft);
+    }
     this.glides = [];
     for (const [name, sp] of this.spacers) {
       const e = this.notchEls.find((x) => x.name === name);
       if (!e || sp.style.display === "none") continue;
-      this.glides.push({ el: e.el, slot: e.slot, to: sp.getBoundingClientRect().left - barLeft, from: e.el.offsetLeft });
+      const from = e.el.offsetLeft + (offsets.get(e.slot) ?? 0);
+      this.glides.push({ el: e.el, slot: e.slot, to: sp.getBoundingClientRect().left - barLeft, from });
     }
     this.kick();
   }
@@ -735,7 +755,7 @@ class Overlay {
     const L = this.layout;
     if (!L || !this.lastWidths || this.running) return;
     // An open bar shows open-only parts (media keys): its notches are measured closed.
-    if (L.mode !== "dock" && this.expanded) return;
+    if (L.mode !== "dock" && document.documentElement.classList.contains("bar-open")) return;
     const last = JSON.parse(this.lastWidths) as Record<string, { full: number; open: number }>;
     const dock = L.mode === "dock";
     const open = dock && this.expanded;
@@ -1214,6 +1234,10 @@ class Overlay {
     // once (just enough fade that nothing flashes inside the notches' flares).
     const barHow = L.animation.barContent;
     const ex = this.expand.value;
+    if (!this.expanded && ex < 0.01 && document.documentElement.classList.contains("bar-open")) {
+      document.documentElement.classList.remove("bar-open");
+      this.layoutBar();
+    }
     this.bar.style.transform = barHow === "slide" ? `translateY(${(frame.base - H) * away}px)` : "none";
     this.bar.style.opacity = String(barHow === "reveal" ? clamp01(ex * 5) : barHow === "fade" ? clamp01((ex - 0.35) / 0.55) : clamp01((ex - 0.25) / 0.6));
 

@@ -305,7 +305,7 @@ function render(): void {
   // The sidebar's foot: the mist shape (Desktop asset.svg), the version in its lower-left gap.
   const foot = $("div", "nav-foot");
   foot.innerHTML =
-    '<svg viewBox="0 0 188.17 40.54" aria-hidden="true"><path d="Layer_2"/></svg>';
+    '<svg viewBox="0 0 188.17 40.54" aria-hidden="true"><path d="M179.95,24.1h-76.73c-2.12,0-3.83-1.72-3.83-3.83s1.72-3.83,3.83-3.83h23.32c4.54,0,8.22-3.68,8.22-8.22s-3.68-8.22-8.22-8.22H8.22C3.68,0,0,3.68,0,8.22s3.68,8.22,8.22,8.22h67.68c2.12,0,3.83,1.72,3.83,3.83s-1.72,3.83-3.83,3.83h-14.27c-4.54,0-8.22,3.68-8.22,8.22h0c0,4.54,3.68,8.22,8.22,8.22h118.33c4.54,0,8.22-3.68,8.22-8.22h0c0-4.54-3.68-8.22-8.22-8.22Z"/></svg>';
   nav.append(foot);
   invoke<string>("app_version").then((v) => foot.append($("div", "version", `v${v}`)));
 }

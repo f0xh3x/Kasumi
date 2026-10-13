@@ -19,14 +19,13 @@ export const QUICK_TILES: Record<string, [label: string, glyph: number, target: 
   kasumi: ["Kasumi", 0, "kasumi:settings"],
 };
 
-/** Kasumi's logo (app-icon.svg) in the text colour, glyph-sized: a rounded square, the notch cut out. */
+/** Kasumi's logo (src-tauri/icons/kasumi-mark.svg) in the text colour, glyph-sized. */
 export function kasumiLogo(): HTMLSpanElement {
   const s = document.createElement("span");
   s.className = "icon kasumi-logo";
   s.innerHTML =
-    '<svg viewBox="0 0 512 512" width="1em" height="1em" aria-hidden="true"><mask id="kasumi-notch"><rect width="512" height="512" fill="#fff"/>' +
-    '<path d="M96 0 C122 0 136 14 136 40 L136 96 C136 124 152 140 180 140 L332 140 C360 140 376 124 376 96 L376 40 C376 14 390 0 416 0 Z" fill="#000"/></mask>' +
-    '<rect width="512" height="512" rx="112" fill="currentColor" mask="url(#kasumi-notch)"/></svg>';
+    '<svg viewBox="30 30 541 541" width="1em" height="1em" aria-hidden="true">' +
+    '<path fill="currentColor" d="M483.75,113H205.03c-45.43,0-82.25,36.82-82.25,82.25h0c0,45.43,36.82,82.25,82.25,82.25h-.92c11.96.54,21.49,10.41,21.49,22.5s-9.53,21.96-21.49,22.5h-87.86c-45.43,0-82.25,36.82-82.25,82.25h0c0,45.43,36.82,82.25,82.25,82.25h229.5c45.43,0,82.25-36.82,82.25-82.25h0c0-45.43-36.82-82.25-82.25-82.25h-.29c-11.96-.54-21.49-10.41-21.49-22.5s9.53-21.96,21.49-22.5h138.29c45.43,0,82.25-36.82,82.25-82.25h0c0-45.43-36.82-82.25-82.25-82.25Z"/></svg>';
   return s;
 }
 
