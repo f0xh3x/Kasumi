@@ -600,7 +600,7 @@ export const pages: Page[] = [
           { kind: "toggle", label: "5-hour window usage", path: (cfg) => (cfg.widgets?.claude?.text === false ? null : ["widgets", "claude", "show_window"]), default: true },
           { kind: "toggle", label: "Time until it resets", path: (cfg) => (cfg.widgets?.claude?.text === false ? null : ["widgets", "claude", "show_reset"]), default: true },
           { kind: "toggle", label: "Today's usage", path: (cfg) => (cfg.widgets?.claude?.text === false ? null : ["widgets", "claude", "show_today"]), default: false },
-          { kind: "toggle", label: "Weekly usage left", help: "Needs the weekly limit below (else: the week's usage).", path: (cfg) => (cfg.widgets?.claude?.text === false ? null : ["widgets", "claude", "show_week_left"]), default: false },
+          { kind: "toggle", label: "Weekly usage left", help: "From your Claude account; without it, needs the weekly limit (else: the week's usage).", path: (cfg) => (cfg.widgets?.claude?.text === false ? null : ["widgets", "claude", "show_week_left"]), default: false },
           {
             kind: "select",
             label: "Indicator",
@@ -636,8 +636,8 @@ export const pages: Page[] = [
           },
           { kind: "toggle", label: "Working dot", help: "Pulses while a Claude Code session is busy.", path: ["widgets", "claude", "working"], default: true },
           { kind: "toggle", label: "Last 7 days in the panel", path: ["widgets", "claude", "weekly"], default: true },
-          { kind: "number", label: "5-hour limit", help: "Tokens per 5-hour window (0: not set). Only without the account's usage.", path: ["widgets", "claude", "window_limit"], default: 0, min: 0, max: 1000000000, step: 100000 },
-          { kind: "number", label: "Weekly limit", help: "Tokens per 7 days (0: not set). Only without the account's usage.", path: ["widgets", "claude", "weekly_limit"], default: 0, min: 0, max: 10000000000, step: 1000000 },
+          { kind: "number", label: "5-hour limit", help: "Tokens per 5-hour window (0: not set).", path: (cfg) => (cfg.widgets?.claude?.account === false ? ["widgets", "claude", "window_limit"] : null), default: 0, min: 0, max: 1000000000, step: 100000 },
+          { kind: "number", label: "Weekly limit", help: "Tokens per 7 days (0: not set).", path: (cfg) => (cfg.widgets?.claude?.account === false ? ["widgets", "claude", "weekly_limit"] : null), default: 0, min: 0, max: 10000000000, step: 1000000 },
         ],
       },
       {
