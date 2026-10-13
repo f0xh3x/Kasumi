@@ -1284,7 +1284,10 @@ class Overlay {
         width *= s;
         height *= s;
       }
-      if (d === od && o > 0) {
+      // An open bar (or an always-on one) would hide a grown notch: the pill drops below
+      // it instead, like a panel.
+      const osdBelow = d === od && o > 0 && this.osdBelow(useTarget);
+      if (d === od && o > 0 && !osdBelow) {
         // Grow from the notch's side: a corner notch keeps its outer edge (so the
         // pill stays on screen), the others their center.
         const side = this.notchSide(d);
@@ -1298,15 +1301,21 @@ class Overlay {
         x,
         width,
         height,
-        panelWidth: d.panelWidth,
-        panelHeight: d.panelHeight,
-        p: d.hasPanel ? (useTarget ? d.spring.target : d.spring.value) : 0,
+        panelWidth: osdBelow ? (this.osdSize?.w ?? L.osd.width) : d.panelWidth,
+        panelHeight: osdBelow ? (this.osdSize?.h ?? L.osd.height) : d.panelHeight,
+        p: osdBelow ? o : d.hasPanel ? (useTarget ? d.spring.target : d.spring.value) : 0,
         inHull: d.inHull,
         scale,
         panelTop,
         step: L.mode === "dock" ? d.step : undefined,
       };
     });
+  }
+
+  /** Whether the OSD drops below the bar (open, or always on) instead of growing its notch. */
+  private osdBelow(useTarget = false): boolean {
+    const L = this.layout;
+    return !!L && L.mode !== "dock" && (useTarget ? this.expand.target : this.expand.value) > 0.5;
   }
 
   private render(): void {
@@ -1393,7 +1402,7 @@ class Overlay {
         // Cross-fade the notch's own content with the OSD; a tiny dock handle hides it.
         const shown = d.shown ? clamp01(d.shown.value * 1.5 - 0.5) : 1;
         const fits = dock ? clamp01((bf.rowDepth - 16) / 10) : 1;
-        d.slot.style.opacity = String(shown * fits * (d === od ? 1 - clamp01(o * 1.8) : 1));
+        d.slot.style.opacity = String(shown * fits * (d === od && !this.osdBelow() ? 1 - clamp01(o * 1.8) : 1));
       }
       if (d === this.peekDrop) {
         const k = clamp01(this.peek.value);
@@ -1408,7 +1417,13 @@ class Overlay {
         this.osdEl.classList.toggle("from-right", side === "right");
         const inner = (this.osdSize?.w ?? L.osd.width) - 2 * L.geometry.notchCornerRadius - 8;
         this.osdEl.style.width = `${inner}px`;
-        this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${(away * row) / 2}px) translateY(${-away * 50}%)`;
+        if (this.osdBelow()) {
+          // Below the bar: centered in the dropped pill, where it ends up.
+          const w = this.osdSize?.w ?? L.osd.width;
+          this.osdEl.style.transform = `translate(${bf.panelX + w / 2 - inner / 2}px, ${away * (H + (bf.depth - H) / 2)}px) translateY(${-away * 50}%)`;
+        } else {
+          this.osdEl.style.transform = `translate(${bf.cx - inner / 2}px, ${(away * row) / 2}px) translateY(${-away * 50}%)`;
+        }
         this.osdEl.style.opacity = String(clamp01(o * 1.8 - 0.5));
         this.osdEl.style.visibility = o > 0.01 ? "visible" : "hidden";
       }
@@ -1418,12 +1433,12 @@ class Overlay {
         // Panels hear when they're shut (notch:panel-closed, detail: the panel's box).
         if (!shown && d.panelEl.style.visibility === "visible") window.dispatchEvent(new CustomEvent("notch:panel-closed", { detail: d.panelEl }));
         d.panelEl.style.visibility = shown ? "visible" : "hidden";
-        // slide: the content rides the panel's far edge (`depth`). reveal / fade: it waits
-        // in its open spot and the growing shape (content's clip) uncovers it.
-        const how = L.animation.panelContent;
-        const near = how === "reveal" || how === "fade" ? (bumps[i].panelTop ?? H) : bf.depth - d.panelHeight;
-        d.panelEl.style.opacity = String(how === "reveal" ? 1 : how === "fade" ? clamp01(p * 1.6 - 0.5) : clamp01(p * 1.4 - 0.2));
-        d.panelEl.style.transform = `translate(${bf.panelX}px, ${(how === "slide" ? near : Math.round(near)) * away}px)`;
+        // The content waits in its open spot and the growing shape (content's clip)
+        // uncovers it (reveal), or it fades in (fade). (An older "slide" is reveal.)
+        const fade = L.animation.panelContent === "fade";
+        const near = bumps[i].panelTop ?? H;
+        d.panelEl.style.opacity = String(fade ? clamp01(p * 1.6 - 0.5) : 1);
+        d.panelEl.style.transform = `translate(${bf.panelX}px, ${Math.round(near) * away}px)`;
         // Cascade ([animation] cascade, or the widget's own).
         if (d.panelEl.dataset.cascade === "1") this.cascadePanel(d.panelEl, p, d.spring.target, away);
       }

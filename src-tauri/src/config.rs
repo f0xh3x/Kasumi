@@ -150,7 +150,7 @@ impl Default for Animation {
             panel_damping: 30.0,
             mass: 1.0,
             style: "drop".into(),
-            panel_content: "slide".into(),
+            panel_content: "reveal".into(),
             bar_content: "slide".into(),
             open_speed: 1.0,
             close_speed: 1.0,

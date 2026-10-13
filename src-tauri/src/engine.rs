@@ -334,7 +334,8 @@ pub fn osd_targets(app: &AppHandle, kind: &str) -> Vec<(String, Option<String>)>
     let mut out = Vec::new();
     for m in chosen {
         let here: Vec<(&String, &Overlay)> =
-            sh.overlays.iter().filter(|(_, o)| o.monitor == *m && !o.hidden && !o.layout.notches.is_empty()).collect();
+            // (Bars without notches too: always-on ones; the pop-up grows its own there.)
+            sh.overlays.iter().filter(|(_, o)| o.monitor == *m && !o.hidden).collect();
         if spot == "widget" {
             // The bar showing the language widget (in a notch or in the bar).
             let shows = |o: &Overlay| {
