@@ -9,7 +9,7 @@ src = os.path.join(os.environ["APPDATA"], "Kasumi", "presets")
 dst = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src-tauri", "presets")
 os.makedirs(dst, exist_ok=True)
 
-for name in ["Classic status bar", "Classic taskbar", "Modern"]:
+for name in ["Default", "Modern", "Classic status bar", "Classic taskbar"]:
     text = open(os.path.join(src, name + ".toml"), encoding="utf-8").read().replace("\r\n", "\n")
     out, i = [], 0
     lines = text.split("\n")
@@ -27,6 +27,8 @@ for name in ["Classic status bar", "Classic taskbar", "Modern"]:
         if re.match(r"\s*(pins|location|latitude|longitude)\s*=", line):
             i += 1
             continue
+        if line.startswith("# StatusNotch config."):
+            line = line.replace("StatusNotch", "Kasumi")
         if line.startswith("# Open-Meteo, no API key."):
             line = "# Open-Meteo, no API key. Pick your city in Settings > Widgets > Weather."
         out.append(line)

@@ -1246,6 +1246,26 @@ export const pages: Page[] = [
             path: ["general", "auto_update"],
             default: false,
           },
+          {
+            kind: "toggle",
+            label: "Show what's new after updates",
+            help: "The first time a new version starts, a window shows its notes.",
+            path: ["general", "update_notes"],
+            default: true,
+          },
+          { kind: "action", label: "What's new", help: "This version's notes.", button: "Show", run: "notes" },
+        ],
+      },
+      {
+        title: "First-time setup",
+        fields: [
+          {
+            kind: "action",
+            label: "Run the setup again",
+            help: "The welcome window: presets, or startup, your bars, widgets and pop-ups step by step.",
+            button: "Open",
+            run: "setup",
+          },
         ],
       },
       {

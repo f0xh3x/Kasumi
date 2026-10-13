@@ -25,10 +25,32 @@ fn dir() -> PathBuf {
 
 /// Presets that come with Kasumi (made from the author's, minus personal bits).
 const SHIPPED: &[(&str, &str)] = &[
+    ("Default", include_str!("../presets/Default.toml")),
+    ("Modern", include_str!("../presets/Modern.toml")),
     ("Classic status bar", include_str!("../presets/Classic status bar.toml")),
     ("Classic taskbar", include_str!("../presets/Classic taskbar.toml")),
-    ("Modern", include_str!("../presets/Modern.toml")),
 ];
+
+/// The shipped presets, for the first-time setup's cards: each bar's style
+/// ("bar" | "dock" | "always" | "off").
+#[tauri::command]
+pub async fn presets_shipped() -> Vec<serde_json::Value> {
+    SHIPPED
+        .iter()
+        .map(|(name, text)| {
+            let cfg: toml::Value = toml::from_str(text).unwrap_or(toml::Value::Table(Default::default()));
+            let style = |s: &str| {
+                let t = cfg.get("surfaces").and_then(|v| v.get(s));
+                if t.and_then(|t| t.get("enabled")).and_then(|v| v.as_bool()) == Some(false) {
+                    "off".to_string()
+                } else {
+                    t.and_then(|t| t.get("mode")).and_then(|v| v.as_str()).unwrap_or("bar").to_string()
+                }
+            };
+            serde_json::json!({ "name": name, "top": style("top"), "bottom": style("bottom") })
+        })
+        .collect()
+}
 
 /// Adds the shipped presets that weren't added before (once each: one the user
 /// deleted or changed stays that way). Listed in `presets/.shipped`.
@@ -135,7 +157,11 @@ pub async fn preset_save(name: String) -> Result<(), String> {
 /// has none). The setup it replaces is kept as config.before-preset.toml.
 #[tauri::command]
 pub async fn preset_apply(name: String) -> Result<(), String> {
-    let text = fs::read_to_string(file(&name)?).map_err(|e| e.to_string())?;
+    // A shipped one that was deleted: as it came.
+    let text = match fs::read_to_string(file(&name)?) {
+        Ok(t) => t,
+        Err(e) => SHIPPED.iter().find(|(n, _)| *n == name.trim()).map(|(_, t)| t.to_string()).ok_or(e.to_string())?,
+    };
     let text = with_personal(&text, &fs::read_to_string(config::path()).unwrap_or_default());
     toml::from_str::<config::Config>(&text).map_err(|e| format!("This preset isn't a valid config: {e}"))?;
     let path = config::path();

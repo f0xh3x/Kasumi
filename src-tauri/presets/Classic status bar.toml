@@ -37,6 +37,7 @@ panel_stiffness = 775     # panels (calendar) dropping out of a notch
 panel_damping = 43
 mass = 1
 style = "drop"            # drop: bar slides out of the top edge | spread: grows sideways out of the notches
+panel_content = "reveal"
 
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]
@@ -113,6 +114,7 @@ items = [{ action = "restart", confirm = true, icon = "", label = "Restart" }
 enabled = false
 
 [widgets.tasks]
+enabled = false
 
 [notch]
 merge = true
@@ -131,7 +133,7 @@ offset = 150
 edge = "top"
 mode = "always"
 left = ["menu"]
-center = ["clock", "tasks"]
+center = ["clock"]
 right = ["tray", "weather", "quick"]
 notch = ["clock"]
 hot_left = true

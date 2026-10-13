@@ -19,6 +19,11 @@ import {
 import { $, glyph, row, toggleSwitch } from "./dom";
 import { kasumiLogo } from "../quick-tiles";
 import { pages, type Cfg, type Field, type Page, type Path } from "./schema";
+import { renderNotes, renderSetup, type Host } from "./setup";
+
+/** This window: settings, or the first-time setup / update notes (settings.rs). */
+const VIEW = new URLSearchParams(location.search).get("view");
+if (VIEW) document.body.classList.add(`view-${VIEW}`);
 
 let cfg: Cfg = {};
 let current = pages[0].id;
@@ -66,8 +71,8 @@ async function save(path: Path, value: unknown): Promise<void> {
     setIn(cfg, path, value);
     toast("Saved");
     // A setting that shows or hides others: redraw (not on every save: a slider
-    // being dragged would lose its grip).
-    if (shownFields() !== before) render();
+    // being dragged would lose its grip). The setup's own fields: always.
+    if (VIEW || shownFields() !== before) render();
   } catch (e) {
     toast(String(e), true);
     render(); // show the stored value again
@@ -143,6 +148,10 @@ function control(f: Field): HTMLElement | null {
           await invoke("config_reset");
           await load();
           toast("Reset to defaults");
+        } else if (f.run === "setup") {
+          await invoke("open_setup_window");
+        } else if (f.run === "notes") {
+          await invoke("open_notes_window", {});
         } else {
           await invoke("run_action", { action: f.run });
         }
@@ -277,6 +286,8 @@ function renderPage(page: Page): HTMLElement {
 
 /** Shows `page` with its `section` dropdown open and scrolled into view. */
 function goto(page: string, section: string): void {
+  // (The setup's widget chips: their settings are in the settings window.)
+  if (VIEW) return;
   current = page;
   if (section) openSection(`${page}:${section}`);
   render();
@@ -286,8 +297,16 @@ function goto(page: string, section: string): void {
   else app.querySelector(".content")!.scrollTop = 0;
 }
 
+const host: Host = { cfg: () => cfg, control, saveMany, reload: load, render: () => render(), toast };
+
 function render(): void {
   const app = document.getElementById("app")!;
+  if (VIEW === "setup" || VIEW === "notes") {
+    const keep = app.querySelector(".setup-page")?.scrollTop ?? 0;
+    app.replaceChildren(VIEW === "setup" ? renderSetup(host) : renderNotes(host));
+    app.querySelector(".setup-page")!.scrollTop = keep;
+    return;
+  }
   const scroll = app.querySelector(".content")?.scrollTop ?? 0;
   const nav = $("nav", "nav");
   for (const p of pages) {

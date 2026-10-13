@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { POWER_ACTIONS } from "../power-actions";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES, kasumiLogo } from "../quick-tiles";
 import { $, glyph, iconButton, input, row, select, toggleSwitch } from "./dom";
+import { renderMarkdown } from "./markdown";
 import type { Cfg, Path } from "./schema";
 
 export interface Op {
@@ -146,6 +147,8 @@ export const surfaceLayout = (cfg: Cfg, id: string): LayoutCfg =>
 
 /** Which part of the Widgets page is being edited: a surface, globally or for one monitor. */
 export const scope: { monitor: string | null; surface: string } = { monitor: null, surface: "top" };
+/** Widget types the placement doesn't offer (the first-time setup's: they need more setting up). */
+export const placementHide = new Set<string>();
 
 let monitorsCache: MonitorInfo[] | null = null;
 /** The monitors (asked for once). */
@@ -477,7 +480,7 @@ const placement: Editor = (ctx) => {
   const ids = surfaceIds(ctx.cfg);
   const layouts: Record<string, LayoutCfg> = Object.fromEntries(ids.map((s) => [s, scopedLayout(ctx.cfg, s)]));
   const L = layouts[cur];
-  const cat = catalog(ctx.cfg);
+  const cat = catalog(ctx.cfg).filter((w) => !placementHide.has(typeOf(w.id)));
   const known = (id: string) => cat.some((w) => w.id === id);
   const placedOn = (id: string) => ids.filter((s) => sideOf(layouts[s], id));
   const isOff = (id: string) => !enabled(ctx.cfg, id) || placedOn(id).length === 0;
@@ -1387,28 +1390,48 @@ const animWidget: Editor = (ctx) => {
 // --- Updates ---------------------------------------------------------------------------
 
 /** Settings > About: check GitHub for a newer Kasumi, and install it. */
+/** The last update check this window made (About checks once by itself). */
+let lastCheck: Promise<{ current: string; latest: string; available: boolean; page: string }> | null = null;
+
 const updates: Editor = () => {
   const status = $("div", "row-help", "");
   const check = $("button", "button", "Check for updates") as HTMLButtonElement;
   const install = $("button", "button", "Update now") as HTMLButtonElement;
-  const notes = $("button", "button", "What's new") as HTMLButtonElement;
+  const notes = $("button", "button", "Release page") as HTMLButtonElement;
+  // A new version's notes, under the version row.
+  const preview = $("div", "notes-preview");
   install.hidden = true;
   notes.hidden = true;
+  preview.hidden = true;
   let page = "";
   invoke<string>("app_version").then((v) => (status.textContent = `You have version ${v}.`)).catch(() => {});
-  check.addEventListener("click", () => {
+  const run = (again: boolean) => {
     check.disabled = true;
     status.textContent = "Checking…";
-    invoke<{ current: string; latest: string; available: boolean; page: string }>("update_check")
+    if (again || !lastCheck) lastCheck = invoke("update_check");
+    lastCheck
       .then((r) => {
         page = r.page;
         install.hidden = !r.available;
         notes.hidden = !r.available || !r.page;
         status.textContent = r.available ? `Version ${r.latest} is available (you have ${r.current}).` : `You're up to date (${r.current}).`;
+        if (!r.available) return;
+        invoke<string>("release_notes", { version: r.latest })
+          .then((md) => {
+            if (!md.trim()) return;
+            preview.replaceChildren($("div", "notes-preview-title", `What's new in ${r.latest}`), renderMarkdown(md));
+            preview.hidden = false;
+          })
+          .catch(() => {});
       })
-      .catch((e) => (status.textContent = String(e)))
+      .catch((e) => {
+        lastCheck = null;
+        status.textContent = String(e);
+      })
       .finally(() => (check.disabled = false));
-  });
+  };
+  check.addEventListener("click", () => run(true));
+  run(false);
   install.addEventListener("click", () => {
     install.disabled = check.disabled = true;
     status.textContent = "Downloading…";
@@ -1422,7 +1445,7 @@ const updates: Editor = () => {
   notes.addEventListener("click", () => {
     if (page) invoke("run_action", { action: "open", target: page }).catch(console.error);
   });
-  return $("div", "stack-tight", $("div", "row", $("div", "row-text", $("div", "row-label", "Version"), status), $("div", "row-control update-buttons", notes, install, check)));
+  return $("div", "stack-tight", $("div", "row", $("div", "row-text", $("div", "row-label", "Version"), status), $("div", "row-control update-buttons", notes, install, check)), preview);
 };
 
 // --- Font ------------------------------------------------------------------------------
@@ -1602,6 +1625,10 @@ const osdPlace: Editor = (ctx) => {
   );
 };
 
+/** Just the default pop-up spot (the first-time setup). */
+const osdSpot: Editor = (ctx) =>
+  row("Spot", "Which notch grows into the pop-up.", spotMap(ctx.cfg.osd?.spot ?? "top-center", [], "top-center", (v) => ctx.save(["osd", "spot"], v || null)));
+
 // --- Disk usage -------------------------------------------------------------------------
 
 /** Which drives the disk widget shows: chips to switch on / off (none chosen = all). */
@@ -1748,6 +1775,7 @@ export const editors: Record<string, Editor> = {
   launcherPower,
   diskPicker,
   osdPlace,
+  osdSpot,
   windowsGuide,
   animWidget,
   accentWidget,

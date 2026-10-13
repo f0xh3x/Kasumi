@@ -37,6 +37,7 @@ panel_stiffness = 775     # panels (calendar) dropping out of a notch
 panel_damping = 43
 mass = 1
 style = "drop"            # drop: bar slides out of the top edge | spread: grows sideways out of the notches
+panel_content = "reveal"
 
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]

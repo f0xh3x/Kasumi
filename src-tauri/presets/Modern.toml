@@ -11,6 +11,7 @@ edge_px = 8        # cursor must be within this distance of the top edge
 hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
 rounded_corners = true
 corner_radius = 16
+corners_attached = true
 
 [theme]
 background = "#000000"
@@ -39,6 +40,8 @@ panel_stiffness = 775     # panels (calendar) dropping out of a notch
 panel_damping = 43
 mass = 1
 style = "drop"            # drop: bar slides out of the top edge | spread: grows sideways out of the notches
+bar_content = "reveal"
+panel_content = "reveal"
 
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]
@@ -52,6 +55,7 @@ replace_volume_keys = true   # take over the volume keys; the Windows volume fly
 brightness = true            # built-in panel brightness (Fn keys)
 keyboard = true              # pop a small notch at the language widget when the keyboard layout changes
 keyboard_width = 120
+spot = "top-center"
 
 # Bar spacing (widgets in the open bar).
 [bar]
@@ -113,6 +117,7 @@ enabled = false
 
 [widgets.buttons]
 items = [{ action = "settings", icon = "", label = "Settings" }, { action = "restart", confirm = true, icon = "", label = "Restart" }, { action = "shutdown", confirm = true, icon = "", label = "Shut down" }]
+enabled = false
 
 [widgets.tasks]
 
@@ -134,7 +139,7 @@ edge = "top"
 mode = "bar"
 left = ["media"]
 center = []
-right = ["clock", "buttons"]
+right = ["clock"]
 notch = ["media", "clock"]
 hot_left = true
 hot_right = false
@@ -153,3 +158,6 @@ notch = []
 
 [shell]
 hide_taskbar = true
+
+[launcher]
+start_menu = true

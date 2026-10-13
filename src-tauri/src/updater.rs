@@ -96,6 +96,32 @@ fn install(r: &Release) -> Result<(), String> {
     Ok(())
 }
 
+/// A release's notes (Markdown), from GitHub's API: one request per version and
+/// start (remembered), well within its 60 an hour.
+#[tauri::command]
+pub async fn release_notes(version: String) -> Result<String, String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+    let version = version.trim().trim_start_matches('v').to_string();
+    if let Some(text) = CACHE.lock().unwrap().as_ref().and_then(|c| c.get(&version)) {
+        return Ok(text.clone());
+    }
+    let url = format!("https://api.github.com/repos/f0xh3x/Kasumi/releases/tags/v{version}");
+    let resp = agent()
+        .get(&url)
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| match e {
+            ureq::Error::Status(404, _) => format!("No notes for version {version}."),
+            e => format!("Couldn't reach GitHub ({e})."),
+        })?;
+    let v: Value = serde_json::from_str(&resp.into_string().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let text = v["body"].as_str().unwrap_or("").to_string();
+    CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(version, text.clone());
+    Ok(text)
+}
+
 /// Settings > About: the running and the latest version.
 #[tauri::command]
 pub async fn update_check() -> Result<Value, String> {
