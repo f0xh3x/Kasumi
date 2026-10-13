@@ -517,6 +517,7 @@ html.mode-dock .slot > * { pointer-events: auto; }
 /* ...a corner notch's: along the screen's edge (main.ts). */
 .panel.widened.from-left { align-items: flex-start; }
 .panel.widened.from-right { align-items: flex-end; }
+.panel.corner-fit { min-width: 0; }
 
 /* Launcher: the widget's search icon grows a text field while it's open. */
 .widget.launcher-w { gap: 0; cursor: pointer; }

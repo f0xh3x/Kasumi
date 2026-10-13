@@ -62,6 +62,9 @@ interface Drop {
   spring: Spring;
   /** Notches: animated left edge, so position changes (docking) slide. */
   xs: Spring | null;
+  /** Notches: animated (rest) width, so size changes from Rust (the launcher's field
+   *  going, a title changing) grow or shrink instead of jumping. */
+  ws?: Spring;
   /** Notches: 1 shown, 0 retracted into the top edge (hidden under a window). */
   shown?: Spring;
   /** Notches: their layout (dock morph between rest and open). */
@@ -225,7 +228,7 @@ class Overlay {
   apply(layout: Layout): void {
     const first = this.layout === null;
     const prevSprings = new Map(this.drops.map((d) => [d.key, d.spring]));
-    const prevX = new Map(this.drops.flatMap((d) => (d.xs ? [[d.key, d.xs] as const] : [])));
+    const prevX = new Map(this.drops.flatMap((d) => [...(d.xs ? [[d.key, d.xs] as const] : []), ...(d.ws ? [[`w:${d.key}`, d.ws] as const] : [])]));
     this.layout = layout;
     applyTheme(layout.theme);
     tooltips = layout.tooltips !== false;
@@ -301,6 +304,7 @@ class Overlay {
         d.x = n.x;
         d.xs.target = n.x;
         d.width = n.width;
+        if (d.ws) d.ws.target = n.width;
         if (d.slot) {
           d.slot.style.width = `${n.width}px`;
           this.padEdge(d.slot, n);
@@ -668,6 +672,12 @@ class Overlay {
           xs.target = n.x;
           return xs;
         })(),
+        ws: (() => {
+          const ws = prevX.get(`w:notch:${n.id}`) ?? new Spring(n.width, n.width, a.spreadStiffness, a.spreadDamping, a.mass);
+          ws.configure(a.spreadStiffness, a.spreadDamping, a.mass);
+          ws.target = n.width;
+          return ws;
+        })(),
         shown: new Spring(this.notchShown(n) ? 1 : 0, this.notchShown(n) ? 1 : 0, a.spreadStiffness, a.spreadDamping, a.mass),
         slot,
         panelEl: n.panel ? mountPanel(n.panel, n.panelWidth || undefined, n.panelHeight || undefined) : null,
@@ -897,6 +907,9 @@ class Overlay {
         // Notch panels fit their content's height (panel_height is only the
         // starting value), and its width too unless one is configured.
         const notch = this.layout?.notches.find((n) => `notch:${n.id}` === d.key);
+        // A dock corner notch's panel fits its content (no dropdown minimum width), so
+        // it can rise beside the notch's row.
+        d.panelEl.classList.toggle("corner-fit", L.mode === "dock" && !!d.notch && !!this.notchSide(d));
         if (!notch?.panelWidth) {
           d.panelEl.style.width = "auto";
           d.panelWidth = d.panelEl.offsetWidth;
@@ -909,7 +922,8 @@ class Overlay {
         // wide as its content, when that leaves room for the fillet beside it.
         const side = rowWidth ? this.notchSide(d) : null;
         const scale = d.notch ? d.notch.openHeight / L.geometry.notchHeight : 1;
-        const room = d.panelWidth + L.geometry.panelConcaveRadius + 2 * L.geometry.notchCornerRadius * scale;
+        // Past the screen edge, the panel, its fillet, then the notch's own round-off.
+        const room = d.panelWidth + L.geometry.panelConcaveRadius + L.geometry.notchCornerRadius * (scale + 1);
         d.step = side && room <= rowWidth ? side : undefined;
         d.panelEl.classList.toggle("widened", !d.step && d.panelWidth < rowWidth);
         // No room to rise beside the row: widened, its content along the screen's edge.
@@ -1213,7 +1227,7 @@ class Overlay {
       // panel then drops below them), only at the very end, where the bar hides its shape
       // (earlier its bump slid through the opening bar).
       if (L.mode !== "dock") x += this.glideShift(d, x) * clamp01(((useTarget ? this.expand.target : this.expand.value) - 0.85) / 0.15);
-      let width = d.width;
+      let width = d.ws ? (useTarget ? d.ws.target : d.ws.value) : d.width;
       let height = d.height;
       // Hover nudge: the notch the cursor comes near grows a little (a dock opens a little).
       // Not cut off when the bar opens: it fades on its own spring as the opening takes over.
@@ -1225,7 +1239,7 @@ class Overlay {
         const e = Math.min(1, Math.max(0, useTarget ? this.expand.target : this.expand.value, 0.15 * nudged));
         const n = d.notch;
         x = lerp(x, n.openX, e);
-        width = lerp(n.width, n.openWidth, e);
+        width = lerp(width, n.openWidth, e);
         height = lerp(n.height, n.openHeight, e);
         scale = height / L.geometry.notchHeight;
         panelTop = height;
@@ -1326,7 +1340,8 @@ class Overlay {
       const row = Math.round(bf.rowDepth);
       if (d.slot) {
         // Docks: the slot follows the notch's current (morphing) width.
-        const w = dock ? bumps[i].width : d.width;
+        // Bars: the slot keeps the new width but sits where the (animating) notch starts.
+        const w = dock ? bumps[i].width : d.ws ? d.ws.value : d.width;
         d.slot.style.height = `${row}px`;
         d.slot.style.transform = `translateX(${bf.anchorCx - w / 2}px)`;
         if (!dock) {
@@ -1402,7 +1417,7 @@ class Overlay {
       this.osd,
       this.peek,
       this.nudge,
-      ...this.drops.flatMap((d) => [d.spring, ...(d.xs ? [d.xs] : []), ...(d.shown ? [d.shown] : [])]),
+      ...this.drops.flatMap((d) => [d.spring, ...(d.xs ? [d.xs] : []), ...(d.ws ? [d.ws] : []), ...(d.shown ? [d.shown] : [])]),
     ];
     for (const s of springs) s.step(dt);
     this.releaseLauncher();
