@@ -959,6 +959,8 @@ class Overlay {
         tallest = Math.max(tallest, d.panelHeight);
         continue;
       }
+      const inner = d.panelEl.firstElementChild as HTMLElement | null;
+      if (inner) inner.style.marginLeft = "";
       const size = d.panelEl.getBoundingClientRect();
       d.panelWidth = size.width;
       d.panelHeight = size.height;
@@ -969,7 +971,15 @@ class Overlay {
       if (panelIcon) {
         // Panels that opt in (the menu) line their icon column up under the widget's icon.
         const anchorIcon = (d.anchor.querySelector(".icon") ?? d.anchor).getBoundingClientRect();
-        d.x = anchorIcon.left - (panelIcon.left - panelBox.left) + d.panelWidth / 2;
+        let left = anchorIcon.left - (panelIcon.left - panelBox.left);
+        // Just short of the screen's edge: flush with it instead (it grows out of the
+        // corner), its content shifted so the icons stay under the widget's.
+        if (inner && left > 0 && left < 24) {
+          inner.style.marginLeft = `${left}px`;
+          d.panelWidth = d.panelEl.getBoundingClientRect().width;
+          left = 0;
+        }
+        d.x = left + d.panelWidth / 2;
       } else {
         // Everything else centers under the whole widget.
         d.x = anchorBox.left + anchorBox.width / 2;

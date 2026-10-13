@@ -243,8 +243,8 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
     // A panel that ends up flush with a screen edge grows out of it from the start (the
     // corner's dropdowns): no gap there, and the rounded screen corner comes along.
     if (p > 0.001 && b.panelWidth < W) {
-      if (anchorCx - b.panelWidth / 2 < 0) left = Math.min(left, 0);
-      if (anchorCx + b.panelWidth / 2 > W) right = Math.max(right, W);
+      if (anchorCx - b.panelWidth / 2 < 0.5) left = Math.min(left, 0);
+      if (anchorCx + b.panelWidth / 2 > W - 0.5) right = Math.max(right, W);
     }
     return { cx: (left + right) / 2, anchorCx, left, right, rowDepth, depth, panelX: panelLeft };
   });
