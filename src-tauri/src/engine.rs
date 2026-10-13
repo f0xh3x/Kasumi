@@ -395,7 +395,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         return;
     }
     let state = app.state::<SharedState>();
-    let (label, hwnd, opening, ours) = {
+    let (label, hwnd, opening, ours, unhide) = {
         let mut sh = state.lock().unwrap();
         let label = match label {
             Some(l) => l,
@@ -418,6 +418,12 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             return;
         }
         o.pinned = opening;
+        // Over a fullscreen app the bar is hidden: show it for the launcher (it hides
+        // again after, update_fullscreen, once the launcher has closed).
+        let unhide = opening && o.hidden;
+        if unhide {
+            o.hidden = false;
+        }
         if !opening {
             // Closed: no hover grace for the bar (the cursor is usually elsewhere), so it
             // shrinks together with the launcher's panel, in one motion. A cursor on the
@@ -436,7 +442,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         if opening && !front_is_ours {
             LAUNCHER_PREV.store(front, std::sync::atomic::Ordering::Relaxed);
         }
-        (label, o.hwnd, opening, ours)
+        (label, o.hwnd, opening, ours, unhide)
     };
     let Some(hwnd) = hwnd else { return };
     let prev = LAUNCHER_PREV.load(std::sync::atomic::Ordering::Relaxed);
@@ -445,6 +451,9 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
     let l = label.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(w) = handle.get_webview_window(&l) else { return };
+        if unhide {
+            let _ = w.show();
+        }
         win::set_activatable(hwnd, opening);
         let _ = w.set_focusable(opening);
         if opening {
@@ -466,7 +475,8 @@ fn launcher_target(sh: &Shared) -> Option<String> {
         let m = &o.monitor;
         cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
     };
-    let here: Vec<(&String, &Overlay)> = sh.overlays.iter().filter(|(_, o)| under(o) && !o.hidden).collect();
+    // Hidden ones too (over a fullscreen app): opening the launcher shows its bar for it.
+    let here: Vec<(&String, &Overlay)> = sh.overlays.iter().filter(|(_, o)| under(o)).collect();
     let has_widget = |o: &Overlay| {
         [&o.layout.bar.left, &o.layout.bar.center, &o.layout.bar.right].iter().any(|g| g.iter().any(|w| w.split('#').next() == Some("launcher")))
             || o.layout.notches.iter().any(|n| n.widgets.iter().any(|w| w.split('#').next() == Some("launcher")))
@@ -1104,7 +1114,9 @@ impl Engine {
                 // Hide only once fullscreen has lasted a moment, so short-lived
                 // full-screen windows can't make the overlay flicker; show at once.
                 o.fullscreen_since = if fullscreen { o.fullscreen_since.or(Some(Instant::now())) } else { None };
+                // Not while the launcher is open on it (opened over the fullscreen app).
                 let hide = self.cfg.general.hide_in_fullscreen
+                    && !o.pinned
                     && o.fullscreen_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(500));
                 if hide != o.hidden {
                     match (&fs, hide) {

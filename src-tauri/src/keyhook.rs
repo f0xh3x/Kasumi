@@ -215,6 +215,12 @@ pub fn helper(app_pid: u32) {
     });
     let _ = events();
     unsafe {
+        // Answer in time even while a game keeps the PC busy: a hook that answers too
+        // late is skipped, and the Windows key then opens Start.
+        let _ = windows::Win32::System::Threading::SetPriorityClass(
+            windows::Win32::System::Threading::GetCurrentProcess(),
+            windows::Win32::System::Threading::HIGH_PRIORITY_CLASS,
+        );
         let module = GetModuleHandleW(None).ok();
         if let Err(e) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module.map(Into::into), 0) {
             eprintln!("[kasumi] keyboard hook failed: {e}");
