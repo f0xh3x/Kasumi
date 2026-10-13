@@ -587,8 +587,15 @@ export const pages: Page[] = [
         title: "Claude Code",
         collapsible: true,
         icon: 0xe8bd,
-        help: "Your Claude Code usage, read from its local session files. Your plan's limits aren't stored there: set them below (compare once with /usage) to see what's left.",
+        help: "Your Claude Code usage: your plan's limits from your Claude account, and the token details from Claude Code's session files on this PC.",
         fields: [
+          {
+            kind: "toggle",
+            label: "Usage from your Claude account",
+            help: "The same percentages as /usage, using Claude Code's sign-in on this PC (only read, never changed). Off, or signed out: the limits you set below.",
+            path: ["widgets", "claude", "account"],
+            default: true,
+          },
           { kind: "toggle", label: "Text", path: ["widgets", "claude", "text"], default: true },
           { kind: "toggle", label: "5-hour window usage", path: (cfg) => (cfg.widgets?.claude?.text === false ? null : ["widgets", "claude", "show_window"]), default: true },
           { kind: "toggle", label: "Time until it resets", path: (cfg) => (cfg.widgets?.claude?.text === false ? null : ["widgets", "claude", "show_reset"]), default: true },
@@ -629,8 +636,8 @@ export const pages: Page[] = [
           },
           { kind: "toggle", label: "Working dot", help: "Pulses while a Claude Code session is busy.", path: ["widgets", "claude", "working"], default: true },
           { kind: "toggle", label: "Last 7 days in the panel", path: ["widgets", "claude", "weekly"], default: true },
-          { kind: "number", label: "5-hour limit", help: "Tokens per 5-hour window (0: not set).", path: ["widgets", "claude", "window_limit"], default: 0, min: 0, max: 1000000000, step: 100000 },
-          { kind: "number", label: "Weekly limit", help: "Tokens per 7 days (0: not set).", path: ["widgets", "claude", "weekly_limit"], default: 0, min: 0, max: 10000000000, step: 1000000 },
+          { kind: "number", label: "5-hour limit", help: "Tokens per 5-hour window (0: not set). Only without the account's usage.", path: ["widgets", "claude", "window_limit"], default: 0, min: 0, max: 1000000000, step: 100000 },
+          { kind: "number", label: "Weekly limit", help: "Tokens per 7 days (0: not set). Only without the account's usage.", path: ["widgets", "claude", "weekly_limit"], default: 0, min: 0, max: 10000000000, step: 1000000 },
         ],
       },
       {

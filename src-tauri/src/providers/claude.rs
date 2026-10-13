@@ -3,8 +3,9 @@
 //! "claude": hourly totals per model for the last 8 days (the page works out
 //! today / the week in local time), the current 5-hour window, and whether a
 //! session is busy right now (a session file written in the last few seconds).
-//! Plan limits aren't stored locally: the widget compares against limits the
-//! user sets.
+//! Plan limits aren't stored locally: with `[widgets.claude] account` on (default)
+//! the plan's usage comes from the Claude account itself (account_usage, what
+//! /usage shows); else the widget compares against limits the user sets.
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -181,6 +182,47 @@ impl State {
     }
 }
 
+/// The plan's usage from the Claude account, as /usage shows it: the 5-hour
+/// session and the week (and per-model weeks where the plan has them), each a
+/// percentage and when it resets. Read with the sign-in Claude Code keeps on this
+/// PC (`~/.claude/.credentials.json`), which is only read here, never refreshed
+/// or written (Claude Code renews it whenever it runs): expired, this says so.
+fn account_usage() -> Value {
+    let home = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default();
+    let Ok(text) = std::fs::read_to_string(home.join(".claude").join(".credentials.json")) else {
+        return json!({ "error": "signed-out" });
+    };
+    let creds: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    let oauth = &creds["claudeAiOauth"];
+    let Some(token) = oauth["accessToken"].as_str() else {
+        return json!({ "error": "signed-out" });
+    };
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    if oauth["expiresAt"].as_i64().is_some_and(|t| t <= now_ms) {
+        return json!({ "error": "expired" });
+    }
+    let resp = super::http_agent()
+        .get("https://api.anthropic.com/api/oauth/usage")
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("anthropic-beta", "oauth-2025-04-20")
+        .set("User-Agent", "Kasumi")
+        .call();
+    let Ok(body) = resp.map_err(|e| e.to_string()).and_then(|r| r.into_string().map_err(|e| e.to_string())) else {
+        return json!({ "error": "unavailable" });
+    };
+    let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    let limit = |key: &str| {
+        let l = &v[key];
+        l["utilization"].as_f64().map(|p| json!({ "percent": p, "resetsAt": l["resets_at"] }))
+    };
+    json!({
+        "session": limit("five_hour"),
+        "week": limit("seven_day"),
+        "weekOpus": limit("seven_day_opus"),
+        "weekSonnet": limit("seven_day_sonnet"),
+    })
+}
+
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
@@ -189,6 +231,9 @@ pub fn start(app: &AppHandle) {
             let mut state: Option<State> = None;
             let mut last_scan = Instant::now() - Duration::from_secs(60);
             let mut last_busy = false;
+            // The account's usage, asked for once a minute.
+            let mut account = Value::Null;
+            let mut last_account = Instant::now() - Duration::from_secs(120);
             loop {
                 if !super::placed(&app, "claude") {
                     // Not on any bar: drop what was read (it's read again if placed later).
@@ -200,11 +245,27 @@ pub fn start(app: &AppHandle) {
                 let now = SystemTime::now();
                 let busy = files.iter().any(|(_, m)| now.duration_since(*m).is_ok_and(|d| d < BUSY));
                 let st = state.get_or_insert_with(State::default);
+                let mut changed = false;
+                let from_account = super::widget_opts(&app, "claude").get("account").and_then(|v| v.as_bool()) != Some(false);
+                if !from_account && !account.is_null() {
+                    account = Value::Null;
+                    changed = true;
+                } else if from_account && last_account.elapsed() >= Duration::from_secs(60) {
+                    last_account = Instant::now();
+                    let a = account_usage();
+                    changed = a != account;
+                    account = a;
+                }
                 // Re-read every 10 s, or right away when busy changes / while busy (every 2 s).
                 if last_scan.elapsed() >= Duration::from_secs(if busy { 2 } else { 10 }) || busy != last_busy {
                     st.update(&files);
                     last_scan = Instant::now();
-                    super::publish(&app, "claude", st.summary(busy));
+                    changed = true;
+                }
+                if changed {
+                    let mut v = st.summary(busy);
+                    v["account"] = account.clone();
+                    super::publish(&app, "claude", v);
                 }
                 last_busy = busy;
                 std::thread::sleep(Duration::from_secs(1));

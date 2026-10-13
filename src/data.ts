@@ -117,11 +117,26 @@ export interface SystemStatus {
 }
 
 /** Claude Code usage from its local session files (see providers/claude.rs). */
+/** A plan limit's use (the Claude account's, as /usage shows it). */
+export interface ClaudeLimit {
+  percent: number;
+  /** ISO time it resets. */
+  resetsAt: string | null;
+}
+
 export interface ClaudeUsage {
   buckets: { h: number; model: string; tokens: number; cacheRead: number; messages: number; sessions: string[] }[];
   window: { start: number; end: number; tokens: number; messages: number } | null;
   busy: boolean;
   now: number;
+  /** From the Claude account ([widgets.claude] account); null: off. */
+  account?: {
+    session?: ClaudeLimit | null;
+    week?: ClaudeLimit | null;
+    weekOpus?: ClaudeLimit | null;
+    weekSonnet?: ClaudeLimit | null;
+    error?: "signed-out" | "expired" | "unavailable";
+  } | null;
 }
 
 interface DataMap {
