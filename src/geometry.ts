@@ -60,6 +60,8 @@ export interface BumpFrame {
   depth: number;
   /** A stepped panel's sides (`left` / `right` are then the notch's). */
   panel?: { left: number; right: number };
+  /** Where the open panel's left edge ends up (its content waits there). */
+  panelX: number;
 }
 
 export interface Frame {
@@ -233,12 +235,18 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
     if (b.step) {
       const pl = b.step === "left" ? 0 : W - b.panelWidth;
       const pr = pl + b.panelWidth;
-      return { cx: (pl + pr) / 2, anchorCx, left: b.x, right: b.x + b.width, rowDepth, depth, panel: { left: pl, right: pr } };
+      return { cx: (pl + pr) / 2, anchorCx, left: b.x, right: b.x + b.width, rowDepth, depth, panel: { left: pl, right: pr }, panelX: pl };
     }
     const panelLeft = clamp(anchorCx - b.panelWidth / 2, 0, Math.max(0, W - b.panelWidth));
-    const left = lerp(anchorCx - b.width / 2, panelLeft, p);
-    const right = lerp(anchorCx + b.width / 2, panelLeft + b.panelWidth, p);
-    return { cx: (left + right) / 2, anchorCx, left, right, rowDepth, depth };
+    let left = lerp(anchorCx - b.width / 2, panelLeft, p);
+    let right = lerp(anchorCx + b.width / 2, panelLeft + b.panelWidth, p);
+    // A panel that ends up flush with a screen edge grows out of it from the start (the
+    // corner's dropdowns): no gap there, and the rounded screen corner comes along.
+    if (p > 0.001 && b.panelWidth < W) {
+      if (anchorCx - b.panelWidth / 2 < 0) left = Math.min(left, 0);
+      if (anchorCx + b.panelWidth / 2 > W) right = Math.max(right, W);
+    }
+    return { cx: (left + right) / 2, anchorCx, left, right, rowDepth, depth, panelX: panelLeft };
   });
 
   // Hull ends: collapsed they hug the outermost notches (leaving room for the fillets),

@@ -1412,7 +1412,7 @@ class Overlay {
         const how = L.animation.panelContent;
         const near = how === "reveal" || how === "fade" ? (bumps[i].panelTop ?? H) : bf.depth - d.panelHeight;
         d.panelEl.style.opacity = String(how === "reveal" ? 1 : how === "fade" ? clamp01(p * 1.6 - 0.5) : clamp01(p * 1.4 - 0.2));
-        d.panelEl.style.transform = `translate(${bf.cx - d.panelWidth / 2}px, ${(how === "slide" ? near : Math.round(near)) * away}px)`;
+        d.panelEl.style.transform = `translate(${bf.panelX}px, ${(how === "slide" ? near : Math.round(near)) * away}px)`;
         // Cascade ([animation] cascade, or the widget's own).
         if (d.panelEl.dataset.cascade === "1") this.cascadePanel(d.panelEl, p, d.spring.target, away);
       }
