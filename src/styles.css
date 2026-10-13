@@ -374,6 +374,8 @@ html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); 
 /* Keys only while the bar is open / only while it's closed. */
 html:not(.bar-open) .widget.media.keys-open .media-controls,
 html.bar-open .widget.media.keys-closed .media-controls { display: none; }
+/* In a notch, the open-only keys fade with the bar (main.ts sets --bar-fade). */
+html.bar-open .slot .widget.media.keys-open .media-controls { opacity: var(--bar-fade, 1); }
 /* Keys after the title instead of before it. */
 .widget.media.keys-right { flex-direction: row-reverse; }
 .widget.media.keys-right .media-text { margin-left: 0; margin-right: 2px; }

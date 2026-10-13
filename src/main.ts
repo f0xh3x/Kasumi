@@ -198,6 +198,7 @@ class Overlay {
   private glides: { el: HTMLElement; slot: HTMLDivElement; to: number; from: number; left: number }[] = [];
   /** The bar's own widgets that fade in behind pinned ones gliding past them. */
   private fadeIn: HTMLElement[] = [];
+  private lastFade = "";
   /** Bar widgets' last x, so a move slides (flipBar). */
   private barX = new Map<HTMLElement, number>();
   private barObserver = new ResizeObserver(() => this.onBarResize());
@@ -1166,9 +1167,10 @@ class Overlay {
         };
       }
       let x = d.xs ? (useTarget ? d.xs.target : d.xs.value) : d.x;
-      // Bars: a notch whose widgets glide to their place in the open bar goes along
-      // (its panel then drops below them).
-      if (L.mode !== "dock") x += this.glideShift(d, x) * clamp01(useTarget ? this.expand.target : this.expand.value);
+      // Bars: a notch whose widgets glide to their place in the open bar goes along (its
+      // panel then drops below them), only at the very end, where the bar hides its shape
+      // (earlier its bump slid through the opening bar).
+      if (L.mode !== "dock") x += this.glideShift(d, x) * clamp01(((useTarget ? this.expand.target : this.expand.value) - 0.85) / 0.15);
       let width = d.width;
       let height = d.height;
       // Hover nudge: the notch the cursor comes near grows a little (a dock opens a little).
@@ -1261,8 +1263,14 @@ class Overlay {
     this.bar.style.opacity = String(barHow === "reveal" ? clamp01(ex * 5) : barHow === "fade" ? clamp01((ex - 0.35) / 0.55) : clamp01((ex - 0.25) / 0.6));
 
     if (!dock) {
+      // The bar's own widgets behind gliding pinned ones, and open-only parts (the media
+      // keys) in the notches: in over the second half of the opening, out over the first of closing.
       const fade = ex >= 0.999 ? "" : clamp01((ex - 0.5) / 0.5).toFixed(3);
       for (const el of this.fadeIn) el.style.opacity = fade;
+      if (fade !== this.lastFade) {
+        document.documentElement.style.setProperty("--bar-fade", fade || "1");
+        this.lastFade = fade;
+      }
     }
 
     const od = this.osdDrop();
