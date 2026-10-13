@@ -155,6 +155,8 @@ struct Overlay {
     nudge: Option<String>,
     /// When a fullscreen window was first seen on this monitor (hide is debounced).
     fullscreen_since: Option<Instant>,
+    /// Shown over a fullscreen app for a moment ([launcher] fullscreen = "notches"), until then.
+    peek_until: Option<Instant>,
     /// This monitor's notches, as resolved from the config (for docking).
     defs: Vec<config::Notch>,
     /// Held open regardless of the cursor (the launcher is open on it).
@@ -412,6 +414,32 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         let front = win::foreground();
         let ours: Vec<isize> = sh.overlays.values().filter_map(|o| o.hwnd).collect();
         let front_is_ours = ours.contains(&front);
+        let notches_first = app.state::<SharedConfig>().read().unwrap().launcher.fullscreen == "notches";
+        if notches_first && !o_pinned(&sh, &label) && sh.overlays.get(&label).is_some_and(|o| o.hidden) {
+            // Over a fullscreen app: show that screen's bars for a moment (they hide
+            // again by themselves, update_fullscreen); pressed again, the launcher opens.
+            let monitor = sh.overlays[&label].monitor.clone();
+            let until = Instant::now() + Duration::from_secs(4);
+            let mut show = Vec::new();
+            for (l, o) in sh.overlays.iter_mut().filter(|(_, o)| o.monitor == monitor && o.hidden) {
+                o.hidden = false;
+                o.peek_until = Some(until);
+                show.push((l.clone(), o.hwnd));
+            }
+            drop(sh);
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                for (l, hwnd) in show {
+                    if let Some(w) = handle.get_webview_window(&l) {
+                        let _ = w.show();
+                    }
+                    if let Some(h) = hwnd {
+                        win::raise_topmost(h);
+                    }
+                }
+            });
+            return;
+        }
         let Some(o) = sh.overlays.get_mut(&label) else { return };
         let opening = open.unwrap_or(!o.pinned);
         if opening == o.pinned {
@@ -466,7 +494,25 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             win::restore_foreground(prev, &ours);
         }
     });
+    if opening && unhide {
+        // A bar shown a moment ago (over a fullscreen app) may not take the focus yet: keep
+        // asking for a moment, so typing goes to the launcher rather than the app.
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            for _ in 0..10 {
+                std::thread::sleep(Duration::from_millis(50));
+                if win::foreground() == hwnd {
+                    break;
+                }
+                let _ = handle.run_on_main_thread(move || win::focus(hwnd));
+            }
+        });
+    }
     let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://launcher", serde_json::json!({ "open": opening }));
+}
+
+fn o_pinned(sh: &Shared, label: &str) -> bool {
+    sh.overlays.get(label).is_some_and(|o| o.pinned)
 }
 
 fn launcher_target(sh: &Shared) -> Option<String> {
@@ -985,6 +1031,7 @@ impl Engine {
                                 undocked: Vec::new(),
                                 nudge: None,
                                 fullscreen_since: None,
+                                peek_until: None,
                                 defs,
                                 measured: HashMap::new(),
                                 pinned: false,
@@ -1114,9 +1161,15 @@ impl Engine {
                 // Hide only once fullscreen has lasted a moment, so short-lived
                 // full-screen windows can't make the overlay flicker; show at once.
                 o.fullscreen_since = if fullscreen { o.fullscreen_since.or(Some(Instant::now())) } else { None };
-                // Not while the launcher is open on it (opened over the fullscreen app).
+                // Not while the launcher is open on it (opened over the fullscreen app), nor
+                // while shown for a moment ("notches" mode) or in use (open) after that.
+                let peeking = o.peek_until.is_some_and(|t| Instant::now() < t) || (o.peek_until.is_some() && o.expanded);
+                if !peeking {
+                    o.peek_until = None;
+                }
                 let hide = self.cfg.general.hide_in_fullscreen
                     && !o.pinned
+                    && !peeking
                     && o.fullscreen_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(500));
                 if hide != o.hidden {
                     match (&fs, hide) {

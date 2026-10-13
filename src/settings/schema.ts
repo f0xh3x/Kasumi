@@ -182,6 +182,17 @@ export const pages: Page[] = [
             default: false,
           },
           {
+            kind: "select",
+            label: "Over a fullscreen app",
+            help: "What the Windows key (or the hotkey) does while a game or video is fullscreen.",
+            path: (cfg) => (cfg.launcher?.enabled === false ? null : ["launcher", "fullscreen"]),
+            default: "launcher",
+            options: [
+              { value: "launcher", label: "Opens the launcher" },
+              { value: "notches", label: "Shows the notches for a few seconds (press again for the launcher)" },
+            ],
+          },
+          {
             kind: "text",
             label: "Hotkey",
             help: "Like Win+Alt+Space or Ctrl+Alt+K; empty for none (the Windows key can open it instead). If it doesn't work, another app has the combination (the log says so).",

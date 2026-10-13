@@ -26,6 +26,7 @@ hide_taskbar = true       # hide the Windows taskbar while Kasumi runs (restored
 enabled = true
 hotkey = "Win+Alt+Space"
 start_menu = false
+fullscreen = "launcher"   # the Windows key over a fullscreen app: launcher | notches (shown a few seconds)
 
 [theme]
 background = "#000000"

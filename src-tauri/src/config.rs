@@ -221,11 +221,15 @@ pub struct LauncherCfg {
     pub hotkey: String,
     /// The Windows key alone opens the launcher instead of the Start menu.
     pub start_menu: bool,
+    /// The Windows key / hotkey over a fullscreen app: "launcher" opens it there;
+    /// "notches" shows that screen's bars for a few seconds instead (pressed again
+    /// while they show, it opens the launcher).
+    pub fullscreen: String,
 }
 
 impl Default for LauncherCfg {
     fn default() -> Self {
-        Self { enabled: true, hotkey: "Win+Alt+Space".into(), start_menu: false }
+        Self { enabled: true, hotkey: "Win+Alt+Space".into(), start_menu: false, fullscreen: "launcher".into() }
     }
 }
 
