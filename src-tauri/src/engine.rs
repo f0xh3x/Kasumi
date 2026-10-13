@@ -496,6 +496,12 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         if unhide {
             let _ = w.show();
         }
+        if back {
+            // Over a fullscreen app: hand it the focus while the bar still has it (once the
+            // bar is unfocusable Windows may move the focus elsewhere first, and then the
+            // app isn't in front, so its screen doesn't count as fullscreen).
+            win::focus(prev);
+        }
         win::set_activatable(hwnd, opening);
         let _ = w.set_focusable(opening);
         if opening {
@@ -520,6 +526,20 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
                     break;
                 }
                 let _ = handle.run_on_main_thread(move || win::focus(hwnd));
+            }
+        });
+    }
+    if back && prev != 0 {
+        // Make sure the fullscreen app really is in front again (it may take a moment).
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            for i in 0..10 {
+                std::thread::sleep(Duration::from_millis(50));
+                if win::foreground() == prev {
+                    eprintln!("[kasumi] DEBUG fullscreen app back in front after {i} retries");
+                    break;
+                }
+                let _ = handle.run_on_main_thread(move || win::focus(prev));
             }
         });
     }
