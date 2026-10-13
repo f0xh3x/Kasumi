@@ -351,12 +351,17 @@ pub fn osd_targets(app: &AppHandle, kind: &str) -> Vec<(String, Option<String>)>
             continue;
         };
         let anchor = |id: &str| o.defs.iter().find(|d| d.id == id).map(|d| d.anchor);
-        let visible = || o.layout.notches.iter().filter(|n| !n.hidden);
-        let notch = visible()
+        // No notch there: a pop-up notch of its own at that spot ("spot:<side>"),
+        // growing out of the edge like one (not out of some other notch).
+        let notch = o
+            .layout
+            .notches
+            .iter()
+            .filter(|n| !n.hidden)
             .find(|n| anchor(&n.id) == Some(want))
-            .or_else(|| visible().find(|n| anchor(&n.id) == Some(Anchor::Center)))
-            .or_else(|| o.layout.notches.first());
-        out.push(((*label).clone(), notch.map(|n| n.id.clone())));
+            .map(|n| n.id.clone())
+            .unwrap_or_else(|| format!("spot:{side}"));
+        out.push(((*label).clone(), Some(notch)));
     }
     out
 }

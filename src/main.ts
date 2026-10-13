@@ -731,6 +731,26 @@ class Overlay {
       anchor: null,
     };
     this.drops.push(this.peekDrop);
+    // Pop-up notches for spots without a notch ([osd] spot): zero-size until a pop-up
+    // grows out of one. Corners reach past the screen edge, like a notch hugging one.
+    const R = L.geometry.notchCornerRadius;
+    for (const [side, x] of [["left", -R], ["center", L.width / 2], ["right", L.width + R]] as const) {
+      this.drops.push({
+        key: `spot:${side}`,
+        x,
+        width: 0,
+        height: 0,
+        inHull: false,
+        panelWidth: 0,
+        panelHeight: 0,
+        hasPanel: false,
+        spring: new Spring(0, 0, 1, 1),
+        xs: null,
+        slot: null,
+        panelEl: null,
+        anchor: null,
+      });
+    }
     this.peekEl = div("peek");
     content.append(this.peekEl);
 
@@ -981,6 +1001,7 @@ class Overlay {
 
   /** The corner a notch drop hugs ("left" / "right"), null for the others. */
   private notchSide(d: Drop): "left" | "right" | null {
+    if (d.key === "spot:left" || d.key === "spot:right") return d.key === "spot:left" ? "left" : "right";
     return this.layout?.notches.find((n) => d.key === `notch:${n.id}`)?.edge ?? null;
   }
 
@@ -989,7 +1010,7 @@ class Overlay {
     if (!L) return undefined;
     // The notch the pop-up came for (Rust picks it: [osd] spot), else the center one.
     return (
-      (this.osdNotch !== null ? this.drops.find((d) => d.key === `notch:${this.osdNotch}`) : undefined) ??
+      (this.osdNotch !== null ? this.drops.find((d) => d.key === `notch:${this.osdNotch}` || d.key === this.osdNotch) : undefined) ??
       this.drops.find((d) => d.key === "notch:center") ??
       this.drops.find((d) => d.inHull)
     );
