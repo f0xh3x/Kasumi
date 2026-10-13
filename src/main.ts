@@ -910,6 +910,20 @@ class Overlay {
         // A dock corner notch's panel fits its content (no dropdown minimum width), so
         // it can rise beside the notch's row.
         d.panelEl.classList.toggle("corner-fit", L.mode === "dock" && !!d.notch && !!this.notchSide(d));
+        // In a left dock corner the panel's icons line up under the widget's own (the
+        // menu's under its button): its content shifts by the difference.
+        const content = d.panelEl.firstElementChild as HTMLElement | null;
+        if (content) content.style.marginLeft = "";
+        if (content && L.mode === "dock" && d.notch && this.notchSide(d) === "left") {
+          const owner = this.notchEls.find((e) => e.slot === d.slot && e.name === d.activePanel)?.el;
+          const wi = owner?.querySelector<HTMLElement>(".icon");
+          const pi = content.querySelector<HTMLElement>(".icon");
+          if (wi && pi) {
+            const mid = (r: DOMRect) => r.left + r.width / 2;
+            const shift = mid(wi.getBoundingClientRect()) - (mid(pi.getBoundingClientRect()) - d.panelEl.getBoundingClientRect().left);
+            if (Math.abs(shift) >= 1) content.style.marginLeft = `${Math.round(shift)}px`;
+          }
+        }
         if (!notch?.panelWidth) {
           d.panelEl.style.width = "auto";
           d.panelWidth = d.panelEl.offsetWidth;
@@ -917,13 +931,17 @@ class Overlay {
         }
         // A dock notch's panel is at least as wide as the open notch, so the
         // morphed shape never clips the notch's own row; its content is centered.
-        const rowWidth = L.mode === "dock" && d.notch ? d.notch.openWidth : 0;
+        let rowWidth = L.mode === "dock" && d.notch ? d.notch.openWidth : 0;
         // A corner notch's panel needn't be: it rises from the notch's corner end, as
         // wide as its content, when that leaves room for the fillet beside it.
         const side = rowWidth ? this.notchSide(d) : null;
+        // A corner notch reaches past the screen edge: only its part on screen needs
+        // covering (its panel starts at the edge).
+        if (d.notch && side === "left") rowWidth = d.notch.openX + d.notch.openWidth;
+        if (d.notch && side === "right") rowWidth = L.width - d.notch.openX;
         const scale = d.notch ? d.notch.openHeight / L.geometry.notchHeight : 1;
-        // Past the screen edge, the panel, its fillet, then the notch's own round-off.
-        const room = d.panelWidth + L.geometry.panelConcaveRadius + L.geometry.notchCornerRadius * (scale + 1);
+        // The panel, its fillet, then the notch's own round-off.
+        const room = d.panelWidth + L.geometry.panelConcaveRadius + L.geometry.notchCornerRadius * scale;
         d.step = side && room <= rowWidth ? side : undefined;
         d.panelEl.classList.toggle("widened", !d.step && d.panelWidth < rowWidth);
         // No room to rise beside the row: widened, its content along the screen's edge.
