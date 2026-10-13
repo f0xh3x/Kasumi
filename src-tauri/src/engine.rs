@@ -389,6 +389,8 @@ static LAUNCHER_PREV: std::sync::atomic::AtomicIsize = std::sync::atomic::Atomic
 static LAUNCHER_FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// The open launcher was opened over a fullscreen app (its bar shown for it).
 static LAUNCHER_OVER_FULLSCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Until when, after such a launcher closed, no bar may show (update_fullscreen).
+static LAUNCHER_CLOSED_OVER_FULLSCREEN: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
 /// Opens (`open` = Some(true)), closes or toggles the launcher. `label` is the
 /// overlay to use (its launcher widget was clicked); without one: on the monitor
@@ -486,6 +488,9 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
     // Closing one opened over a fullscreen app: the app gets the focus back, whatever
     // closed it, so its screen counts as fullscreen again and the bars hide.
     let back = !opening && LAUNCHER_OVER_FULLSCREEN.swap(false, std::sync::atomic::Ordering::Relaxed);
+    if back {
+        *LAUNCHER_CLOSED_OVER_FULLSCREEN.lock().unwrap() = Some(Instant::now() + Duration::from_millis(1500));
+    }
     let _ = app.run_on_main_thread(move || {
         let Some(w) = handle.get_webview_window(&l) else { return };
         if unhide {
@@ -1169,6 +1174,9 @@ impl Engine {
         // looks fullscreen: leave its other bars as they are (hidden). Showing a window
         // also activates it, which would take the focus and close the launcher.
         let over_fullscreen = LAUNCHER_OVER_FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed);
+        // Just closed it: the app gets the focus back in a moment. Until then the screen
+        // still doesn't look fullscreen, but showing a bar now would take the focus first.
+        let settling = LAUNCHER_CLOSED_OVER_FULLSCREEN.lock().unwrap().is_some_and(|t| Instant::now() < t);
         {
             let mut sh = self.shared.lock().unwrap();
             for (label, o) in sh.overlays.iter_mut() {
@@ -1190,6 +1198,9 @@ impl Engine {
                     && !peeking
                     && o.fullscreen_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(500));
                 if hide != o.hidden {
+                    if settling && !hide {
+                        continue;
+                    }
                     match (&fs, hide) {
                         (Some((_, why)), true) => eprintln!("[kasumi] hiding {label}: {why}"),
                         _ => eprintln!("[kasumi] showing {label}"),
