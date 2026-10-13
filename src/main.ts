@@ -869,11 +869,12 @@ class Overlay {
   }
 
   /** Content of a corner notch sits as far from the screen edge as in the open bar. */
-  private padEdge(slot: HTMLDivElement, n: NotchLayout): void {
-    const extra = `${this.edgeExtra(n)}px`;
-    slot.style.paddingLeft = n.edge === "left" ? extra : "";
-    slot.style.paddingRight = n.edge === "right" ? extra : "";
-    // Its content keeps to the corner, so it stays put while the notch changes width.
+  private padEdge(slot: HTMLDivElement, n: NotchLayout, k = 1): void {
+    // Its content keeps to the corner (so it stays put while the notch changes width),
+    // past the notch's part beyond the screen edge, its round-off and padding.
+    const inset = `${this.edgeExtra(n) + this.layout!.geometry.notchCornerRadius * k + NOTCH_PAD}px`;
+    slot.style.paddingLeft = n.edge === "left" ? inset : "";
+    slot.style.paddingRight = n.edge === "right" ? inset : "";
     slot.classList.toggle("edge-left", n.edge === "left");
     slot.classList.toggle("edge-right", n.edge === "right");
   }
@@ -1340,6 +1341,8 @@ class Overlay {
           }
         }
         if (dock) d.slot.style.width = `${w}px`;
+        // A dock corner notch's curves grow with it: so does its content's inset.
+        if (dock && d.notch?.edge) this.padEdge(d.slot, d.notch, bumps[i].scale ?? 1);
         // Cross-fade the notch's own content with the OSD; a tiny dock handle hides it.
         const shown = d.shown ? clamp01(d.shown.value * 1.5 - 0.5) : 1;
         const fits = dock ? clamp01((bf.rowDepth - 16) / 10) : 1;
