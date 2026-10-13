@@ -511,7 +511,9 @@ const placement: Editor = (ctx) => {
    */
   const chipButtons = (id: string, where: string, elsewhere: boolean) => {
     const mode = ctx.cfg.surfaces?.[where]?.mode ?? "bar";
-    const notch = mode === "dock" || (mode === "bar" && layouts[where].notch.includes(id));
+    // Docks: every widget is a notch; the pin says whether it shows while the dock is closed.
+    const dockPinned = ctx.cfg.widgets?.[id]?.pin_in_dock !== false;
+    const notch = mode === "dock" ? dockPinned : mode === "bar" && layouts[where].notch.includes(id);
     const hides = ctx.cfg.widgets?.[id]?.hide_when_maximized === true;
     const button = (code: number, on: boolean, usable: boolean, title: string, toggle: () => void) => {
       const b = $("button", `chip-button${on ? " on" : ""}`, glyph(code)) as HTMLButtonElement;
@@ -527,15 +529,22 @@ const placement: Editor = (ctx) => {
     const pin = button(
       CHIP_LEGEND[0][0],
       notch,
-      mode === "bar",
+      mode === "bar" || mode === "dock",
       mode === "dock"
-        ? "Own notch: every widget in a dock is a notch"
+        ? dockPinned
+          ? "Shown while the dock is closed. Click to show it only while the dock is open (hover its spot or a hot corner)"
+          : "Only while the dock is open: hover its spot or a hot corner. Click to always show it (on every dock)"
         : mode !== "bar"
           ? "Own notch: an always-shown bar has no notches"
           : notch
             ? "Own notch: shows as a notch on its side while the bar is closed. Click to stop"
             : "Own notch: click to also show it as a notch on its side while the bar is closed",
       () => {
+        // Docks: a widget option (like hiding under windows), the same on every dock.
+        if (mode === "dock") {
+          ctx.saveMany([{ path: ["widgets", id, "pin_in_dock"], value: dockPinned ? false : null }]);
+          return;
+        }
         const next = structuredClone(L);
         next.notch = notch ? next.notch.filter((x) => x !== id) : [...next.notch, id];
         // Global view: like adding a widget, its pin also reaches monitors with their own

@@ -714,6 +714,12 @@ impl Config {
         self.widgets.get(name).and_then(|t| t.get("hide_when_maximized")).and_then(|v| v.as_bool()) == Some(true)
     }
 
+    /// `widgets.<name>.pin_in_dock` (default true): shown while its dock is closed.
+    /// Off, it's only there while the dock is open (hover its spot or a hot corner).
+    pub fn widget_pinned_in_dock(&self, name: &str) -> bool {
+        self.widgets.get(name).and_then(|t| t.get("pin_in_dock")).and_then(|v| v.as_bool()) != Some(false)
+    }
+
     /// The notches and bar groups a monitor shows, from the new `[layout]` model
     /// (with the monitor rule's own layout, if any) or the legacy model.
     pub fn resolve_layout(&self, rule: Option<&MonitorRule>) -> (Vec<Notch>, Bar) {

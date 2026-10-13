@@ -54,6 +54,8 @@ export interface NotchLayout {
   hidden: boolean;
   /** Widgets hidden under a window while the rest of the notch stays. */
   hiddenWidgets: string[];
+  /** Dock: no pinned widget in it, so it's only there while the dock is open. */
+  closedHidden: boolean;
   /** Hugs this corner: content keeps the bar's distance from the edge. */
   edge: "left" | "right" | null;
   /** Dock: position and size while open. */

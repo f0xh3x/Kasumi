@@ -102,6 +102,9 @@ pub struct NotchLayout {
     pub open_height: f64,
     /// Dock: shrunk to the tiny handle (a window covers it).
     pub shrunk: bool,
+    /// Dock: none of its widgets is pinned (`pin_in_dock = false`), so it's tucked
+    /// away while the dock is closed and grows out as it opens. Still hoverable.
+    pub closed_hidden: bool,
 }
 
 /// A notch's measured content width, and without its hide-under-windows widgets;
@@ -807,6 +810,10 @@ impl Engine {
                         None
                     },
                     hidden_widgets: hidden_widgets.remove(&n.id).unwrap_or_default(),
+                    closed_hidden: dock && {
+                        let on: Vec<&String> = n.widgets.iter().filter(|w| self.cfg.widget_enabled(w)).collect();
+                        !on.is_empty() && on.iter().all(|w| !self.cfg.widget_pinned_in_dock(w))
+                    },
                     open_x,
                     open_width: open_w,
                     open_height: if dock { open_h } else { n.height.unwrap_or(g.notch_height) },

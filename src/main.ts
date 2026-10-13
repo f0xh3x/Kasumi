@@ -257,6 +257,8 @@ class Overlay {
 
   setExpanded(expanded: boolean): void {
     this.expanded = expanded;
+    // Dock notches with no pinned widget come out as the dock opens and tuck away as it closes.
+    for (const d of this.drops) if (d.shown && d.notch) d.shown.target = this.notchShown(d.notch) ? 1 : 0;
     if (expanded) this.nudge.target = 0;
     document.documentElement.classList.toggle("bar-open", expanded);
     this.layoutBar();
@@ -284,7 +286,7 @@ class Overlay {
           this.padEdge(d.slot, n);
         }
       }
-      if (d?.shown) d.shown.target = n.hidden ? 0 : 1;
+      if (d?.shown) d.shown.target = this.notchShown(n) ? 1 : 0;
       if (d) d.notch = n;
       this.markHidden(n);
     }
@@ -567,7 +569,7 @@ class Overlay {
           xs.target = n.x;
           return xs;
         })(),
-        shown: new Spring(n.hidden ? 0 : 1, n.hidden ? 0 : 1, a.spreadStiffness, a.spreadDamping, a.mass),
+        shown: new Spring(this.notchShown(n) ? 1 : 0, this.notchShown(n) ? 1 : 0, a.spreadStiffness, a.spreadDamping, a.mass),
         slot,
         panelEl: n.panel ? mountPanel(n.panel, n.panelWidth || undefined, n.panelHeight || undefined) : null,
         anchor: null,
@@ -870,6 +872,11 @@ class Overlay {
       this.cascadeStart.set(panel, start);
     }
     this.holdUntil = Math.max(this.holdUntil, cascade(rows, start, -8 * away));
+  }
+
+  /** Whether a notch shows now: not retracted under a window, and (dock) pinned or the dock open. */
+  private notchShown(n: NotchLayout): boolean {
+    return !n.hidden && !(n.closedHidden && !this.expanded);
   }
 
   /** The corner a notch drop hugs ("left" / "right"), null for the others. */
