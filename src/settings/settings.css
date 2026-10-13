@@ -38,7 +38,8 @@ body.maximized { border: 0; border-radius: 0; }
   position: relative;
   border-bottom: 1px solid var(--line);
 }
-.titlebar-title { font-weight: 600; font-size: 12px; color: var(--dim); letter-spacing: 0.3px; pointer-events: none; }
+.titlebar-title { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 12px; color: var(--dim); letter-spacing: 0.3px; pointer-events: none; }
+.titlebar-title .kasumi-logo { font-size: 14px; }
 .titlebar-buttons { position: absolute; right: 0; top: 0; height: 100%; display: flex; }
 .tb {
   width: 46px;
@@ -82,7 +83,21 @@ body.maximized { border: 0; border-radius: 0; }
 }
 .nav-item:hover { background: rgba(255, 255, 255, 0.06); color: var(--fg); }
 .nav-item.active { background: var(--raised); color: var(--fg); }
-.version { margin-top: auto; padding: 0 12px; color: var(--faint); font-size: 11px; }
+/* The sidebar's foot: the mist shape, the version in its lower-left gap. */
+.nav-foot { position: relative; margin-top: auto; margin-left: 6px; width: 188px; height: 41px; }
+.nav-foot svg { display: block; width: 100%; height: 100%; fill: var(--panel); }
+.version {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 53px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-size: 11px;
+}
 
 /* Content */
 .content { flex: 1; overflow-y: auto; padding: 26px 32px 40px; }

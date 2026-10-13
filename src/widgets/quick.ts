@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
+import { DEFAULT_TILES, MAX_TILES, QUICK_TILES, kasumiLogo } from "../quick-tiles";
 import { subscribe, type SystemStatus } from "../data";
 import { iconUrl, g, el, icon, setText, type PanelContext, type Widget } from "./index";
 
@@ -261,9 +261,10 @@ export function quickPanel(opts: Record<string, unknown>, ctx: PanelContext): Wi
     "quick-tiles",
     ...chosen.map((id) => {
       const [label, glyph, target] = QUICK_TILES[id];
-      const t = el("quick-tile", icon(g(glyph)), el("quick-tile-label", label));
+      const t = el("quick-tile", glyph ? icon(g(glyph)) : kasumiLogo(), el("quick-tile-label", label));
       t.addEventListener("click", () => {
-        invoke("run_action", { action: "open", target }).catch(console.error);
+        if (target === "kasumi:settings") invoke("open_settings").catch(console.error);
+        else invoke("run_action", { action: "open", target }).catch(console.error);
         ctx.close();
       });
       return t;

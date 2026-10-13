@@ -104,6 +104,8 @@ export function weather(opts: Record<string, unknown> = {}): Widget {
  */
 export function weatherPanel(opts: Record<string, unknown>): Widget {
   const hours = typeof opts.hours === "number" ? opts.hours : 8;
+  // [widgets.weather] forecast: the next hours, or the next days (each day's high and low).
+  const daily = opts.forecast === "daily";
   const nowIcon = el("wx-now-icon");
   const nowTemp = el("wx-now-temp");
   const cond = el("wx-cond");
@@ -125,16 +127,30 @@ export function weatherPanel(opts: Record<string, unknown>): Widget {
     feels.textContent = `Feels like ${deg(w.feels)}`;
     range.textContent = `${deg(w.min)} / ${deg(w.max)}`;
     place.textContent = w.location;
-    strip.replaceChildren(
-      ...(w.hourly ?? []).slice(0, hours + 1).map((h, i) =>
-        el(
-          "wx-hour",
-          el("wx-hour-time", i === 0 ? "Now" : h.time.slice(11, 13)),
-          weatherIcon(h.code, h.isDay, 16),
-          el("wx-hour-temp", deg(h.temp)),
+    if (daily && w.daily?.length) {
+      strip.replaceChildren(
+        ...w.daily.map((d, i) =>
+          el(
+            "wx-hour wx-day",
+            el("wx-hour-time", i === 0 ? "Today" : new Date(`${d.date}T12:00`).toLocaleDateString([], { weekday: "short" })),
+            weatherIcon(d.code, true, 16),
+            el("wx-hour-temp", deg(d.max)),
+            el("wx-hour-min", deg(d.min)),
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      strip.replaceChildren(
+        ...(w.hourly ?? []).slice(0, hours + 1).map((h, i) =>
+          el(
+            "wx-hour",
+            el("wx-hour-time", i === 0 ? "Now" : h.time.slice(11, 13)),
+            weatherIcon(h.code, h.isDay, 16),
+            el("wx-hour-temp", deg(h.temp)),
+          ),
+        ),
+      );
+    }
   });
   return { el: root, dispose: unsubscribe };
 }

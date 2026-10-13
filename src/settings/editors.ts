@@ -2,7 +2,7 @@
 // control (widget placement, notches, menu entries, monitors, lookups).
 import { invoke } from "@tauri-apps/api/core";
 import { POWER_ACTIONS } from "../power-actions";
-import { DEFAULT_TILES, MAX_TILES, QUICK_TILES } from "../quick-tiles";
+import { DEFAULT_TILES, MAX_TILES, QUICK_TILES, kasumiLogo } from "../quick-tiles";
 import { $, glyph, iconButton, input, row, select, toggleSwitch } from "./dom";
 import type { Cfg, Path } from "./schema";
 
@@ -1663,7 +1663,7 @@ const quickTiles: Editor = (ctx) => {
   const save = () => ctx.saveMany([{ path: ["widgets", "quick", "tiles"], value: chosen }]);
   const tile = (id: string, ...extra: HTMLElement[]) => {
     const [label, code] = QUICK_TILES[id];
-    return $("div", "tile-chip", glyph(code), $("span", "", label), ...extra);
+    return $("div", "tile-chip", code ? glyph(code) : kasumiLogo(), $("span", "", label), ...extra);
   };
   const picked = $("div", "tile-row");
   chosen.forEach((id, i) => {

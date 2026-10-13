@@ -50,6 +50,8 @@ export interface Weather {
   max: number;
   location: string;
   hourly: HourlyWeather[];
+  /** The next days, today first. */
+  daily?: { date: string; min: number; max: number; code: number }[];
 }
 
 export interface HourlyWeather {

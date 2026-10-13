@@ -17,6 +17,7 @@ import {
   type Op,
 } from "./editors";
 import { $, glyph, row, toggleSwitch } from "./dom";
+import { kasumiLogo } from "../quick-tiles";
 import { pages, type Cfg, type Field, type Page, type Path } from "./schema";
 
 let cfg: Cfg = {};
@@ -301,7 +302,12 @@ function render(): void {
   const page = renderPage(pages.find((p) => p.id === current)!);
   app.replaceChildren(nav, page);
   page.scrollTop = scroll;
-  invoke<string>("app_version").then((v) => nav.append($("div", "version", `v${v}`)));
+  // The sidebar's foot: the mist shape (Desktop asset.svg), the version in its lower-left gap.
+  const foot = $("div", "nav-foot");
+  foot.innerHTML =
+    '<svg viewBox="0 0 188.17 40.54" aria-hidden="true"><path d="Layer_2"/></svg>';
+  nav.append(foot);
+  invoke<string>("app_version").then((v) => foot.append($("div", "version", `v${v}`)));
 }
 
 async function load(): Promise<void> {
@@ -310,8 +316,12 @@ async function load(): Promise<void> {
     // Older configs move to the current format once: [bar] lists + [[notches]]
     // -> [layout], then per-widget notch tables -> [notch] side settings.
     let migrated = false;
+    // Only writes that change something: a step can restate what's already there,
+    // and every reload (each time this window gets the focus) would "migrate" again.
+    const at = (o: any, path: (string | number)[]) => path.reduce((v, k) => (v == null ? undefined : v[k]), o);
+    const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
     for (const step of [migrationOps, migrationOpsV3, migrationOpsV4, migrationOpsV5, migrationOpsDisabledSpots, migrationOpsRemovedWidgets]) {
-      const ops = step(cfg);
+      const ops = step(cfg).filter((op) => !same(at(cfg, op.path), op.value));
       if (!ops.length) continue;
       await invoke("config_write_many", { ops });
       cfg = await invoke<Cfg>("config_read");
@@ -324,7 +334,8 @@ async function load(): Promise<void> {
   render();
 }
 
-// Custom title bar: Windows controls in the window's own style.
+// Custom title bar: Windows controls in the window's own style, the logo by the name.
+document.querySelector(".titlebar-title")!.prepend(kasumiLogo());
 const win = getCurrentWindow();
 document.getElementById("tb-min")!.addEventListener("click", () => win.minimize());
 document.getElementById("tb-max")!.addEventListener("click", () => win.toggleMaximize());

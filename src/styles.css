@@ -92,6 +92,8 @@ html.edge-bottom :is(.bar, .slot, .panel, .osd, .peek) { top: auto; bottom: 0; }
 .group.right { grid-column: 3; justify-self: end; }
 /* Center widgets around a middle notch (main.ts places them beside it). */
 .group.split { position: absolute; top: 0; bottom: 0; }
+/* A pinned widget's place in the open bar (it glides there from its notch). */
+.notch-spacer { flex: none; height: 1px; }
 
 .slot {
   position: absolute;
@@ -340,6 +342,8 @@ html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); 
 .wx-hour:first-child { background: rgba(255, 255, 255, 0.08); }
 .wx-hour-time { font-size: 10px; color: var(--fg-dim); }
 .wx-hour-temp { font-size: 11px; }
+.wx-hour-min { font-size: 10px; color: var(--fg-dim); margin-top: -3px; }
+.wx-day { width: 40px; }
 
 /* Temps panel: CPU and GPU cards, memory row. */
 .panel-temps { --pad-near: 12px; --pad-x: 14px; --pad-far: 12px; }
@@ -549,17 +553,20 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .widget.tray-inline .tray-icon { width: calc(var(--h, 30px) * 0.8); height: calc(var(--h, 30px) * 0.8); }
 .widget.tray-inline .tray-icon img { width: calc(var(--h, 30px) * 0.55); height: calc(var(--h, 30px) * 0.55); }
 
-/* App icons (tasks, tray): colour, monochrome, or silhouettes in the accent colour. */
+/* App icons (tasks, tray): colour, monochrome, or tinted with the accent colour (the
+   icon in grey, its light and shade kept, coloured by an accent layer in its shape). */
 .ico { position: relative; display: inline-flex; }
 .ico img { display: block; }
 .ico-mask { display: none; }
 .icons-mono .ico img { filter: grayscale(1); }
-.icons-accent .ico img { visibility: hidden; }
+.icons-accent .ico { isolation: isolate; }
+.icons-accent .ico img { filter: grayscale(1) contrast(1.1); }
 .icons-accent .ico-mask {
   display: block;
   position: absolute;
   inset: 0;
   background: var(--accent);
+  mix-blend-mode: color;
   -webkit-mask: var(--icon) center / contain no-repeat;
   mask: var(--icon) center / contain no-repeat;
 }
@@ -795,7 +802,7 @@ html.edge-bottom .tasks.magnify .ico { transform-origin: 50% 100%; }
 .own-font { font-family: var(--font, "Inter"), "Segoe UI", sans-serif; }
 .panel-calendar .cal-dow, .panel-calendar .cal-wk, .panel-calendar .cal-day,
 .media-artist, .seek-time,
-.wx-cond, .wx-detail, .wx-place, .wx-hour-time, .wx-hour-temp,
+.wx-cond, .wx-detail, .wx-place, .wx-hour-time, .wx-hour-temp, .wx-hour-min,
 .hw-label, .hw-name, .hw-key, .hw-load-text, .hw-detail, .hw-offline,
 .tasks-title, .tasks-empty, .tray-empty,
 .quick-num, .quick-status, .quick-tile-label, .quick-output-item, .quick-apps-empty,

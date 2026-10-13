@@ -31,7 +31,7 @@ fn fetch(agent: &ureq::Agent, q: &Query, location: &str) -> Result<Value, String
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}\
          &current=temperature_2m,apparent_temperature,weather_code,is_day\
          &hourly=temperature_2m,weather_code,is_day&forecast_hours=13\
-         &daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto{units}",
+         &daily=temperature_2m_max,temperature_2m_min,weather_code&forecast_days=7&timezone=auto{units}",
         q.lat, q.lon
     );
     let r = get_json(agent, &url)?;
@@ -56,6 +56,17 @@ fn fetch(agent: &ureq::Agent, q: &Query, location: &str) -> Result<Value, String
                 .collect()
         })
         .unwrap_or_default();
+    // The next days, starting today (local dates like "2026-10-07").
+    let d = &r["daily"];
+    let daily: Vec<Value> = d["time"]
+        .as_array()
+        .map(|days| {
+            days.iter()
+                .enumerate()
+                .map(|(i, t)| json!({ "date": t, "min": d["temperature_2m_min"][i], "max": d["temperature_2m_max"][i], "code": d["weather_code"][i] }))
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(json!({
         "temp": cur["temperature_2m"],
         "feels": cur["apparent_temperature"],
@@ -65,6 +76,7 @@ fn fetch(agent: &ureq::Agent, q: &Query, location: &str) -> Result<Value, String
         "max": first(&r["daily"]["temperature_2m_max"]),
         "location": location,
         "hourly": hourly,
+        "daily": daily,
     }))
 }
 

@@ -192,10 +192,19 @@ class Overlay {
   private openLauncher: (() => void) | null = null;
   private bar = div("bar");
   private groups: Partial<Record<"left" | "center" | "right", HTMLDivElement>> = {};
+  /** Bars: each pinned (notch) widget's place in its side's bar order, and its glide there. */
+  private spacers = new Map<string, HTMLElement>();
+  private glides: { el: HTMLElement; slot: HTMLDivElement; to: number; from: number }[] = [];
+  /** Bar widgets' last x, so a move slides (flipBar). */
+  private barX = new Map<HTMLElement, number>();
+  private barObserver = new ResizeObserver(() => this.onBarResize());
   /** Center widgets around a middle notch: [before it, after it]. */
   private centerSplit: [HTMLDivElement, HTMLDivElement] | null = null;
   // Notch widths follow their content: measured here, positioned by Rust.
-  private notchObserver = new ResizeObserver(() => this.scheduleMeasure());
+  private notchObserver = new ResizeObserver(() => {
+    this.scheduleMeasure();
+    this.onBarResize();
+  });
   // And now and then regardless: a missed resize would leave a notch the wrong
   // width (content spilling out of it). Cheap: only sends when a width changed.
   readonly remeasure = window.setInterval(() => this.checkWidths(), 2000);
@@ -248,6 +257,8 @@ class Overlay {
     this.layoutBar();
     this.notchObserver.disconnect();
     for (const d of this.drops) for (const c of d.slot?.children ?? []) this.notchObserver.observe(c);
+    this.barObserver.disconnect();
+    for (const c of this.bar.querySelectorAll(".group > :not(.notch-spacer)")) this.barObserver.observe(c);
     this.scheduleMeasure();
     this.measureBarDrops();
     this.render();
@@ -306,26 +317,55 @@ class Overlay {
     // A notch's content edge: past its flare and padding.
     const inset = L.geometry.notchCornerRadius + NOTCH_PAD;
     const gap = L.bar.gap;
-    const pad = L.bar.padding;
     const sideOf = (n: NotchLayout) => (["left", "center", "right"] as const).find((s) => n.widgets.some((w) => L.bar[s].includes(w)));
-    let leftEnd = 0;
-    let rightStart = L.width;
     let middle: NotchLayout | null = null;
-    for (const n of L.notches) {
-      if (n.hidden || !n.widgets.length) continue;
-      const side = sideOf(n);
-      if (side === "left") leftEnd = Math.max(leftEnd, n.x + n.width - inset);
-      else if (side === "right") rightStart = Math.min(rightStart, n.x + inset);
-      else if (side === "center") middle = n;
-    }
-    if (this.groups.left) this.groups.left.style.marginLeft = leftEnd ? `${Math.max(0, leftEnd + gap - pad)}px` : "";
-    if (this.groups.right) this.groups.right.style.marginRight = rightStart < L.width ? `${Math.max(0, L.width - rightStart + gap - pad)}px` : "";
+    for (const n of L.notches) if (!n.hidden && n.widgets.length && sideOf(n) === "center") middle = n;
     if (this.centerSplit) {
       const [before, after] = this.centerSplit;
       const x0 = middle ? middle.x + inset : L.width / 2;
       const x1 = middle ? middle.x + middle.width - inset : L.width / 2;
       before.style.right = `${L.width - x0 + gap}px`;
       after.style.left = `${x1 + gap}px`;
+    }
+    // Left / right: a pinned widget keeps its place in the bar's order (its spacer, as
+    // wide as it is); render() glides it there from its notch as the bar opens.
+    for (const [name, sp] of this.spacers) {
+      const e = this.notchEls.find((x) => x.name === name);
+      const n = e && L.notches.find((x) => x.id === e.slot.dataset.notch);
+      const shown = !!e && !!n && !n.hidden && !n.hiddenWidgets.includes(name) && e.el.offsetWidth > 0;
+      sp.style.display = shown ? "" : "none";
+      if (e && shown) sp.style.width = `${e.el.offsetWidth}px`;
+    }
+    const barLeft = this.bar.getBoundingClientRect().left;
+    this.glides = [];
+    for (const [name, sp] of this.spacers) {
+      const e = this.notchEls.find((x) => x.name === name);
+      if (!e || sp.style.display === "none") continue;
+      this.glides.push({ el: e.el, slot: e.slot, to: sp.getBoundingClientRect().left - barLeft, from: e.el.offsetLeft });
+    }
+    this.kick();
+  }
+
+  /** Bar widgets resized: re-place the pinned ones, and slide whatever moved. */
+  private onBarResize(): void {
+    if (!this.layout || this.layout.mode === "dock") return;
+    this.layoutBar();
+    this.flipBar();
+  }
+
+  /**
+   * Widgets in the open bar slide to a new place instead of jumping (a title got
+   * longer, a widget appeared): from where they were (layout x, transforms aside).
+   */
+  private flipBar(): void {
+    const visible = this.expanded && this.expand.value > 0.5;
+    for (const el of this.bar.querySelectorAll<HTMLElement>(".group > :not(.notch-spacer)")) {
+      const x = el.offsetLeft;
+      const was = this.barX.get(el);
+      this.barX.set(el, x);
+      if (visible && was !== undefined && Math.abs(was - x) > 1) {
+        el.animate([{ translate: `${was - x}px 0` }, { translate: "0 0" }], { duration: 220, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+      }
     }
   }
 
@@ -409,6 +449,9 @@ class Overlay {
     this.drops = [];
     this.langEl = null;
     this.notchEls = [];
+    this.spacers.clear();
+    this.glides = [];
+    this.barX.clear();
     this.openLauncher = null;
     this.lastWidths = "";
     content.replaceChildren();
@@ -488,6 +531,13 @@ class Overlay {
       group.style.gap = `${L.bar.gap}px`;
       this.bar.append(group);
       for (const name of names) {
+        if (notched.has(name)) {
+          // A pinned widget lives in its notch; this keeps its place in the open bar's order.
+          const sp = div("notch-spacer");
+          group.append(sp);
+          this.spacers.set(name, sp);
+          continue;
+        }
         const w = createWidget(name, opts(name));
         this.widgets.push(w);
         group.append(w.el);
@@ -498,7 +548,8 @@ class Overlay {
     };
     this.centerSplit = null;
     for (const side of ["left", "center", "right"] as const) {
-      const names = L.bar[side].filter((n) => !notched.has(n));
+      // Left / right: pinned ones too, as spacers keeping their place in the order.
+      const names = side === "center" ? L.bar[side].filter((n) => !notched.has(n)) : L.bar[side];
       const first = L.bar[side].findIndex((n) => notched.has(n));
       if (side === "center" && first >= 0) {
         // Around a middle notch: widgets listed before its widgets sit left of it, the rest right.
@@ -683,6 +734,8 @@ class Overlay {
   private checkWidths(): void {
     const L = this.layout;
     if (!L || !this.lastWidths || this.running) return;
+    // An open bar shows open-only parts (media keys): its notches are measured closed.
+    if (L.mode !== "dock" && this.expanded) return;
     const last = JSON.parse(this.lastWidths) as Record<string, { full: number; open: number }>;
     const dock = L.mode === "dock";
     const open = dock && this.expanded;
@@ -720,6 +773,12 @@ class Overlay {
       root.setProperty("--t", prevT);
       return v;
     };
+    // Bars: a notch's width is its closed one, measured as if the bar were closed (an
+    // open bar shows parts that are only there while it's open, like the media keys);
+    // else every open and close would resize it, mid-animation. Not painted.
+    const html = document.documentElement;
+    const reopen = !dock && html.classList.contains("bar-open");
+    if (reopen) html.classList.remove("bar-open");
     for (const n of L.notches) {
       const slot = this.drops.find((d) => d.key === `notch:${n.id}`)?.slot;
       if (!slot) continue;
@@ -728,6 +787,7 @@ class Overlay {
       const [open] = dock ? measure(L.openHeight, 1) : [full];
       if (full || open) widths[n.id] = { full, compact, open };
     }
+    if (reopen) html.classList.add("bar-open");
     const sent = JSON.stringify(widths);
     if (sent === "{}" || sent === this.lastWidths) return;
     this.lastWidths = sent;
@@ -1041,6 +1101,12 @@ class Overlay {
     return L.mode !== "dock" || (!notch.shrunk && L.rest !== "tiny");
   }
 
+  /** How far a notch's widgets move from their notch to their places in the open bar (on average). */
+  private glideShift(d: Drop, x: number): number {
+    const mine = d.slot ? this.glides.filter((g) => g.slot === d.slot) : [];
+    return mine.length ? mine.reduce((sum, g) => sum + g.to - (x + g.from), 0) / mine.length : 0;
+  }
+
   private bumps(drops: Drop[], useTarget: boolean): Bump[] {
     const L = this.layout!;
     const od = this.osdDrop();
@@ -1061,6 +1127,9 @@ class Overlay {
         };
       }
       let x = d.xs ? (useTarget ? d.xs.target : d.xs.value) : d.x;
+      // Bars: a notch whose widgets glide to their place in the open bar goes along
+      // (its panel then drops below them).
+      if (L.mode !== "dock") x += this.glideShift(d, x) * clamp01(useTarget ? this.expand.target : this.expand.value);
       let width = d.width;
       let height = d.height;
       // Hover nudge: the notch the cursor comes near grows a little (a dock opens a little).
@@ -1161,6 +1230,18 @@ class Overlay {
         const w = dock ? bumps[i].width : d.width;
         d.slot.style.height = `${row}px`;
         d.slot.style.transform = `translateX(${bf.anchorCx - w / 2}px)`;
+        if (!dock) {
+          // Pinned widgets glide from the notch to their place in the bar's order
+          // (the notch moves along by their average; each makes up the rest).
+          const slotX = bf.anchorCx - w / 2;
+          const rest = d.xs ? d.xs.value : d.x;
+          const e = clamp01(this.expand.value);
+          for (const g of this.glides) {
+            if (g.slot !== d.slot) continue;
+            const at = lerp(rest + g.from, g.to, e);
+            g.el.style.translate = e > 0.001 ? `${Math.round(at - (slotX + g.from))}px 0` : "";
+          }
+        }
         if (dock) d.slot.style.width = `${w}px`;
         // Cross-fade the notch's own content with the OSD; a tiny dock handle hides it.
         const shown = d.shown ? clamp01(d.shown.value * 1.5 - 0.5) : 1;

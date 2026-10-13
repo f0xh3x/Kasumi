@@ -10,7 +10,7 @@ import { iconUrl, g, el, type PanelContext, type Widget } from "./index";
  *
  * Options: `monitor` = "own" (windows on this monitor, default) | "all";
  * `labels` = "none" (default) | "active" (title of the window in front);
- * `icons` = "color" (default) | "mono" | "accent" (silhouettes in the accent colour);
+ * `icons` = "color" (default) | "mono" | "accent" (tinted with the accent colour);
  * `pinning` = true (default): pinned apps show first, even when not running, and
  * the right-click menu pins / unpins (`pins` = the pinned app keys; until set,
  * the Windows taskbar's pins).
@@ -350,7 +350,7 @@ export function tasks(opts: Record<string, unknown>): Widget {
       if (x.img.src !== url) {
         if (url) x.img.src = url;
         else x.img.removeAttribute("src");
-        // The accent style paints the icon's silhouette through a mask.
+        // The accent style tints the icon through a layer in its shape (a mask).
         (x.img.parentElement as HTMLElement).style.setProperty("--icon", url ? `url("${url}")` : "none");
       }
       x.img.classList.toggle("missing", !url);
