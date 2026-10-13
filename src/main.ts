@@ -194,7 +194,8 @@ class Overlay {
   private groups: Partial<Record<"left" | "center" | "right", HTMLDivElement>> = {};
   /** Bars: each pinned (notch) widget's place in its side's bar order, and its glide there. */
   private spacers = new Map<string, HTMLElement>();
-  private glides: { el: HTMLElement; slot: HTMLDivElement; to: number; from: number }[] = [];
+  /** from: where it starts (its place in the closed notch); left: where it is in its slot now. */
+  private glides: { el: HTMLElement; slot: HTMLDivElement; to: number; from: number; left: number }[] = [];
   /** Bar widgets' last x, so a move slides (flipBar). */
   private barX = new Map<HTMLElement, number>();
   private barObserver = new ResizeObserver(() => this.onBarResize());
@@ -361,7 +362,7 @@ class Overlay {
       const e = this.notchEls.find((x) => x.name === name);
       if (!e || sp.style.display === "none") continue;
       const from = e.el.offsetLeft + (offsets.get(e.slot) ?? 0);
-      this.glides.push({ el: e.el, slot: e.slot, to: sp.getBoundingClientRect().left - barLeft, from });
+      this.glides.push({ el: e.el, slot: e.slot, to: sp.getBoundingClientRect().left - barLeft, from, left: e.el.offsetLeft });
     }
     this.kick();
   }
@@ -1263,7 +1264,9 @@ class Overlay {
           for (const g of this.glides) {
             if (g.slot !== d.slot) continue;
             const at = lerp(rest + g.from, g.to, e);
-            g.el.style.translate = e > 0.001 ? `${Math.round(at - (slotX + g.from))}px 0` : "";
+            // Also at the very start: open-only parts have already re-centered the slot.
+            const dx = Math.round(at - (slotX + g.left));
+            g.el.style.translate = dx ? `${dx}px 0` : "";
           }
         }
         if (dock) d.slot.style.width = `${w}px`;
