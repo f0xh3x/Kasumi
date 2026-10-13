@@ -194,7 +194,7 @@ html.edge-bottom .panel { padding: var(--pad-far) var(--pad-x) var(--pad-near); 
 
 .widget.clickable { cursor: pointer; }
 
-.panel-menu { --pad-near: 6px; --pad-x: 6px; --pad-far: 10px; min-width: 190px; }
+.panel-menu { --pad-near: 6px; --pad-x: 6px; --pad-far: 10px; }
 .menu-list { display: flex; flex-direction: column; }
 .menu-item {
   display: flex;

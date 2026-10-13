@@ -531,7 +531,8 @@ class Overlay {
       const panel = div(`panel panel-${widgetType(name)}`);
       // Its open effect (render() reads it): cascade.
       if (this.animFor(name, "cascade")) panel.dataset.cascade = "1";
-      if (width) panel.style.width = `${width}px`;
+      // The menu fits its items (an older default gave it a width; the dock's always fit).
+      if (width && widgetType(name) !== "menu") panel.style.width = `${width}px`;
       if (height) panel.style.height = `${height}px`;
       const w = createPanel(name, { ...opts(name), ...extra }, ctx);
       this.widgets.push(w);
