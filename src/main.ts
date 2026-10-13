@@ -894,6 +894,10 @@ class Overlay {
         // morphed shape never clips the notch's own row; its content is centered.
         const rowWidth = L.mode === "dock" && d.notch ? d.notch.openWidth : 0;
         d.panelEl.classList.toggle("widened", d.panelWidth < rowWidth);
+        // A corner notch's: content along the screen's edge, not centered (a wide gap there).
+        const side = d.panelWidth < rowWidth ? this.notchSide(d) : null;
+        d.panelEl.classList.toggle("from-left", side === "left");
+        d.panelEl.classList.toggle("from-right", side === "right");
         if (d.panelWidth < rowWidth) {
           d.panelWidth = rowWidth;
           d.panelEl.style.width = `${rowWidth}px`;
