@@ -1165,9 +1165,16 @@ impl Engine {
             }
         }
         let mut changes = Vec::new();
+        // A launcher opened over a fullscreen app has the focus, so the screen no longer
+        // looks fullscreen: leave its other bars as they are (hidden). Showing a window
+        // also activates it, which would take the focus and close the launcher.
+        let over_fullscreen = LAUNCHER_OVER_FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed);
         {
             let mut sh = self.shared.lock().unwrap();
             for (label, o) in sh.overlays.iter_mut() {
+                if over_fullscreen && !o.pinned {
+                    continue;
+                }
                 let fullscreen = fs.as_ref().is_some_and(|(r, _)| o.monitor.same_rect(r));
                 // Hide only once fullscreen has lasted a moment, so short-lived
                 // full-screen windows can't make the overlay flicker; show at once.
