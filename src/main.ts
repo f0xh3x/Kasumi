@@ -912,6 +912,9 @@ class Overlay {
         const room = d.panelWidth + L.geometry.panelConcaveRadius + 2 * L.geometry.notchCornerRadius * scale;
         d.step = side && room <= rowWidth ? side : undefined;
         d.panelEl.classList.toggle("widened", !d.step && d.panelWidth < rowWidth);
+        // No room to rise beside the row: widened, its content along the screen's edge.
+        d.panelEl.classList.toggle("from-left", !d.step && side === "left");
+        d.panelEl.classList.toggle("from-right", !d.step && side === "right");
         if (!d.step && d.panelWidth < rowWidth) {
           d.panelWidth = rowWidth;
           d.panelEl.style.width = `${rowWidth}px`;
