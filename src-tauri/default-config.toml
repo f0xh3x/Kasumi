@@ -219,6 +219,10 @@ items = [
 [widgets.language]
 enabled = false
 
+# Quick settings: the tiles under the sliders (up to 6; "kasumi" opens Kasumi's settings).
+[widgets.quick]
+tiles = ["wifi", "bluetooth", "display", "sound", "kasumi", "power"]
+
 # Your own buttons in the bar (same actions as the menu).
 [widgets.buttons]
 items = [

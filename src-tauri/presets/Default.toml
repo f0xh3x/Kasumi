@@ -122,6 +122,9 @@ items = [{ action = "settings", icon = "", label = "Settings" }, { action = "
 
 [widgets.tasks]
 
+[widgets.quick]
+tiles = ["wifi", "bluetooth", "display", "sound", "kasumi", "power"]
+
 [notch]
 merge = true
 combine_overlapping = true
