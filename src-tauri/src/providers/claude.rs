@@ -187,19 +187,27 @@ impl State {
 /// percentage and when it resets. Read with the sign-in Claude Code keeps on this
 /// PC (`~/.claude/.credentials.json`), which is only read here, never refreshed
 /// or written (Claude Code renews it whenever it runs): expired, this says so.
-fn account_usage() -> Value {
+/// Why the account's usage couldn't be read: a lasting state the widget shows
+/// (signed out, sign-in expired), or a passing one (offline, rate limited: the
+/// usage endpoint answers 429 when asked often) to wait out, keeping what was read.
+enum AccountMiss {
+    Show(Value),
+    RetryIn(Duration),
+}
+
+fn account_usage() -> Result<Value, AccountMiss> {
     let home = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default();
     let Ok(text) = std::fs::read_to_string(home.join(".claude").join(".credentials.json")) else {
-        return json!({ "error": "signed-out" });
+        return Err(AccountMiss::Show(json!({ "error": "signed-out" })));
     };
     let creds: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     let oauth = &creds["claudeAiOauth"];
     let Some(token) = oauth["accessToken"].as_str() else {
-        return json!({ "error": "signed-out" });
+        return Err(AccountMiss::Show(json!({ "error": "signed-out" })));
     };
     let now_ms = chrono::Utc::now().timestamp_millis();
     if oauth["expiresAt"].as_i64().is_some_and(|t| t <= now_ms) {
-        return json!({ "error": "expired" });
+        return Err(AccountMiss::Show(json!({ "error": "expired" })));
     }
     let resp = super::http_agent()
         .get("https://api.anthropic.com/api/oauth/usage")
@@ -207,20 +215,23 @@ fn account_usage() -> Value {
         .set("anthropic-beta", "oauth-2025-04-20")
         .set("User-Agent", "Kasumi")
         .call();
-    let Ok(body) = resp.map_err(|e| e.to_string()).and_then(|r| r.into_string().map_err(|e| e.to_string())) else {
-        return json!({ "error": "unavailable" });
+    let body = match resp {
+        Ok(r) => r.into_string().map_err(|_| AccountMiss::RetryIn(Duration::from_secs(60)))?,
+        Err(ureq::Error::Status(429, _)) => return Err(AccountMiss::RetryIn(Duration::from_secs(300))),
+        Err(ureq::Error::Status(401, _)) => return Err(AccountMiss::Show(json!({ "error": "expired" }))),
+        Err(_) => return Err(AccountMiss::RetryIn(Duration::from_secs(60))),
     };
     let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
     let limit = |key: &str| {
         let l = &v[key];
         l["utilization"].as_f64().map(|p| json!({ "percent": p, "resetsAt": l["resets_at"] }))
     };
-    json!({
+    Ok(json!({
         "session": limit("five_hour"),
         "week": limit("seven_day"),
         "weekOpus": limit("seven_day_opus"),
         "weekSonnet": limit("seven_day_sonnet"),
-    })
+    }))
 }
 
 pub fn start(app: &AppHandle) {
@@ -231,9 +242,11 @@ pub fn start(app: &AppHandle) {
             let mut state: Option<State> = None;
             let mut last_scan = Instant::now() - Duration::from_secs(60);
             let mut last_busy = false;
-            // The account's usage, asked for once a minute.
+            // The account's usage, asked for every 3 minutes (more often runs into the
+            // endpoint's rate limit); after a 429 the wait doubles, up to 30 minutes.
             let mut account = Value::Null;
-            let mut last_account = Instant::now() - Duration::from_secs(120);
+            let mut next_account = Instant::now();
+            let mut limited = 0u32;
             loop {
                 if !super::placed(&app, "claude") {
                     // Not on any bar: drop what was read (it's read again if placed later).
@@ -250,11 +263,31 @@ pub fn start(app: &AppHandle) {
                 if !from_account && !account.is_null() {
                     account = Value::Null;
                     changed = true;
-                } else if from_account && last_account.elapsed() >= Duration::from_secs(60) {
-                    last_account = Instant::now();
-                    let a = account_usage();
-                    changed = a != account;
-                    account = a;
+                } else if from_account && Instant::now() >= next_account {
+                    let wait = match account_usage() {
+                        Ok(a) => {
+                            limited = 0;
+                            changed = a != account;
+                            account = a;
+                            Duration::from_secs(180)
+                        }
+                        Err(AccountMiss::Show(a)) => {
+                            changed = a != account;
+                            account = a;
+                            Duration::from_secs(60)
+                        }
+                        // The last numbers stay (the widget rolls a limit over once its reset passes).
+                        Err(AccountMiss::RetryIn(d)) => {
+                            if d >= Duration::from_secs(300) {
+                                limited = (limited + 1).min(3);
+                                eprintln!("[kasumi] claude usage: rate limited, next try in {} min", 5 << (limited - 1));
+                                Duration::from_secs(300 << (limited - 1)).min(Duration::from_secs(1800))
+                            } else {
+                                d
+                            }
+                        }
+                    };
+                    next_account = Instant::now() + wait;
                 }
                 // Re-read every 10 s, or right away when busy changes / while busy (every 2 s).
                 if last_scan.elapsed() >= Duration::from_secs(if busy { 2 } else { 10 }) || busy != last_busy {

@@ -52,7 +52,13 @@ const pct = (l: ClaudeLimit) => `${Math.round(l.percent)}%`;
 /** The plan's limits from the Claude account, when that's on and has them. */
 function limits(u: ClaudeUsage | null, opts: Record<string, unknown>): { session: ClaudeLimit | null; week: ClaudeLimit | null } {
   const a = opts.account !== false ? u?.account : null;
-  return { session: a?.session ?? null, week: a?.week ?? null };
+  return { session: current(a?.session), week: current(a?.week) };
+}
+
+/** A limit whose reset has passed (numbers kept while the account couldn't be read) starts over. */
+function current(l: ClaudeLimit | null | undefined): ClaudeLimit | null {
+  if (!l) return null;
+  return l.resetsAt && Date.parse(l.resetsAt) <= Date.now() ? { ...l, percent: 0, resetsAt: null } : l;
 }
 
 /** The share shown by the indicator (0..1): the account's limit, else of the set limit, else (5-hour window) of the time. */
@@ -149,8 +155,9 @@ export function claudePanel(opts: Record<string, unknown>, ctx: PanelContext): W
         return weekday ? `${d.toLocaleDateString([], { weekday: "short" })} ${time}` : `${time} (in ${duration(untilReset(l))})`;
       };
       sections.push(head("Your plan"));
-      if (a.session) sections.push(row("5-hour limit", pct(a.session)), row("Resets", at(a.session, false), true));
-      if (a.week) sections.push(row("Weekly limit", pct(a.week)), row("Resets", at(a.week, true), true));
+      const { session, week } = limits(u, opts);
+      if (session) sections.push(row("5-hour limit", pct(session)), row("Resets", at(session, false), true));
+      if (week) sections.push(row("Weekly limit", pct(week)), row("Resets", at(week, true), true));
       if (a.weekOpus) sections.push(row("Opus this week", pct(a.weekOpus), true));
       if (a.weekSonnet) sections.push(row("Sonnet this week", pct(a.weekSonnet), true));
     } else if (a?.error === "expired") {
