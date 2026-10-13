@@ -23,11 +23,11 @@ Kasumi runs and comes back when it quits.
   its own layout if you like. They step aside for a maximized window's buttons and hide
   over fullscreen games and videos.
 - **A dock** with your running and pinned apps, and a launcher that stands in for the
-  Start menu (Windows key included).
+  Start menu (Windows key included), even over fullscreen games and videos.
 - **Widgets**: clock and calendar, weather, media, PC temperatures, quick settings
   (volume, brightness, audio outputs), system tray, notifications, clipboard history,
-  network speed, disk usage, privacy indicators, keyboard layout, Komorebi workspaces
-  and your own buttons.
+  network speed, disk usage, privacy indicators, keyboard layout, Claude Code usage,
+  Komorebi workspaces and your own buttons.
 - **Pop-ups** for volume, brightness, Caps Lock, keyboard layout and Windows
   notifications, each placed where you want it: which screen, which notch.
 - **Make it yours**: colours, fonts (any installed font, separately for main and

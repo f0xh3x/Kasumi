@@ -459,7 +459,6 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             let over = o.hidden || o.peek_until.is_some() || o.fullscreen_since.is_some();
             LAUNCHER_OVER_FULLSCREEN.store(over, std::sync::atomic::Ordering::Relaxed);
         }
-        eprintln!("[kasumi] DEBUG launcher {} on {label} (hidden {}, expanded {})", if opening { "open" } else { "close" }, o.hidden, o.expanded);
         if unhide {
             o.hidden = false;
         }
@@ -522,10 +521,9 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         // asking for a moment, so typing goes to the launcher rather than the app.
         let handle = app.clone();
         std::thread::spawn(move || {
-            for i in 0..10 {
+            for _ in 0..10 {
                 std::thread::sleep(Duration::from_millis(50));
                 if win::foreground() == hwnd {
-                    eprintln!("[kasumi] DEBUG launcher focused after {i} retries");
                     break;
                 }
                 let _ = handle.run_on_main_thread(move || win::focus(hwnd));
@@ -536,10 +534,9 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         // Make sure the fullscreen app really is in front again (it may take a moment).
         let handle = app.clone();
         std::thread::spawn(move || {
-            for i in 0..10 {
+            for _ in 0..10 {
                 std::thread::sleep(Duration::from_millis(50));
                 if win::foreground() == prev {
-                    eprintln!("[kasumi] DEBUG fullscreen app back in front after {i} retries");
                     break;
                 }
                 let _ = handle.run_on_main_thread(move || win::focus(prev));
@@ -1167,7 +1164,6 @@ impl Engine {
         if win::foreground() == hwnd {
             LAUNCHER_FOCUSED.store(true, Ordering::Relaxed);
         } else if LAUNCHER_FOCUSED.swap(false, Ordering::Relaxed) {
-            eprintln!("[kasumi] DEBUG launcher lost focus to {:#x}: closing", win::foreground());
             launcher_toggle(&self.app, Some(label), Some(false), false);
         }
     }
