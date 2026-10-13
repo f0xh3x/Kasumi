@@ -12,7 +12,9 @@ use std::process::Command;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
-const LATEST: &str = "https://api.github.com/repos/f0xh3x/Kasumi/releases/latest";
+/// The latest release's page redirects to its tag (no GitHub API: its 60 requests an
+/// hour per PC run out quickly); the installer's address follows from the version.
+const REPO: &str = "https://github.com/f0xh3x/Kasumi";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const DETACHED_PROCESS: u32 = 0x0000_0008;
 
@@ -28,20 +30,22 @@ fn agent() -> ureq::Agent {
 }
 
 fn latest() -> Result<Release, String> {
-    let v: Value = match agent().get(LATEST).set("Accept", "application/vnd.github+json").call() {
-        Ok(r) => serde_json::from_str(&r.into_string().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
+    // .../releases/latest answers with a redirect to .../releases/tag/v0.4.1.
+    let no_redirects = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).user_agent("Kasumi-updater").redirects(0).build();
+    let resp = match no_redirects.get(&format!("{REPO}/releases/latest")).call() {
+        Ok(r) => r,
         Err(ureq::Error::Status(404, _)) => return Err("No releases yet.".into()),
         Err(e) => return Err(format!("Couldn't reach GitHub ({e}).")),
     };
-    let version = v["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
-    let installer = v["assets"].as_array().and_then(|a| {
-        a.iter().find_map(|x| {
-            let name = x["name"].as_str()?;
-            let url = x["browser_download_url"].as_str()?;
-            name.ends_with("-setup.exe").then(|| (name.to_string(), url.to_string()))
-        })
-    });
-    Ok(Release { version, page: v["html_url"].as_str().unwrap_or("").to_string(), installer })
+    let page = resp.header("location").unwrap_or("").to_string();
+    let Some(tag) = page.rsplit_once("/tag/").map(|(_, t)| t.to_string()) else {
+        return Err("No releases yet.".into());
+    };
+    let version = tag.trim_start_matches('v').to_string();
+    // The installer the release workflow attaches (tools/release.py): Kasumi_<version>_x64-setup.exe.
+    let name = format!("Kasumi_{version}_x64-setup.exe");
+    let url = format!("{REPO}/releases/download/{tag}/{name}");
+    Ok(Release { version, page, installer: Some((name, url)) })
 }
 
 /// "0.4.1" > "0.4.0" (numbers compared part by part; anything after a "-" ignored).
@@ -66,15 +70,29 @@ fn install(r: &Release) -> Result<(), String> {
     let tmp = std::env::temp_dir().join("Kasumi-update");
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let setup = tmp.join(&name);
+    eprintln!("[kasumi] update: downloading {url}");
     let resp = agent().get(&url).call().map_err(|e| format!("Download failed ({e})."))?;
     let mut file = std::fs::File::create(&setup).map_err(|e| e.to_string())?;
-    std::io::copy(&mut resp.into_reader(), &mut file).map_err(|e| format!("Download failed ({e})."))?;
+    let bytes = std::io::copy(&mut resp.into_reader(), &mut file).map_err(|e| format!("Download failed ({e})."))?;
     drop(file);
-    eprintln!("[kasumi] updating to {} from {}", r.version, setup.display());
-    // Wait for the silent install (it quits this Kasumi first), then start the new one.
-    // NSIS wants /D= last and unquoted.
-    let script = format!(r#"/c "start "" /wait "{}" /S /D={} & start "" "{}"""#, setup.display(), dir.display(), exe.display());
-    Command::new("cmd").raw_arg(script).creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS).spawn().map_err(|e| e.to_string())?;
+    eprintln!("[kasumi] update: {bytes} bytes; installing {} into {}", r.version, dir.display());
+    // A small script waits for the silent install (which quits this Kasumi first),
+    // then starts the new one. NSIS wants /D= last and unquoted.
+    let script = tmp.join("update.cmd");
+    let body = format!(
+        "@echo off\r\nstart \"\" /wait \"{}\" /S /D={}\r\nstart \"\" \"{}\"\r\n",
+        setup.display(),
+        dir.display(),
+        dir.join("kasumi.exe").display()
+    );
+    std::fs::write(&script, body).map_err(|e| e.to_string())?;
+    Command::new("cmd")
+        .arg("/c")
+        .arg(&script)
+        .current_dir(&tmp)
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn()
+        .map_err(|e| format!("Couldn't start the installer ({e})."))?;
     Ok(())
 }
 
@@ -93,11 +111,16 @@ pub async fn update_check() -> Result<Value, String> {
 /// Settings > About: install the latest release now.
 #[tauri::command]
 pub async fn update_install() -> Result<(), String> {
-    let r = latest()?;
-    if !newer(&r.version, current()) {
-        return Err(format!("Already up to date ({}).", current()));
+    let result = latest().and_then(|r| {
+        if !newer(&r.version, current()) {
+            return Err(format!("Already up to date ({}).", current()));
+        }
+        install(&r)
+    });
+    if let Err(e) = &result {
+        eprintln!("[kasumi] update failed: {e}");
     }
-    install(&r)
+    result
 }
 
 /// The OSD notch says so, in the accent colour, for 6 s.
@@ -117,6 +140,10 @@ pub fn start(app: &AppHandle) {
             // Test aid: KASUMI_TEST_UPDATE=1 shows the notice as if a new version were out.
             if std::env::var_os("KASUMI_TEST_UPDATE").is_some() {
                 announce(&app, "test");
+            }
+            // Test aid: KASUMI_TEST_INSTALL_UPDATE=1 installs the latest release now (as "Update now").
+            if std::env::var_os("KASUMI_TEST_INSTALL_UPDATE").is_some() {
+                let _ = tauri::async_runtime::block_on(update_install());
             }
             let mut first = true;
             loop {
@@ -156,5 +183,15 @@ mod tests {
         assert!(super::newer("0.10.0", "0.9.9"));
         assert!(!super::newer("0.4.0", "0.4.0"));
         assert!(!super::newer("0.3.9", "0.4.0"));
+    }
+
+    /// The latest release on GitHub (needs the network): cargo test latest_release -- --ignored
+    #[test]
+    #[ignore]
+    fn latest_release() {
+        let r = super::latest().expect("latest release");
+        let (name, url) = r.installer.expect("installer");
+        println!("{} {} {name} {url}", r.version, r.page);
+        assert!(!r.version.is_empty() && url.ends_with("-setup.exe"));
     }
 }

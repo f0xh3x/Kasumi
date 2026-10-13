@@ -184,7 +184,8 @@ Installer: `npx tauri build`; silent test install
    `python -I tools/release.py vX.Y.Z <installer> <notes.md>` creates the GitHub
    release with the installer attached (its token comes from Git Credential
    Manager, never printed). The app's updater (updater.rs) finds new versions
-   there: the asset name must end in `-setup.exe`. Commits use the GitHub
+   there without GitHub's API (rate-limited): the latest-release redirect, and the installer
+   by name, so it must be `Kasumi_<version>_x64-setup.exe` (what `npx tauri build` makes). Commits use the GitHub
    no-reply email (repo-local `user.email`), never the user's own address.
 
 ## 8. Environment notes
