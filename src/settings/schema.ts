@@ -189,7 +189,7 @@ export const pages: Page[] = [
             default: "launcher",
             options: [
               { value: "launcher", label: "Opens the launcher" },
-              { value: "notches", label: "Shows the notches for a few seconds (press again for the launcher)" },
+              { value: "notches", label: "Shows the notches for 2 seconds (press again for the launcher)" },
             ],
           },
           {

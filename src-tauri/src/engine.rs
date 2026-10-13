@@ -387,6 +387,8 @@ pub fn overlay_shows(app: &AppHandle, label: &str, types: &[&str]) -> bool {
 static LAUNCHER_PREV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 /// The open launcher has had the focus (so losing it means the user went elsewhere).
 static LAUNCHER_FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The open launcher was opened over a fullscreen app (its bar shown for it).
+static LAUNCHER_OVER_FULLSCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Opens (`open` = Some(true)), closes or toggles the launcher. `label` is the
 /// overlay to use (its launcher widget was clicked); without one: on the monitor
@@ -419,7 +421,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             // Over a fullscreen app: show that screen's bars for a moment (they hide
             // again by themselves, update_fullscreen); pressed again, the launcher opens.
             let monitor = sh.overlays[&label].monitor.clone();
-            let until = Instant::now() + Duration::from_secs(4);
+            let until = Instant::now() + Duration::from_secs(2);
             let mut show = Vec::new();
             for (l, o) in sh.overlays.iter_mut().filter(|(_, o)| o.monitor == monitor && o.hidden) {
                 o.hidden = false;
@@ -449,6 +451,10 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         // Over a fullscreen app the bar is hidden: show it for the launcher (it hides
         // again after, update_fullscreen, once the launcher has closed).
         let unhide = opening && o.hidden;
+        if opening {
+            LAUNCHER_OVER_FULLSCREEN.store(unhide, std::sync::atomic::Ordering::Relaxed);
+        }
+        eprintln!("[kasumi] DEBUG launcher {} on {label} (hidden {}, expanded {})", if opening { "open" } else { "close" }, o.hidden, o.expanded);
         if unhide {
             o.hidden = false;
         }
@@ -477,6 +483,9 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
     LAUNCHER_FOCUSED.store(false, std::sync::atomic::Ordering::Relaxed);
     let handle = app.clone();
     let l = label.clone();
+    // Closing one opened over a fullscreen app: the app gets the focus back, whatever
+    // closed it, so its screen counts as fullscreen again and the bars hide.
+    let back = !opening && LAUNCHER_OVER_FULLSCREEN.swap(false, std::sync::atomic::Ordering::Relaxed);
     let _ = app.run_on_main_thread(move || {
         let Some(w) = handle.get_webview_window(&l) else { return };
         if unhide {
@@ -488,7 +497,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             win::raise_topmost(hwnd);
             win::focus(hwnd);
             let _ = w.set_focus();
-        } else if refocus && ours.contains(&win::foreground()) {
+        } else if (refocus || back) && ours.contains(&win::foreground()) {
             // Closed from the keyboard (Esc, the hotkey, the Windows key): back to the
             // app that had focus, not left on a bar that can't take typing.
             win::restore_foreground(prev, &ours);
@@ -499,9 +508,10 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         // asking for a moment, so typing goes to the launcher rather than the app.
         let handle = app.clone();
         std::thread::spawn(move || {
-            for _ in 0..10 {
+            for i in 0..10 {
                 std::thread::sleep(Duration::from_millis(50));
                 if win::foreground() == hwnd {
+                    eprintln!("[kasumi] DEBUG launcher focused after {i} retries");
                     break;
                 }
                 let _ = handle.run_on_main_thread(move || win::focus(hwnd));
@@ -1129,6 +1139,7 @@ impl Engine {
         if win::foreground() == hwnd {
             LAUNCHER_FOCUSED.store(true, Ordering::Relaxed);
         } else if LAUNCHER_FOCUSED.swap(false, Ordering::Relaxed) {
+            eprintln!("[kasumi] DEBUG launcher lost focus to {:#x}: closing", win::foreground());
             launcher_toggle(&self.app, Some(label), Some(false), false);
         }
     }

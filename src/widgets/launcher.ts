@@ -124,6 +124,15 @@ export function launcherHold(on: boolean): void {
   notify();
 }
 
+/** When the launcher last opened (a focus blip just after doesn't close it). */
+let openedAt = 0;
+
+/** Focus whichever field is showing (the widget's, else the panel's own). */
+function focusField(): void {
+  const field = [...S.fields].find((f) => f.offsetParent !== null) ?? [...S.fields][0];
+  field?.focus();
+}
+
 /** Called by the overlay when Rust opens or closes the launcher on it. */
 export function launcherSetOpen(open: boolean): void {
   S.open = open;
@@ -131,18 +140,23 @@ export function launcherSetOpen(open: boolean): void {
   for (const f of S.fields) f.value = "";
   search();
   if (open) {
+    openedAt = performance.now();
     void loadApps();
-    // Focus whichever field is showing (the widget's, else the panel's own).
-    window.setTimeout(() => {
-      const field = [...S.fields].find((f) => f.offsetParent !== null) ?? [...S.fields][0];
-      field?.focus();
-    }, 60);
+    window.setTimeout(focusField, 60);
   }
   notify();
 }
 
-// Clicking another app (or anywhere outside) closes the launcher.
-window.addEventListener("blur", () => close(false));
+// Clicking another app (or anywhere outside) closes the launcher. Not the focus
+// flickering while it's being handed over (over a fullscreen app it can take a moment).
+window.addEventListener("blur", () => {
+  if (performance.now() - openedAt < 600) return;
+  close(false);
+});
+// The window got the focus late (its bar was hidden over a fullscreen app): type here.
+window.addEventListener("focus", () => {
+  if (S.open) focusField();
+});
 
 /** Results shown, from the widget's options (3–20, default 8). */
 function setMax(opts: Record<string, unknown>): void {
