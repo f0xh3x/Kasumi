@@ -196,6 +196,8 @@ class Overlay {
   private spacers = new Map<string, HTMLElement>();
   /** from: where it starts (its place in the closed notch); left: where it is in its slot now. */
   private glides: { el: HTMLElement; slot: HTMLDivElement; to: number; from: number; left: number }[] = [];
+  /** The bar's own widgets that fade in behind pinned ones gliding past them. */
+  private fadeIn: HTMLElement[] = [];
   /** Bar widgets' last x, so a move slides (flipBar). */
   private barX = new Map<HTMLElement, number>();
   private barObserver = new ResizeObserver(() => this.onBarResize());
@@ -341,29 +343,44 @@ class Overlay {
     }
     const barLeft = this.bar.getBoundingClientRect().left;
     // Open-only parts (the media keys) widen a notch's content past its closed width,
-    // which re-centers everything in it. The glides start where the widgets were in
-    // the closed notch: each slot's content is offset by what its widgets that kept
-    // their width moved (read with the bar closed; nothing is painted in between).
+    // which re-centers everything in it. The glides start where each widget was in the
+    // closed notch (read with the bar closed; nothing is painted in between). A widget
+    // that grew is placed by a part of it seen both ways (the media title, not its keys).
     const html = document.documentElement;
-    const closed = new Map<HTMLElement, [number, number]>();
+    type Seen = { left: number; width: number; kids: [number, number][] };
+    const look = (el: HTMLElement): Seen => {
+      const r = el.getBoundingClientRect();
+      const kids = Array.from(el.children, (c): [number, number] => {
+        const k = c.getBoundingClientRect();
+        return [k.left - r.left, k.width];
+      });
+      return { left: el.offsetLeft, width: el.offsetWidth, kids };
+    };
+    const closed = new Map<HTMLElement, Seen>();
     if (html.classList.contains("bar-open")) {
       html.classList.remove("bar-open");
-      for (const e of this.notchEls) closed.set(e.el, [e.el.offsetLeft, e.el.offsetWidth]);
+      for (const e of this.notchEls) closed.set(e.el, look(e.el));
       html.classList.add("bar-open");
     }
-    const offsets = new Map<HTMLDivElement, number>();
-    for (const e of this.notchEls) {
-      const c = closed.get(e.el);
-      if (!c || offsets.has(e.slot) || !c[1] || Math.abs(c[1] - e.el.offsetWidth) > 1) continue;
-      offsets.set(e.slot, c[0] - e.el.offsetLeft);
-    }
+    const start = (el: HTMLElement): number => {
+      const c = closed.get(el);
+      if (!c) return el.offsetLeft;
+      const now = look(el);
+      if (Math.abs(c.width - now.width) <= 1) return c.left;
+      const i = c.kids.findIndex(([, w], j) => w > 0 && now.kids[j] && Math.abs(now.kids[j][1] - w) <= 1);
+      return i < 0 ? c.left : c.left + c.kids[i][0] - now.kids[i][0];
+    };
     this.glides = [];
     for (const [name, sp] of this.spacers) {
       const e = this.notchEls.find((x) => x.name === name);
       if (!e || sp.style.display === "none") continue;
-      const from = e.el.offsetLeft + (offsets.get(e.slot) ?? 0);
-      this.glides.push({ el: e.el, slot: e.slot, to: sp.getBoundingClientRect().left - barLeft, from, left: e.el.offsetLeft });
+      this.glides.push({ el: e.el, slot: e.slot, to: sp.getBoundingClientRect().left - barLeft, from: start(e.el), left: e.el.offsetLeft });
     }
+    // The bar's own widgets on a side where pinned ones glide in fade in behind them.
+    this.fadeIn = (["left", "right"] as const)
+      .map((side) => this.groups[side])
+      .filter((g): g is HTMLDivElement => !!g && this.glides.some((x) => this.spacers.get(this.notchEls.find((e) => e.el === x.el)?.name ?? "")?.parentElement === g))
+      .flatMap((g) => Array.from(g.children).filter((c): c is HTMLElement => !c.classList.contains("notch-spacer")));
     this.kick();
   }
 
@@ -472,6 +489,7 @@ class Overlay {
     this.notchEls = [];
     this.spacers.clear();
     this.glides = [];
+    this.fadeIn = [];
     this.barX.clear();
     this.openLauncher = null;
     this.lastWidths = "";
@@ -1241,6 +1259,11 @@ class Overlay {
     }
     this.bar.style.transform = barHow === "slide" ? `translateY(${(frame.base - H) * away}px)` : "none";
     this.bar.style.opacity = String(barHow === "reveal" ? clamp01(ex * 5) : barHow === "fade" ? clamp01((ex - 0.35) / 0.55) : clamp01((ex - 0.25) / 0.6));
+
+    if (!dock) {
+      const fade = ex >= 0.999 ? "" : clamp01((ex - 0.5) / 0.5).toFixed(3);
+      for (const el of this.fadeIn) el.style.opacity = fade;
+    }
 
     const od = this.osdDrop();
     const o = clamp01(this.osd.value);

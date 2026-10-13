@@ -234,6 +234,16 @@ fn account_usage() -> Result<Value, AccountMiss> {
     }))
 }
 
+/// The last usage read from the account (percentages and reset times only, no
+/// sign-in data), so a restart shows it at once, even while the endpoint says 429.
+fn cache_path() -> PathBuf {
+    crate::config::dir().join("claude-usage.json")
+}
+
+fn load_cached() -> Value {
+    std::fs::read_to_string(cache_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)
+}
+
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
@@ -244,7 +254,7 @@ pub fn start(app: &AppHandle) {
             let mut last_busy = false;
             // The account's usage, asked for every 3 minutes (more often runs into the
             // endpoint's rate limit); after a 429 the wait doubles, up to 30 minutes.
-            let mut account = Value::Null;
+            let mut account = load_cached();
             let mut next_account = Instant::now();
             let mut limited = 0u32;
             loop {
@@ -268,6 +278,9 @@ pub fn start(app: &AppHandle) {
                         Ok(a) => {
                             limited = 0;
                             changed = a != account;
+                            if changed {
+                                let _ = std::fs::write(cache_path(), a.to_string());
+                            }
                             account = a;
                             Duration::from_secs(180)
                         }
