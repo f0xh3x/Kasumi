@@ -454,7 +454,10 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         // again after, update_fullscreen, once the launcher has closed).
         let unhide = opening && o.hidden;
         if opening {
-            LAUNCHER_OVER_FULLSCREEN.store(unhide, std::sync::atomic::Ordering::Relaxed);
+            // Over a fullscreen app also when its bars are only out for a moment ("notches"
+            // mode): closing then hands the app the focus back and everything hides again.
+            let over = o.hidden || o.peek_until.is_some() || o.fullscreen_since.is_some();
+            LAUNCHER_OVER_FULLSCREEN.store(over, std::sync::atomic::Ordering::Relaxed);
         }
         eprintln!("[kasumi] DEBUG launcher {} on {label} (hidden {}, expanded {})", if opening { "open" } else { "close" }, o.hidden, o.expanded);
         if unhide {
