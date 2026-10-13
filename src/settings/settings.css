@@ -629,9 +629,9 @@ body.view-setup #toast, body.view-notes #toast { bottom: 76px; }
 .setup-choice-sub { font-size: 12px; opacity: 0.6; }
 
 /* A small screen picture (setup.ts screen()). */
-/* A monitor: a light bezel, so the black bars show against the dark cards. */
-.setup-screen { padding: 4px; border-radius: 10px; background: #3b3f44; line-height: 0; }
-.setup-screen svg { width: 100%; height: auto; display: block; border-radius: 6px; }
+/* A screen picture (setup.ts: previews/*.svg, or drawn). */
+.setup-screen { border-radius: 8px; overflow: hidden; line-height: 0; }
+.setup-screen img, .setup-screen svg { width: 100%; height: auto; display: block; }
 
 .setup-styles, .setup-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .setup-style, .setup-preset {

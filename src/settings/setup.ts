@@ -8,6 +8,17 @@ import { $, glyph, toggleSwitch } from "./dom";
 import { CHIP_LEGEND, placementHide, scope, type Op } from "./editors";
 import { renderMarkdown } from "./markdown";
 import type { Cfg, Field } from "./schema";
+import bottomAlways from "./previews/bottom-always.svg";
+import bottomBar from "./previews/bottom-bar.svg";
+import bottomDock from "./previews/bottom-dock.svg";
+import offPic from "./previews/off.svg";
+import presetStatusBar from "./previews/preset-classic-status-bar.svg";
+import presetTaskbar from "./previews/preset-classic-taskbar.svg";
+import presetDefault from "./previews/preset-default.svg";
+import presetModern from "./previews/preset-modern.svg";
+import topAlways from "./previews/top-always.svg";
+import topBar from "./previews/top-bar.svg";
+import topDock from "./previews/top-dock.svg";
 
 /** What the views use from the settings page (main.ts). */
 export interface Host {
@@ -25,49 +36,49 @@ export interface Host {
 
 type Style = "bar" | "dock" | "always" | "off";
 
-/** A notch hanging from y = 0, from x0 to x1, `d` deep. */
-const notchPath = (x0: number, x1: number, d: number) =>
-  `M${x0} 0C${x0 + 3} 0 ${x0 + 3} ${d} ${x0 + 7} ${d}L${x1 - 7} ${d}C${x1 - 3} ${d} ${x1 - 3} 0 ${x1} 0Z`;
+/** Each bar style's picture, per edge, and each shipped preset's (previews/*.svg). */
+const STYLE_PICS: Record<"top" | "bottom", Record<Style, string>> = {
+  top: { bar: topBar, dock: topDock, always: topAlways, off: offPic },
+  bottom: { bar: bottomBar, dock: bottomDock, always: bottomAlways, off: offPic },
+};
+const PRESET_PICS: Record<string, string> = {
+  Default: presetDefault,
+  Modern: presetModern,
+  "Classic status bar": presetStatusBar,
+  "Classic taskbar": presetTaskbar,
+};
 
-/** One bar on a 160 × 100 screen, drawn from the top edge (the bottom one is flipped). */
-function barShapes(style: Style, edge: "top" | "bottom"): string {
-  if (style === "off") return "";
-  const flip = edge === "bottom" ? ' transform="matrix(1 0 0 -1 0 100)"' : "";
-  const marks = (xs: number[], y: number) => xs.map((x) => `<rect x="${x}" y="${y - 0.8}" width="7" height="1.6" rx="0.8" fill="#fff" opacity="0.75"/>`).join("");
-  const icons = (xs: number[], y: number) => xs.map((x) => `<rect x="${x}" y="${y - 2.5}" width="5" height="5" rx="1.4" fill="#fff" opacity="0.8"/>`).join("");
-  let body = "";
-  if (style === "always") {
-    body = `<rect x="0" y="0" width="160" height="7" fill="#000"/>${marks([5, 16], 3.5)}${marks([76], 3.5)}${marks([137, 148], 3.5)}`;
-  } else if (style === "bar") {
-    body =
-      `<path d="${notchPath(-4, 34, 7)}" fill="#000"/><path d="${notchPath(60, 100, 7)}" fill="#000"/><path d="${notchPath(126, 164, 7)}" fill="#000"/>` +
-      marks([4, 15], 3.3) + marks([76], 3.3) + marks([136, 147], 3.3);
-  } else {
-    body = `<path d="${notchPath(-4, 30, 9)}" fill="#000"/><path d="${notchPath(52, 108, 9)}" fill="#000"/>` + icons([4, 13, 22], 4.5) + icons([60, 69, 78, 87, 96], 4.5);
-  }
-  return `<g${flip}>${body}</g>`;
+/** A screen picture (an image: the files share class names, which inline SVGs would mix up). */
+function picture(src: string): HTMLElement {
+  const img = $("img") as HTMLImageElement;
+  img.src = src;
+  img.alt = "";
+  img.draggable = false;
+  return $("div", "setup-screen", img);
 }
 
-function screen(inner: string): HTMLElement {
-  const box = $("div", "setup-screen");
-  box.innerHTML =
-    '<svg viewBox="0 0 160 100" aria-hidden="true"><defs><linearGradient id="wall" x1="0" y1="0" x2="1" y2="1">' +
-    '<stop offset="0" stop-color="#7fb7c9"/><stop offset="0.55" stop-color="#4b7f99"/><stop offset="1" stop-color="#28485e"/></linearGradient></defs>' +
-    `<rect width="160" height="100" fill="url(#wall)"/>${inner}</svg>`;
-  return box;
-}
-
-/** A maximized window under the top bar: its caption buttons in the top-right corner,
- *  the corner notch over them or moved aside. */
+/** A maximized window under the top bar, in the previews' style: its caption buttons
+ *  in the top-right corner, the corner notch over them or moved aside. */
 function asideScreen(avoid: boolean): HTMLElement {
-  const win =
-    '<rect x="0" y="0" width="160" height="100" fill="#e9edf1"/><rect x="0" y="0" width="160" height="11" fill="#d7dde3"/>' +
-    '<g stroke="#3a3f44" stroke-width="1" fill="none"><path d="M131 6.5h5"/><rect x="141" y="4" width="4.5" height="4.5"/><path d="M151 4l4.5 4.5M155.5 4l-4.5 4.5"/></g>' +
-    '<rect x="8" y="20" width="62" height="5" rx="2.5" fill="#c3cad1"/><rect x="8" y="30" width="96" height="4" rx="2" fill="#d2d8de"/><rect x="8" y="38" width="80" height="4" rx="2" fill="#d2d8de"/>';
-  const right = avoid ? notchPath(88, 126, 7) : notchPath(126, 164, 7);
-  const marks = (x: number) => `<rect x="${x}" y="2.5" width="7" height="1.6" rx="0.8" fill="#fff" opacity="0.75"/>`;
-  const arrow = avoid ? '<path d="M121 15l-6 0m2.5 -2.5l-2.5 2.5 2.5 2.5" stroke="#000" stroke-width="1.2" fill="none" stroke-linecap="round"/>' : "";
-  return screen(`${win}<path d="${notchPath(-4, 34, 7)}" fill="#000"/>${marks(4)}${marks(15)}<path d="${right}" fill="#000"/>${marks(avoid ? 98 : 136)}${marks(avoid ? 109 : 147)}${arrow}`);
+  const box = $("div", "setup-screen");
+  const ink = "#0e0e0e";
+  // The previews' corner notches (previews/top-bar.svg).
+  const left = `<rect fill="${ink}" width="13.39" height="7.38"/><path fill="${ink}" d="M11.94,7.38h1.7C16.56,7.38,17.9,0,22.35,0h-10.41v7.38Z"/>`;
+  // In the corner it reaches the edge (one curve); moved aside it stands free, curved on
+  // both sides like the previews' middle notch, clear of the buttons.
+  const right = avoid
+    ? `<g transform="translate(12.3 0)"><rect fill="${ink}" x="61.43" width="27.33" height="7.38"/>` +
+      `<path fill="${ink}" d="M63.43,7.38h-1.7C58.81,7.38,57.47,0,53.01,0h10.41v7.38Z"/><path fill="${ink}" d="M87.31,7.38h1.7C91.92,7.38,93.26,0,97.72,0h-10.41v7.38Z"/></g>`
+    : `<rect fill="${ink}" x="137.34" width="13.39" height="7.38"/><path fill="${ink}" d="M138.79,7.38h-1.7C134.17,7.38,132.84,0,128.38,0h10.41v7.38Z"/>`;
+  const arrow = avoid ? `<path d="M118 13.5h-7m2.6-2.6l-2.6 2.6 2.6 2.6" stroke="${ink}" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round"/>` : "";
+  box.innerHTML =
+    '<svg viewBox="0 0 150.73 92.93" aria-hidden="true">' +
+    // The window: title bar with minimize, maximize and close; a few lines of content.
+    '<rect width="150.73" height="92.93" fill="#f4f4f4"/><rect width="150.73" height="12" fill="#e3e3e3"/>' +
+    '<g stroke="#3a3a3a" stroke-width="0.9" fill="none"><path d="M116 6h5"/><rect x="127" y="3.8" width="4.4" height="4.4"/><path d="M138 3.8l4.4 4.4M142.4 3.8l-4.4 4.4"/></g>' +
+    '<rect x="8" y="22" width="56" height="5" rx="2.5" fill="#d4d4d4"/><rect x="8" y="32" width="92" height="3.6" rx="1.8" fill="#e0e0e0"/><rect x="8" y="40" width="76" height="3.6" rx="1.8" fill="#e0e0e0"/>' +
+    `${left}${right}${arrow}</svg>`;
+  return box;
 }
 
 // --- Setup -------------------------------------------------------------------------
@@ -154,7 +165,7 @@ function presets(host: Host): HTMLElement {
   const fill = () => {
     grid.replaceChildren(
       ...(shipped ?? []).map((p) => {
-        const b = $("button", `setup-preset${picked === p.name ? " active" : ""}`, screen(barShapes(p.top, "top") + barShapes(p.bottom, "bottom")), $("span", "setup-preset-name", p.name));
+        const b = $("button", `setup-preset${picked === p.name ? " active" : ""}`, picture(PRESET_PICS[p.name] ?? offPic), $("span", "setup-preset-name", p.name));
         b.addEventListener("click", async () => {
           try {
             await invoke("preset_apply", { name: p.name });
@@ -212,7 +223,7 @@ function bar(host: Host, s: "top" | "bottom"): HTMLElement {
     "div",
     "setup-styles",
     ...STYLES.map(([style, label, help]) => {
-      const b = $("button", `setup-style${current === style ? " active" : ""}`, screen(barShapes(style, s)), $("span", "setup-style-name", label), $("span", "setup-style-help", help));
+      const b = $("button", `setup-style${current === style ? " active" : ""}`, picture(STYLE_PICS[s][style]), $("span", "setup-style-name", label), $("span", "setup-style-help", help));
       b.addEventListener("click", () => host.saveMany(styleOps(s, style)));
       return b;
     }),

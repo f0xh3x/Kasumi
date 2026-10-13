@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Top_notches" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 150.73 92.93">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #0e0e0e;
+      }
+
+      .cls-2 {
+        fill: url(#linear-gradient);
+      }
+    </style>
+    <linearGradient id="linear-gradient" x1="75.37" y1="87.88" x2="75.37" y2="5.76" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c1c1c1"/>
+      <stop offset="1" stop-color="#fff"/>
+    </linearGradient>
+  </defs>
+  <rect class="cls-2" y="0" width="150.73" height="92.93"/>
+  <g>
+    <rect class="cls-1" x="61.43" y="0" width="27.33" height="7.38"/>
+    <path class="cls-1" d="M63.43,7.38h-1.7C58.81,7.38,57.47,0,53.01,0h10.41v7.38Z"/>
+    <path class="cls-1" d="M87.31,7.38h1.7C91.92,7.38,93.26,0,97.72,0h-10.41v7.38Z"/>
+  </g>
+  <g>
+    <rect class="cls-1" x="0" y="0" width="13.39" height="7.38"/>
+    <path class="cls-1" d="M11.94,7.38h1.7C16.56,7.38,17.9,0,22.35,0h-10.41v7.38Z"/>
+  </g>
+  <g>
+    <rect class="cls-1" x="137.34" y="0" width="13.39" height="7.38" transform="translate(288.07 7.38) rotate(-180)"/>
+    <path class="cls-1" d="M138.79,7.38h-1.7C134.17,7.38,132.84,0,128.38,0h10.41v7.38Z"/>
+  </g>
+</svg>

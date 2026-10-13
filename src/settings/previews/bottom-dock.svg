@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Top_notches" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 150.73 92.93">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #0e0e0e;
+      }
+
+      .cls-2 {
+        fill: url(#linear-gradient);
+      }
+    </style>
+    <linearGradient id="linear-gradient" x1="75.37" y1="87.88" x2="75.37" y2="5.76" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c1c1c1"/>
+      <stop offset="1" stop-color="#fff"/>
+    </linearGradient>
+  </defs>
+  <rect class="cls-2" x="0" width="150.73" height="92.93"/>
+  <g>
+    <rect class="cls-1" x="55.23" y="82.27" width="39.49" height="10.66"/>
+    <path class="cls-1" d="M58.12,82.27h-2.46c-4.21,0-6.15,10.66-12.59,10.66h15.04v-10.66Z"/>
+    <path class="cls-1" d="M92.62,82.27h2.46c4.21,0,6.15,10.66,12.59,10.66h-15.04v-10.66Z"/>
+  </g>
+</svg>
