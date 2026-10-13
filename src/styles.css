@@ -514,9 +514,6 @@ html.mode-dock .slot > * { pointer-events: auto; }
 
 /* A panel widened to its dock notch's width: content centered. */
 .panel.widened { display: flex; flex-direction: column; align-items: center; }
-/* ...a corner notch's: along the screen's edge. */
-.panel.widened.from-left { align-items: flex-start; }
-.panel.widened.from-right { align-items: flex-end; }
 
 /* Launcher: the widget's search icon grows a text field while it's open. */
 .widget.launcher-w { gap: 0; cursor: pointer; }
@@ -534,6 +531,11 @@ html.mode-dock .slot > * { pointer-events: auto; }
 /* While it searches, the launcher has its notch to itself (a dock's other widgets
    would leave the field no room); they come back when it closes. */
 .slot:has(.launcher-w.searching) > :not(.launcher-w) { display: none; }
+.slot.returning > :not(.launcher-w) { animation: slot-return 220ms ease 90ms both; }
+@keyframes slot-return { from { opacity: 0; } }
+/* A corner notch's content keeps to its corner (main.ts padEdge). */
+.slot.edge-left { justify-content: flex-start; }
+.slot.edge-right { justify-content: flex-end; }
 /* The dock's own search field (no launcher widget placed): there only while searching. */
 .launcher-w.launcher-inline:not(.searching) { display: none; }
 .launcher-field::placeholder, .launcher-own-field::placeholder { color: var(--fg-dim); }

@@ -1054,8 +1054,15 @@ export const pages: Page[] = [
       },
       {
         title: "Springs",
-        help: "Higher stiffness is faster; lower damping is bouncier.",
+        help: "Higher stiffness is faster. With Bounce on, lower damping is bouncier.",
         fields: [
+          {
+            kind: "toggle",
+            label: "Bounce",
+            help: "Off: nothing overshoots, every move eases into place. On: a little bounce, as much as the damping allows.",
+            path: ["animation", "bounce"],
+            default: false,
+          },
           { kind: "slider", label: "Bar stiffness", path: ["animation", "expand_stiffness"], default: 3440, min: 200, max: 6000, step: 20 },
           { kind: "slider", label: "Bar damping", path: ["animation", "expand_damping"], default: 92, min: 10, max: 160, step: 1 },
           { kind: "slider", label: "Spread / slide stiffness", path: ["animation", "spread_stiffness"], default: 2120, min: 200, max: 6000, step: 20 },

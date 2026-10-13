@@ -29,6 +29,8 @@ export interface Animation {
   magnify: boolean;
   markerGlide: boolean;
   notificationNudge: boolean;
+  /** Springs may overshoot (as damped as configured); off: never past their target. */
+  bounce: boolean;
 }
 
 export interface BarWidgets {

@@ -42,6 +42,9 @@ export interface Bump {
   scale?: number;
   /** Where an open panel starts (default: the bar's bottom edge). */
   panelTop?: number;
+  /** Docks: a corner notch's panel, narrower than the notch, rises from its corner
+   *  end (flush with the screen edge) while the notch keeps its whole row. */
+  step?: "left" | "right";
 }
 
 export interface BumpFrame {
@@ -55,6 +58,8 @@ export interface BumpFrame {
   rowDepth: number;
   /** Total depth of the bump including any open panel. */
   depth: number;
+  /** A stepped panel's sides (`left` / `right` are then the notch's). */
+  panel?: { left: number; right: number };
 }
 
 export interface Frame {
@@ -225,6 +230,11 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
     // if need be). Each side of the bump morphs toward the panel's side, so a
     // notch in a corner grows its panel inward instead of sliding away.
     const anchorCx = b.x + b.width / 2;
+    if (b.step) {
+      const pl = b.step === "left" ? 0 : W - b.panelWidth;
+      const pr = pl + b.panelWidth;
+      return { cx: (pl + pr) / 2, anchorCx, left: b.x, right: b.x + b.width, rowDepth, depth, panel: { left: pl, right: pr } };
+    }
     const panelLeft = clamp(anchorCx - b.panelWidth / 2, 0, Math.max(0, W - b.panelWidth));
     const left = lerp(anchorCx - b.width / 2, panelLeft, p);
     const right = lerp(anchorCx + b.width / 2, panelLeft + b.panelWidth, p);
@@ -244,6 +254,8 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
   const [hr_, hc] = fit(g.panelConcaveRadius, g.cornerRadius * clamp(1 - s, 0, 1), base, hr - hl);
 
   const P: string[] = [`M${-OFF} 0`];
+  // Stepped panels: their own outlines, drawn the same way round (the fill unites them).
+  const extra: string[] = [];
   emitLeft(P, roundedSide(hl, 0, base, hr_, hc, 1));
   // Notches morph into rounded panels as they open; bar dropdowns are always rounded.
   const style = (i: number) => bumps[i].rounded ?? (bumps[i].inHull ? clamp(bumps[i].p, 0, 1) : 1);
@@ -259,6 +271,19 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
     }
     let { left, right, depth } = frames[i];
     let k = bumps[i].scale ?? 1;
+    const st = frames[i].panel;
+    if (bumps[i].step && st) {
+      // The notch as it is; the panel stands on its row, with fillets where they meet.
+      bump(P, g, left, right, base, frames[i].rowDepth, 0, k);
+      if (bumps[i].p > 0.001 && depth - frames[i].rowDepth > 0.5) {
+        const Q: string[] = [];
+        bump(Q, g, st.left, st.right, frames[i].rowDepth - 1, depth, 1, 1, { left: st.left <= 0.5, right: st.right >= W - 0.5 });
+        Q[0] = "M" + Q[0].slice(1);
+        extra.push(Q.join("") + "Z");
+      }
+      i++;
+      continue;
+    }
     let next = i + 1;
     if (L.combineNotches && plainNotch(i)) {
       // Notches that would touch or overlap become one shape; their widgets stay put.
@@ -299,7 +324,7 @@ export function computeFrame(L: Layout, t: number, s: number, bumps: Bump[]): Fr
     C.push(`M${f(W)} ${f(dr)}L${f(W - R)} ${f(dr)}A${f(R)} ${f(R)} 0 0 1 ${f(W)} ${f(dr + R)}Z`);
   }
 
-  return { d: P.join(""), corners: C.join(""), base, bumps: frames };
+  return { d: P.join("") + extra.join(""), corners: C.join(""), base, bumps: frames };
 }
 
 /**

@@ -74,6 +74,8 @@ interface Drop {
   panelEl: HTMLDivElement | null;
   /** For bar dropdowns: the widget the panel drops from. */
   anchor: HTMLElement | null;
+  /** Docks: a corner notch's panel rises from its corner end, as wide as its content. */
+  step?: "left" | "right";
 }
 
 /** [animation] keys behind each per-widget effect (`[widgets.<w>] anim_<key>`). */
@@ -235,6 +237,7 @@ class Overlay {
     if (layout.mode === "dock") html.classList.add(`rest-${layout.rest}`, `open-${layout.open}`);
 
     const a = layout.animation;
+    Spring.bounce = a.bounce === true;
     this.expand.configure(a.expandStiffness, a.expandDamping, a.mass);
     this.spread.configure(a.spreadStiffness, a.spreadDamping, a.mass);
     this.expand.speed(a.openSpeed, a.closeSpeed);
@@ -445,6 +448,11 @@ class Overlay {
     if (now || this.expand.value < 0.05 || (since > 150 && this.expand.target > 0.5) || since > 1500) {
       this.launcherHeld = 0;
       launcherHold(false);
+      // The notch's other widgets come back fading in, after the field has faded out.
+      for (const s of document.querySelectorAll<HTMLElement>(".slot:has(.launcher-w)")) {
+        s.classList.add("returning");
+        setTimeout(() => s.classList.remove("returning"), 400);
+      }
     }
   }
 
@@ -865,6 +873,9 @@ class Overlay {
     const extra = `${this.edgeExtra(n)}px`;
     slot.style.paddingLeft = n.edge === "left" ? extra : "";
     slot.style.paddingRight = n.edge === "right" ? extra : "";
+    // Its content keeps to the corner, so it stays put while the notch changes width.
+    slot.classList.toggle("edge-left", n.edge === "left");
+    slot.classList.toggle("edge-right", n.edge === "right");
   }
 
   /** Widgets hidden under a window leave the notch's flow (still measurable) and fade. */
@@ -893,12 +904,14 @@ class Overlay {
         // A dock notch's panel is at least as wide as the open notch, so the
         // morphed shape never clips the notch's own row; its content is centered.
         const rowWidth = L.mode === "dock" && d.notch ? d.notch.openWidth : 0;
-        d.panelEl.classList.toggle("widened", d.panelWidth < rowWidth);
-        // A corner notch's: content along the screen's edge, not centered (a wide gap there).
-        const side = d.panelWidth < rowWidth ? this.notchSide(d) : null;
-        d.panelEl.classList.toggle("from-left", side === "left");
-        d.panelEl.classList.toggle("from-right", side === "right");
-        if (d.panelWidth < rowWidth) {
+        // A corner notch's panel needn't be: it rises from the notch's corner end, as
+        // wide as its content, when that leaves room for the fillet beside it.
+        const side = rowWidth ? this.notchSide(d) : null;
+        const scale = d.notch ? d.notch.openHeight / L.geometry.notchHeight : 1;
+        const room = d.panelWidth + L.geometry.panelConcaveRadius + 2 * L.geometry.notchCornerRadius * scale;
+        d.step = side && room <= rowWidth ? side : undefined;
+        d.panelEl.classList.toggle("widened", !d.step && d.panelWidth < rowWidth);
+        if (!d.step && d.panelWidth < rowWidth) {
           d.panelWidth = rowWidth;
           d.panelEl.style.width = `${rowWidth}px`;
         }
@@ -1244,6 +1257,7 @@ class Overlay {
         inHull: d.inHull,
         scale,
         panelTop,
+        step: L.mode === "dock" ? d.step : undefined,
       };
     });
   }

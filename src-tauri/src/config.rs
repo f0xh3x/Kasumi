@@ -135,6 +135,8 @@ pub struct Animation {
     /// The line under the app in front travels to the next one (tasks).
     pub marker_glide: bool,
     pub notification_nudge: bool,
+    /// Springs may overshoot (as damped as set); off: never past where they head.
+    pub bounce: bool,
 }
 
 impl Default for Animation {
@@ -158,6 +160,7 @@ impl Default for Animation {
             magnify: false,
             marker_glide: false,
             notification_nudge: false,
+            bounce: false,
         }
     }
 }

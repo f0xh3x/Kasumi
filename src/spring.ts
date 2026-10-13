@@ -1,5 +1,11 @@
 /** Damped harmonic spring, integrated in fixed sub-steps so it is frame-rate independent. */
 export class Spring {
+  /**
+   * [animation] bounce. Off: every spring is at least critically damped, so nothing
+   * overshoots where it's heading (a 2% overshoot read as a bounce or a glitch on
+   * every open, close and morph); on: as damped as configured.
+   */
+  static bounce = false;
   velocity = 0;
   /** Speed while heading to 1 (opening) and to 0 (closing): 2 = twice as fast, same bounce. */
   open = 1;
@@ -19,7 +25,7 @@ export class Spring {
     // Scaling stiffness by f² and damping by f runs the same motion f times faster.
     const f = this.target >= 0.5 ? this.open : this.close;
     const k = this.stiffness * f * f;
-    const c = this.damping * f;
+    const c = Spring.bounce ? this.damping * f : Math.max(this.damping * f, 2 * Math.sqrt(k * this.mass));
     while (remaining > 0) {
       const s = Math.min(h, remaining);
       const accel = (-k * (this.value - this.target) - c * this.velocity) / this.mass;
