@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 windows-numerics = "0.2"
+toml = "0.8"  # reads Kasumi's config.toml (geometry, springs, font)
 
 [dependencies.windows]
 version = "0.61"
@@ -17,6 +18,7 @@ features = [
   "Win32_Graphics_Direct2D",
   "Win32_Graphics_Direct2D_Common",
   "Win32_Graphics_DirectWrite",
+  "Win32_Graphics_Dwm",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
   "Win32_System_LibraryLoader",
