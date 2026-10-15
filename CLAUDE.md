@@ -198,7 +198,10 @@ Installer: `npx tauri build`; silent test install
 * The user's monitors, left to right: ARZOPA 1920×1080, G27Q 2560×1440 (primary),
   Lenovo P27q-20 1440×2560 portrait. Top bars plus bottom docks on all three.
 * `.scratch/` (git-ignored) is throwaway; anything worth keeping goes in `tools/`.
-* `native-test/`: a native bar prototype (Direct2D / DirectWrite, no WebView2), its
+* `native-test/`: a native bar and dock prototype (Direct2D / DirectWrite, no WebView2), its
   own Cargo project and exe, separate from Kasumi. `geometry.rs` there ports
-  `src/geometry.ts`: change both together. Quit Kasumi (`Local\Kasumi.Quit` event)
+  `src/geometry.ts`: change both together. `dock.rs` ports the tasks widget and
+  provider; app icons come from a short-lived `--icons` copy of the exe (the shell's
+  imaging stack costs ~13 MB in any process that loads it). Measure CPU with
+  `QueryProcessCycleTime`: process CPU times move in 15.6 ms ticks. Quit Kasumi (`Local\Kasumi.Quit` event)
   while the user tries it, and start Kasumi again afterwards.

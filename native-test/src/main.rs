@@ -12,14 +12,17 @@
 //! The bar: the menu widget in the left corner (its dropdown: your [widgets.menu]
 //! items), the clock in the middle (click: the calendar), a "native" label right.
 //! Hover a notch or the top-left hot corner: the bar opens. Right-click a notch: quit.
+//! The bottom dock (dock.rs): the tasks widget in a notch on the bottom edge.
 //! `--offscreen`        drawn off screen (measuring without covering anything)
 //! `--cycle`            opens and closes every 2 s by itself (measuring the animation)
 //! `--seconds N`        quits after N seconds
-//! `--snapshot DIR`     closed, open, menu and calendar frames as BMPs, then quits
+//! `--snapshot DIR`     closed, open, menu, calendar and dock frames as BMPs, then quits
 //! `--gpu`              Direct2D on the graphics card (default: software, far less memory)
+//! `--icons ...`        the dock's icon helper (dock.rs runs it)
 
 #![windows_subsystem = "windows"]
 
+mod dock;
 mod geometry;
 
 use std::cell::RefCell;
@@ -49,6 +52,7 @@ use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, GetMonitorInfoW, MonitorFromPoint, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
     BLENDFUNCTION, DIB_RGB_COLORS, HDC, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
 };
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
@@ -58,7 +62,7 @@ use windows::Win32::UI::HiDpi::{GetDpiForMonitor, SetProcessDpiAwarenessContext,
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, EnumWindows, GetClassNameW, GetWindowLongW, GetWindowTextLengthW, IsIconic, IsWindowVisible,
-    GWL_EXSTYLE, GWL_STYLE, WS_CAPTION, WS_EX_TRANSPARENT, WS_THICKFRAME, GetCursorPos, GetMessageW, KillTimer, LoadCursorW, PeekMessageW, PostQuitMessage, RegisterClassW,
+    GWL_EXSTYLE, GWL_STYLE, WM_MBUTTONUP, WS_CAPTION, WS_EX_TRANSPARENT, WS_THICKFRAME, GetCursorPos, GetMessageW, KillTimer, LoadCursorW, PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
     SetTimer, ShowWindow, TranslateMessage, UpdateLayeredWindow, IDC_ARROW, MSG, PM_REMOVE, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, ULW_ALPHA, WM_LBUTTONUP,
     WM_QUIT, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
@@ -141,6 +145,7 @@ struct Look {
     avoid: [bool; 2],
     offset: [f32; 2],
     hug: [bool; 2],
+    dock: dock::DockLook,
 }
 
 fn hex_color(s: &str) -> Option<D2D1_COLOR_F> {
@@ -218,6 +223,7 @@ fn read_config(scale: f32) -> (Look, Spring, Spring, Spring) {
         avoid: [side_flag("left", "avoid_windows"), side_flag("right", "avoid_windows")],
         offset: [side_px("left"), side_px("right")],
         hug: [side_flag("left", "hug"), side_flag("right", "hug")],
+        dock: dock::read(&cfg, scale),
     };
     let spring = |stiffness: f32, damping: f32| Spring {
         value: 0.0,
@@ -304,6 +310,8 @@ struct App {
     memory: String,
     /// The spread spring (notches sliding aside), as a template.
     slide: Spring,
+    /// The bottom dock with the tasks widget.
+    dock: Option<dock::Dock>,
 }
 
 thread_local! {
@@ -550,7 +558,7 @@ impl App {
             // Keep a notch slide going across a relayout (the clock minute).
             let moved = self.notches.get(i).map(|n| n.moved.clone()).unwrap_or_else(|| self.slide.clone());
             notches.push(Notch {
-                bump: Bump { x: home.0, width: home.1, height: self.look.notch_height, panel_width: 0.0, panel_height: 0.0, p: 0.0, in_hull: true },
+                bump: Bump { x: home.0, width: home.1, height: self.look.notch_height, panel_width: 0.0, panel_height: 0.0, p: 0.0, in_hull: true, scale: 1.0 },
                 text,
                 text_x: home.2,
                 text_w: cw,
@@ -662,10 +670,10 @@ impl App {
         let mut out: Vec<Bump> = self
             .notches
             .iter()
-            .map(|n| Bump { x: n.bump.x, width: n.bump.width, height: n.bump.height, panel_width: 0.0, panel_height: 0.0, p: 0.0, in_hull: true })
+            .map(|n| Bump { x: n.bump.x, width: n.bump.width, height: n.bump.height, panel_width: 0.0, panel_height: 0.0, p: 0.0, in_hull: true, scale: 1.0 })
             .collect();
         for p in &self.panels {
-            out.push(Bump { x: p.anchor, width: 0.0, height: 0.0, panel_width: p.width, panel_height: p.height, p: p.spring.value, in_hull: false });
+            out.push(Bump { x: p.anchor, width: 0.0, height: 0.0, panel_width: p.width, panel_height: p.height, p: p.spring.value, in_hull: false, scale: 1.0 });
         }
         out.sort_by(|a, b| (a.x + a.width / 2.0).total_cmp(&(b.x + b.width / 2.0)));
         out
@@ -844,6 +852,19 @@ impl App {
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.05);
         self.last = now;
+        // Each window is drawn only while something on it moves (and once after).
+        let top_moving = !(self.open.settled() && self.panels.iter().all(|p| p.spring.settled()) && self.notches.iter().all(|n| n.moved.settled()));
+        let dock_done = match self.dock.as_mut() {
+            Some(d) => {
+                let draw = d.dirty || d.springs_moving() || d.timed(now);
+                let settled = d.step(dt);
+                if draw {
+                    let _ = d.render(&self.d2d, &self.rt, &self.ink, &self.paint);
+                }
+                settled && !d.timed(Instant::now())
+            }
+            None => true,
+        };
         self.open.step(dt);
         let mut done = self.open.snap_if_settled();
         for p in &mut self.panels {
@@ -854,10 +875,12 @@ impl App {
             n.moved.step(dt);
             done &= n.moved.snap_if_settled();
         }
-        if done {
+        if done && dock_done {
             self.animating = false;
         }
-        let _ = self.render();
+        if top_moving {
+            let _ = self.render();
+        }
     }
 
     /// The open panel's box (where the cursor keeps the bar open).
@@ -920,8 +943,11 @@ impl App {
                 let _ = self.render();
             }
         }
+        if self.dock.as_mut().is_some_and(|d| d.hover(pt, self.look.grace_ms)) {
+            self.kick();
+        }
         let near = on_monitor && y < self.look.notch_height * 3.0;
-        let fast = near || self.open.target > 0.5;
+        let fast = near || self.open.target > 0.5 || self.dock.as_ref().is_some_and(|d| d.near(pt));
         unsafe { SetTimer(Some(self.hwnd), HOVER, if fast { self.look.poll_ms } else { 100 }, None) };
     }
 
@@ -954,6 +980,12 @@ impl App {
     }
 }
 
+/// What a click asks for, run once the app is released (it may pump messages).
+enum Clicked {
+    Menu(MenuItem),
+    Task(dock::Action),
+}
+
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
@@ -964,6 +996,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 match wp.0 {
                     HOVER => app.hover(),
                     DOCK => app.dock_check(),
+                    dock::TASKS | dock::TASKS_ANYWAY => {
+                        if let Some(d) = app.dock.as_mut() {
+                            if d.refresh(&app.rt) {
+                                app.kick();
+                            }
+                        }
+                    }
                     CLOCK => {
                         let _ = app.layout();
                         let _ = app.render();
@@ -985,19 +1024,72 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             });
             LRESULT(0)
         }
-        WM_LBUTTONUP => {
+        dock::WM_ICONS => {
+            APP.with(|a| {
+                let Ok(mut a) = a.try_borrow_mut() else {
+                    // Busy: ask again (the icons wait in their queue).
+                    unsafe {
+                        let _ = PostMessageW(Some(hwnd), msg, wp, lp);
+                    }
+                    return;
+                };
+                let Some(app) = a.as_mut() else { return };
+                if app.dock.as_mut().is_some_and(|d| d.receive_icons(&app.rt)) {
+                    app.kick();
+                }
+            });
+            LRESULT(0)
+        }
+        WM_LBUTTONUP | WM_MBUTTONUP => {
             let (x, y) = ((lp.0 & 0xffff) as i16 as f32, ((lp.0 >> 16) & 0xffff) as i16 as f32);
-            let item = APP.with(|a| a.try_borrow_mut().ok().and_then(|mut a| a.as_mut().and_then(|app| app.click(x, y))));
-            if let Some(item) = item {
-                run(&item);
+            let clicked = APP.with(|a| {
+                let mut a = a.try_borrow_mut().ok()?;
+                let app = a.as_mut()?;
+                match app.dock.as_ref() {
+                    Some(d) if d.hwnd == hwnd => d.click(x, y, msg == WM_MBUTTONUP).map(Clicked::Task),
+                    _ if msg == WM_LBUTTONUP => app.click(x, y).map(Clicked::Menu),
+                    _ => None,
+                }
+            });
+            match clicked {
+                Some(Clicked::Menu(item)) => run(&item),
+                Some(Clicked::Task(action)) => dock::run(action),
+                None => {}
             }
             LRESULT(0)
         }
         WM_RBUTTONUP => {
-            unsafe { PostQuitMessage(0) };
+            // The top bar's notches quit the test (the dock's tasks panel isn't here).
+            let on_dock = APP.with(|a| a.try_borrow().is_ok_and(|a| a.as_ref().and_then(|app| app.dock.as_ref()).is_some_and(|d| d.hwnd == hwnd)));
+            if !on_dock {
+                unsafe { PostQuitMessage(0) };
+            }
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+    }
+}
+
+/// A 32-bit premultiplied bitmap a layered window shows, selected into its own DC.
+fn dib(size: SIZE) -> Result<(HDC, *mut u8)> {
+    unsafe {
+        let memdc = CreateCompatibleDC(None);
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: size.cx,
+                biHeight: -size.cy,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let bmp = CreateDIBSection(Some(memdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
+        SelectObject(memdc, bmp.into());
+        Ok((memdc, bits as *mut u8))
     }
 }
 
@@ -1024,9 +1116,15 @@ fn main() -> Result<()> {
     let has = |f: &str| args.iter().any(|a| a == f);
     let value = |f: &str| args.iter().position(|a| a == f).and_then(|i| args.get(i + 1)).cloned();
     let seconds: Option<u32> = value("--seconds").and_then(|s| s.parse().ok());
+    if args.get(1).is_some_and(|a| a == "--icons") {
+        dock::icons_main(&args[2..]);
+        return Ok(());
+    }
 
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // The shell (app icons and IDs, opening menu items) wants COM.
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let mon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
         let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
         let _ = GetMonitorInfoW(mon, &mut info);
@@ -1043,38 +1141,26 @@ fn main() -> Result<()> {
         let instance = GetModuleHandleW(None)?;
         let class = w!("KasumiNativeTest");
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: instance.into(), lpszClassName: class, hCursor: LoadCursorW(None, IDC_ARROW)?, ..Default::default() });
-        let hwnd = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            class,
-            w!("Kasumi native test"),
-            WS_POPUP,
-            pos.x,
-            pos.y,
-            size.cx,
-            size.cy,
-            None,
-            None,
-            Some(instance.into()),
-            None,
-        )?;
+        let window = |title: windows::core::PCWSTR, pos: POINT, size: SIZE| {
+            CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                class,
+                title,
+                WS_POPUP,
+                pos.x,
+                pos.y,
+                size.cx,
+                size.cy,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+        };
+        let hwnd = window(w!("Kasumi native test"), pos, size)?;
 
         // The drawing surface: a 32-bit premultiplied bitmap the layered window shows.
-        let memdc = CreateCompatibleDC(None);
-        let bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: size.cx,
-                biHeight: -size.cy,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut bits = std::ptr::null_mut();
-        let bmp = CreateDIBSection(Some(memdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
-        SelectObject(memdc, bmp.into());
+        let (memdc, bits) = dib(size)?;
 
         let d2d: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
         let dw: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
@@ -1117,10 +1203,37 @@ fn main() -> Result<()> {
             away_since: None,
             notches: Vec::new(),
             memory: String::new(),
-            slide,
+            slide: slide.clone(),
+            dock: None,
         };
         app.layout()?;
         app.render()?;
+        // The bottom dock: as tall as it opens, plus the rounded screen corners above it.
+        let dock_size = SIZE { cx: size.cx, cy: (app.look.dock.open_height() + app.look.g.screen_corner + 2.0).ceil() as i32 };
+        let dock_pos = if has("--offscreen") { POINT { x: -32000, y: -32000 } } else { POINT { x: m.left, y: m.bottom - dock_size.cy } };
+        let dock_hwnd = window(w!("Kasumi native test dock"), dock_pos, dock_size)?;
+        let (dock_dc, dock_bits) = dib(dock_size)?;
+        let setup = dock::Setup {
+            hwnd: dock_hwnd,
+            memdc: dock_dc,
+            bits: dock_bits,
+            size: dock_size,
+            pos: dock_pos,
+            monitor: m,
+            hmon: mon,
+            s,
+            g: app.look.g.clone(),
+            accent: app.look.accent,
+            expand: app.open.clone(),
+            slide,
+            // Kasumi hides the Windows taskbar for its dock; only on screen, never for snapshots.
+            hide_taskbar: app.look.dock.hide_taskbar && !has("--offscreen") && !has("--snapshot"),
+            wait_icons: has("--snapshot"),
+            look: app.look.dock.clone(),
+        };
+        let mut d = dock::Dock::new(setup, &app.rt);
+        d.render(&app.d2d, &app.rt, &app.ink, &app.paint)?;
+        app.dock = Some(d);
         if let Some(dir) = value("--snapshot") {
             let dir = std::path::PathBuf::from(dir);
             app.memory = format!("{:.1} MB", private_mb());
@@ -1135,10 +1248,21 @@ fn main() -> Result<()> {
                 app.render()?;
                 save_bmp(bits as *const u8, size, &dir.join(format!("{name}.bmp")));
             }
+            if let Some(d) = app.dock.as_mut() {
+                for (name, e) in [("dock-rest", 0.0), ("dock-half", 0.5), ("dock-open", 1.0), ("dock-hover", 1.0)] {
+                    d.open.value = e;
+                    if name == "dock-hover" {
+                        d.pose_hover();
+                    }
+                    d.render(&app.d2d, &app.rt, &app.ink, &app.paint)?;
+                    save_bmp(d.bits, d.size, &dir.join(format!("{name}.bmp")));
+                }
+            }
             return Ok(());
         }
         APP.with(|a| *a.borrow_mut() = Some(app));
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        let _ = ShowWindow(dock_hwnd, SW_SHOWNOACTIVATE);
 
         SetTimer(Some(hwnd), HOVER, 100, None);
         SetTimer(Some(hwnd), DOCK, 250, None);
@@ -1181,6 +1305,7 @@ fn main() -> Result<()> {
         }
         // Release Direct2D / DirectWrite now, not in the thread's late teardown.
         APP.with(|a| a.borrow_mut().take());
+        dock::restore_taskbar();
     }
     Ok(())
 }

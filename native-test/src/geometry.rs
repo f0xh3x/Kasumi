@@ -1,7 +1,7 @@
 //! A port of Kasumi's src/geometry.ts (`computeFrame`): the same outline, curve for
 //! curve, so the native test has Kasumi's exact shapes: notches, the bar, dropdowns
-//! morphing out of it, rounded screen corners. (Dock-only parts, scaled notches
-//! and stepped corner panels, aren't here.)
+//! morphing out of it, rounded screen corners, docks' scaled notches. (Stepped
+//! corner panels aren't here.)
 
 pub const OFF: f32 = 64.0; // how far outside the window the closing edges run
 
@@ -26,6 +26,7 @@ pub enum Cmd {
 }
 
 /// [geometry] in px (already scaled for the monitor).
+#[derive(Clone)]
 pub struct Geometry {
     pub expanded_height: f32,
     pub concave_radius: f32,
@@ -49,6 +50,8 @@ pub struct Bump {
     /// Panel progress, 0 closed to 1 open.
     pub p: f32,
     pub in_hull: bool,
+    /// Scale of the notch curves (docks: height / notch height), 1 otherwise.
+    pub scale: f32,
 }
 
 pub struct BumpFrame {
@@ -67,7 +70,7 @@ pub struct Frame {
     pub bumps: Vec<BumpFrame>,
 }
 
-fn lerp(a: f32, b: f32, k: f32) -> f32 {
+pub fn lerp(a: f32, b: f32, k: f32) -> f32 {
     a + (b - a) * k
 }
 
@@ -182,9 +185,9 @@ fn emit_right(p: &mut Vec<Cmd>, s: &Side) {
 /// Both sides of a bump; `w` blends the notch profile (0) into the rounded popup (1).
 /// A side against the screen edge is straight with a square corner.
 #[allow(clippy::too_many_arguments)]
-fn bump(p: &mut Vec<Cmd>, g: &Geometry, left: f32, right: f32, top: f32, bottom: f32, w: f32, flush: (bool, bool)) {
-    let nc = g.notch_corner_radius.min((right - left).max(0.0) / 2.0);
-    let cr = g.concave_radius;
+fn bump(p: &mut Vec<Cmd>, g: &Geometry, left: f32, right: f32, top: f32, bottom: f32, w: f32, k: f32, flush: (bool, bool)) {
+    let nc = (g.notch_corner_radius * k).min((right - left).max(0.0) / 2.0);
+    let cr = g.concave_radius * k;
     let (pr, pc) = fit(g.panel_concave_radius, g.panel_corner_radius, bottom - top, right - left);
     let side = |x: f32, dir: f32, square: bool| {
         if square {
@@ -256,6 +259,7 @@ pub fn compute(g: &Geometry, w: f32, t: f32, s: f32, bumps: &[Bump]) -> Frame {
             continue;
         }
         let (left, mut right, mut depth) = (frames[i].left, frames[i].right, frames[i].depth);
+        let mut k = bumps[i].scale;
         let mut next = i + 1;
         if g.combine && plain(i) {
             // Notches that would touch or overlap become one shape.
@@ -263,16 +267,17 @@ pub fn compute(g: &Geometry, w: f32, t: f32, s: f32, bumps: &[Bump]) -> Frame {
                 if invisible(j) {
                     continue;
                 }
-                if !plain(j) || frames[j].left - right - 2.0 * r > MERGE_GAP {
+                if !plain(j) || frames[j].left - right - 2.0 * r * k > MERGE_GAP {
                     break;
                 }
                 right = right.max(frames[j].right);
+                k = k.max(bumps[j].scale);
                 depth = depth.max(frames[j].depth);
                 next = j + 1;
             }
         }
         let popup = style(i) > 0.001;
-        bump(&mut p, g, left, right, base, depth, style(i), (popup && left <= 0.5, popup && right >= w - 0.5));
+        bump(&mut p, g, left, right, base, depth, style(i), k, (popup && left <= 0.5, popup && right >= w - 0.5));
         i = next;
     }
     emit_right(&mut p, &rounded_side(hr, 0.0, base, hr_, hc, -1.0));
