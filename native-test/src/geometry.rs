@@ -1,6 +1,7 @@
-//! A port of Kasumi's src/geometry.ts (`computeFrame`) for a bar's notches: the
-//! same outline, curve for curve, so the native test has Kasumi's exact shapes.
-//! (Panels and dropdowns aren't here yet: the notches only morph into the bar.)
+//! A port of Kasumi's src/geometry.ts (`computeFrame`): the same outline, curve for
+//! curve, so the native test has Kasumi's exact shapes: notches, the bar, dropdowns
+//! morphing out of it, rounded screen corners. (Dock-only parts, scaled notches
+//! and stepped corner panels, aren't here.)
 
 pub const OFF: f32 = 64.0; // how far outside the window the closing edges run
 
@@ -30,6 +31,7 @@ pub struct Geometry {
     pub concave_radius: f32,
     pub notch_corner_radius: f32,
     pub panel_concave_radius: f32,
+    pub panel_corner_radius: f32,
     /// The hull's bottom corners while it spreads ([geometry] corner_radius).
     pub corner_radius: f32,
     /// Rounded screen corners ([general] corner_radius; 0 = off).
@@ -37,11 +39,24 @@ pub struct Geometry {
     pub combine: bool,
 }
 
-/// A notch: its collapsed left edge, width and depth.
+/// A notch (in the hull) or a bar widget's dropdown (width 0 at its widget's centre).
 pub struct Bump {
     pub x: f32,
     pub width: f32,
     pub height: f32,
+    pub panel_width: f32,
+    pub panel_height: f32,
+    /// Panel progress, 0 closed to 1 open.
+    pub p: f32,
+    pub in_hull: bool,
+}
+
+pub struct BumpFrame {
+    pub left: f32,
+    pub right: f32,
+    pub depth: f32,
+    /// Where the open panel's left edge ends up (its content waits there).
+    pub panel_x: f32,
 }
 
 pub struct Frame {
@@ -49,8 +64,7 @@ pub struct Frame {
     pub corners: Vec<Cmd>,
     /// The full-width bar's depth.
     pub base: f32,
-    /// Each notch's content row depth.
-    pub rows: Vec<f32>,
+    pub bumps: Vec<BumpFrame>,
 }
 
 fn lerp(a: f32, b: f32, k: f32) -> f32 {
@@ -58,6 +72,7 @@ fn lerp(a: f32, b: f32, k: f32) -> f32 {
 }
 
 /// One side of a bump, from the edge above (p0) to the floor (p3).
+#[derive(Clone, Copy)]
 struct Side {
     p0: Pt,
     c1: Pt,
@@ -130,6 +145,26 @@ fn fit(r: f32, c: f32, depth: f32, width: f32) -> (f32, f32) {
     }
 }
 
+fn mix(a: Side, b: Side, w: f32) -> Side {
+    if w <= 0.0 {
+        return a;
+    }
+    if w >= 1.0 {
+        return b;
+    }
+    let m = |p: Pt, q: Pt| Pt(lerp(p.0, q.0, w), lerp(p.1, q.1, w));
+    Side {
+        p0: m(a.p0, b.p0),
+        c1: m(a.c1, b.c1),
+        c2: m(a.c2, b.c2),
+        m1: m(a.m1, b.m1),
+        m2: m(a.m2, b.m2),
+        c3: m(a.c3, b.c3),
+        c4: m(a.c4, b.c4),
+        p3: m(a.p3, b.p3),
+    }
+}
+
 fn emit_left(p: &mut Vec<Cmd>, s: &Side) {
     p.push(Cmd::L(s.p0));
     p.push(Cmd::C(s.c1, s.c2, s.m1));
@@ -144,58 +179,100 @@ fn emit_right(p: &mut Vec<Cmd>, s: &Side) {
     p.push(Cmd::C(s.c2, s.c1, s.p0));
 }
 
-/// A notch's two sides (notch profile; panels would blend toward the rounded style).
-fn bump(p: &mut Vec<Cmd>, g: &Geometry, left: f32, right: f32, top: f32, bottom: f32) {
+/// Both sides of a bump; `w` blends the notch profile (0) into the rounded popup (1).
+/// A side against the screen edge is straight with a square corner.
+#[allow(clippy::too_many_arguments)]
+fn bump(p: &mut Vec<Cmd>, g: &Geometry, left: f32, right: f32, top: f32, bottom: f32, w: f32, flush: (bool, bool)) {
     let nc = g.notch_corner_radius.min((right - left).max(0.0) / 2.0);
     let cr = g.concave_radius;
-    emit_left(p, &profile_side(left, top, bottom, cr, nc, 1.0));
-    emit_right(p, &profile_side(right, top, bottom, cr, nc, -1.0));
+    let (pr, pc) = fit(g.panel_concave_radius, g.panel_corner_radius, bottom - top, right - left);
+    let side = |x: f32, dir: f32, square: bool| {
+        if square {
+            rounded_side(x, top, bottom, 0.0, 0.0, dir)
+        } else {
+            mix(profile_side(x, top, bottom, cr, nc, dir), rounded_side(x, top, bottom, pr, pc, dir), w)
+        }
+    };
+    emit_left(p, &side(left, 1.0, flush.0));
+    emit_right(p, &side(right, -1.0, flush.1));
 }
 
 /// `t`: expand progress (0 collapsed, 1 open); `s`: spread (0 the hull spans the
-/// notches, 1 the screen: Kasumi's "drop" style keeps it at 1).
+/// notches, 1 the screen: Kasumi's "drop" style keeps it at 1). Bumps left to right.
 pub fn compute(g: &Geometry, w: f32, t: f32, s: f32, bumps: &[Bump]) -> Frame {
     let h = g.expanded_height;
     let r = g.concave_radius;
     let t0 = t.max(0.0);
     let base = h * t0;
-    let frames: Vec<(f32, f32, f32)> = bumps.iter().map(|b| (b.x, b.x + b.width, lerp(b.height, h, t0))).collect();
+
+    let frames: Vec<BumpFrame> = bumps
+        .iter()
+        .map(|b| {
+            let p = b.p.max(0.0);
+            let row_depth = lerp(b.height, h, t0);
+            let depth = lerp(row_depth, h + b.panel_height, p);
+            let anchor = b.x + b.width / 2.0;
+            let panel_left = (anchor - b.panel_width / 2.0).clamp(0.0, (w - b.panel_width).max(0.0));
+            let mut left = lerp(anchor - b.width / 2.0, panel_left, p);
+            let mut right = lerp(anchor + b.width / 2.0, panel_left + b.panel_width, p);
+            // A panel that ends up flush with a screen edge grows out of it from the start.
+            if p > 0.001 && b.panel_width < w {
+                if anchor - b.panel_width / 2.0 < 0.5 {
+                    left = left.min(0.0);
+                }
+                if anchor + b.panel_width / 2.0 > w - 0.5 {
+                    right = right.max(w);
+                }
+            }
+            BumpFrame { left, right, depth, panel_x: panel_left }
+        })
+        .collect();
 
     let pad = r + g.corner_radius + 1.0;
-    let hl0 = bumps.iter().map(|b| b.x).fold(f32::INFINITY, f32::min) - pad;
-    let hr0 = bumps.iter().map(|b| b.x + b.width).fold(f32::NEG_INFINITY, f32::max) + pad;
-    let (hl0, hr0) = if bumps.is_empty() { (w / 2.0, w / 2.0) } else { (hl0, hr0) };
+    let hull: Vec<&Bump> = bumps.iter().filter(|b| b.in_hull).collect();
+    let (hl0, hr0) = if hull.is_empty() {
+        (w / 2.0, w / 2.0)
+    } else {
+        (
+            hull.iter().map(|b| b.x).fold(f32::INFINITY, f32::min) - pad,
+            hull.iter().map(|b| b.x + b.width).fold(f32::NEG_INFINITY, f32::max) + pad,
+        )
+    };
     let hl = lerp(hl0, hl0.min(0.0), s);
     let hr = lerp(hr0, hr0.max(w), s);
     let (hr_, hc) = fit(g.panel_concave_radius, g.corner_radius * (1.0 - s).clamp(0.0, 1.0), base, hr - hl);
 
     let mut p = vec![Cmd::M(Pt(-OFF, 0.0))];
     emit_left(&mut p, &rounded_side(hl, 0.0, base, hr_, hc, 1.0));
+    // Notches morph into rounded panels as they open; dropdowns are always rounded.
+    let style = |i: usize| if bumps[i].in_hull { bumps[i].p.clamp(0.0, 1.0) } else { 1.0 };
+    let invisible = |i: usize| frames[i].right - frames[i].left < 1.0 && frames[i].depth - base < 0.5;
+    let plain = |i: usize| bumps[i].in_hull && bumps[i].p <= 0.001;
     const MERGE_GAP: f32 = 6.0;
-    let invisible = |i: usize| frames[i].1 - frames[i].0 < 1.0 && frames[i].2 - base < 0.5;
     let mut i = 0;
     while i < frames.len() {
         if invisible(i) {
             i += 1;
             continue;
         }
-        let (left, mut right, mut depth) = frames[i];
+        let (left, mut right, mut depth) = (frames[i].left, frames[i].right, frames[i].depth);
         let mut next = i + 1;
-        if g.combine {
+        if g.combine && plain(i) {
             // Notches that would touch or overlap become one shape.
-            for (j, f) in frames.iter().enumerate().skip(i + 1) {
+            for j in i + 1..frames.len() {
                 if invisible(j) {
                     continue;
                 }
-                if f.0 - right - 2.0 * r > MERGE_GAP {
+                if !plain(j) || frames[j].left - right - 2.0 * r > MERGE_GAP {
                     break;
                 }
-                right = right.max(f.1);
-                depth = depth.max(f.2);
+                right = right.max(frames[j].right);
+                depth = depth.max(frames[j].depth);
                 next = j + 1;
             }
         }
-        bump(&mut p, g, left, right, base, depth);
+        let popup = style(i) > 0.001;
+        bump(&mut p, g, left, right, base, depth, style(i), (popup && left <= 0.5, popup && right >= w - 0.5));
         i = next;
     }
     emit_right(&mut p, &rounded_side(hr, 0.0, base, hr_, hc, -1.0));
@@ -205,18 +282,18 @@ pub fn compute(g: &Geometry, w: f32, t: f32, s: f32, bumps: &[Bump]) -> Frame {
     p.push(Cmd::Z);
 
     // Rounded screen corners: a quarter-circle fillet hanging from whatever fills
-    // that corner (the open bar, a notch hugging it).
+    // that corner (the open bar, a notch hugging it, a panel).
     let rr = g.screen_corner;
     let mut corners = Vec::new();
     if rr > 0.0 {
         let depth_at = |left: bool| {
             let mut d = if (left && hl <= 0.5) || (!left && hr >= w - 0.5) { base } else { 0.0 };
             for f in &frames {
-                if f.1 - f.0 < 1.0 {
+                if f.right - f.left < 1.0 {
                     continue;
                 }
-                if (left && f.0 <= 1.0) || (!left && f.1 >= w - 1.0) {
-                    d = d.max(f.2);
+                if (left && f.left <= 1.0) || (!left && f.right >= w - 1.0) {
+                    d = d.max(f.depth);
                 }
             }
             d
@@ -234,5 +311,5 @@ pub fn compute(g: &Geometry, w: f32, t: f32, s: f32, bumps: &[Bump]) -> Frame {
         corners.push(Cmd::Z);
     }
 
-    Frame { path: p, corners, base, rows: frames.iter().map(|f| f.2).collect() }
+    Frame { path: p, corners, base, bumps: frames }
 }
