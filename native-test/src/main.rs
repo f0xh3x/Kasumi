@@ -19,6 +19,7 @@
 //! `--snapshot DIR`     closed, open, menu, calendar and dock frames as BMPs, then quits
 //! `--gpu`              Direct2D on the graphics card (default: software, far less memory)
 //! `--icons ...`        the dock's icon helper (dock.rs runs it)
+//! Starting it on screen replaces a running one (measuring runs leave it alone).
 
 #![windows_subsystem = "windows"]
 
@@ -57,7 +58,8 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::System::SystemInformation::GetLocalTime;
-use windows::Win32::System::Threading::GetCurrentProcess;
+use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, GetCurrentProcess, SetEvent, WaitForSingleObject};
+use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -312,6 +314,29 @@ struct App {
     slide: Spring,
     /// The bottom dock with the tasks widget.
     dock: Option<dock::Dock>,
+}
+
+/// Set when a newer test asks this one to quit (see take_over).
+static QUIT_EVENT: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// One test on screen at a time: a new one asks the running one to quit and takes
+/// over once it's gone (it holds the mutex while it runs).
+fn take_over() -> Option<HANDLE> {
+    unsafe {
+        let quit = CreateEventW(None, false, false, w!(r"Local\KasumiNativeTest.Quit")).ok()?;
+        QUIT_EVENT.store(quit.0 as isize, std::sync::atomic::Ordering::Relaxed);
+        let running = CreateMutexW(None, false, w!(r"Local\KasumiNativeTest.Running")).ok()?;
+        if WaitForSingleObject(running, 0) == WAIT_TIMEOUT {
+            let _ = SetEvent(quit);
+            let _ = WaitForSingleObject(running, 5000);
+        }
+        Some(running)
+    }
+}
+
+fn quit_requested() -> bool {
+    let h = QUIT_EVENT.load(std::sync::atomic::Ordering::Relaxed);
+    h != 0 && unsafe { WaitForSingleObject(HANDLE(h as *mut _), 0) } == WAIT_OBJECT_0
 }
 
 thread_local! {
@@ -995,7 +1020,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let Some(app) = a.as_mut() else { return };
                 match wp.0 {
                     HOVER => app.hover(),
-                    DOCK => app.dock_check(),
+                    DOCK => {
+                        if quit_requested() {
+                            unsafe { PostQuitMessage(0) };
+                        }
+                        app.dock_check();
+                    }
                     dock::TASKS | dock::TASKS_ANYWAY => {
                         if let Some(d) = app.dock.as_mut() {
                             if d.refresh(&app.rt) {
@@ -1123,6 +1153,7 @@ fn main() -> Result<()> {
 
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let _running = if has("--offscreen") || has("--snapshot") { None } else { take_over() };
         // The shell (app icons and IDs, opening menu items) wants COM.
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let mon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
