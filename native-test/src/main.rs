@@ -5,6 +5,10 @@
 //! your config.toml. It redraws only when something changes; while something
 //! moves, once per display refresh.
 //!
+//! Corner notches move out of the way like Kasumi ([notch.left] / [notch.right]
+//! avoid_windows, offset): while a window top edge is under one (a maximized
+//! window caption buttons), it slides to its offset; back in the corner when the
+//! bar opens or the window goes.
 //! The bar: the menu widget in the left corner (its dropdown: your [widgets.menu]
 //! items), the clock in the middle (click: the calendar), a "native" label right.
 //! Hover a notch or the top-left hot corner: the bar opens. Right-click a notch: quit.
@@ -23,7 +27,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use geometry::{Bump, Cmd, Frame, Geometry, Pt};
-use windows::core::{w, Result, HSTRING};
+use windows::core::{w, Result, BOOL, HSTRING};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE_WINDING,
@@ -39,7 +43,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER,
     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS,
 };
-use windows::Win32::Graphics::Dwm::DwmFlush;
+use windows::Win32::Graphics::Dwm::{DwmFlush, DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, GetMonitorInfoW, MonitorFromPoint, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
@@ -53,7 +57,8 @@ use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetMessageW, KillTimer, LoadCursorW, PeekMessageW, PostQuitMessage, RegisterClassW,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, EnumWindows, GetClassNameW, GetWindowLongW, GetWindowTextLengthW, IsIconic, IsWindowVisible,
+    GWL_EXSTYLE, GWL_STYLE, WS_CAPTION, WS_EX_TRANSPARENT, WS_THICKFRAME, GetCursorPos, GetMessageW, KillTimer, LoadCursorW, PeekMessageW, PostQuitMessage, RegisterClassW,
     SetTimer, ShowWindow, TranslateMessage, UpdateLayeredWindow, IDC_ARROW, MSG, PM_REMOVE, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, ULW_ALPHA, WM_LBUTTONUP,
     WM_QUIT, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
@@ -64,6 +69,7 @@ const CLOCK: usize = 3; // the next minute
 const MEMORY: usize = 4; // the memory readout (only while open)
 const CYCLE: usize = 5; // --cycle
 const QUIT: usize = 6; // --seconds
+const DOCK: usize = 7; // windows under the corner notches (every 250 ms, as Kasumi)
 const NOTCH_PAD: f32 = 10.0; // as main.ts
 const MENU_GLYPH: &str = "\u{E80F}"; // Kasumi's menu widget (Glyph.menu)
 
@@ -131,6 +137,10 @@ struct Look {
     dim: f32,
     accent: D2D1_COLOR_F,
     menu: Vec<MenuItem>,
+    /// [notch.left] / [notch.right]: move aside for windows, the offset, sit in the corner.
+    avoid: [bool; 2],
+    offset: [f32; 2],
+    hug: [bool; 2],
 }
 
 fn hex_color(s: &str) -> Option<D2D1_COLOR_F> {
@@ -150,7 +160,7 @@ fn system_accent() -> Option<D2D1_COLOR_F> {
     r.is_ok().then(|| color((v & 0xff) as f32 / 255.0, ((v >> 8) & 0xff) as f32 / 255.0, ((v >> 16) & 0xff) as f32 / 255.0, 1.0))
 }
 
-fn read_config(scale: f32) -> (Look, Spring, Spring) {
+fn read_config(scale: f32) -> (Look, Spring, Spring, Spring) {
     let path = std::env::var("APPDATA").map(|a| std::path::PathBuf::from(a).join("Kasumi").join("config.toml")).unwrap_or_default();
     let cfg: toml::Value = std::fs::read_to_string(path).ok().and_then(|t| t.parse().ok()).unwrap_or(toml::Value::Table(Default::default()));
     let get = |table: &str, key: &str| cfg.get(table).and_then(|t| t.get(key)).cloned();
@@ -159,6 +169,9 @@ fn read_config(scale: f32) -> (Look, Spring, Spring) {
     let text = |table: &str, key: &str, d: &str| get(table, key).and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| d.to_string());
     let rounded = flag("general", "rounded_corners", false);
     let font = text("theme", "font", "");
+    let side = |s: &str, key: &str| cfg.get("notch").and_then(|n| n.get(s)).and_then(|t| t.get(key)).cloned();
+    let side_flag = |s: &str, key: &str| side(s, key).and_then(|v| v.as_bool()).unwrap_or(true);
+    let side_px = |s: &str| side(s, "offset").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64))).map_or(150.0, |v| v as f32) * scale;
     let accent = if flag("theme", "accent_sync", false) { system_accent() } else { None }.or_else(|| hex_color(&text("theme", "accent", "#ffffff"))).unwrap_or(color(1.0, 1.0, 1.0, 1.0));
     let menu = cfg
         .get("widgets")
@@ -202,6 +215,9 @@ fn read_config(scale: f32) -> (Look, Spring, Spring) {
         dim: num("theme", "dim_opacity", 0.45),
         accent,
         menu,
+        avoid: [side_flag("left", "avoid_windows"), side_flag("right", "avoid_windows")],
+        offset: [side_px("left"), side_px("right")],
+        hug: [side_flag("left", "hug"), side_flag("right", "hug")],
     };
     let spring = |stiffness: f32, damping: f32| Spring {
         value: 0.0,
@@ -216,7 +232,8 @@ fn read_config(scale: f32) -> (Look, Spring, Spring) {
     };
     let expand = spring(num("animation", "expand_stiffness", 420.0), num("animation", "expand_damping", 32.0));
     let panel = spring(num("animation", "panel_stiffness", 380.0), num("animation", "panel_damping", 30.0));
-    (look, expand, panel)
+    let spread = spring(num("animation", "spread_stiffness", 260.0), num("animation", "spread_damping", 28.0));
+    (look, expand, panel, spread)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -236,6 +253,10 @@ struct Notch {
     alpha: f32,
     /// What a click on it opens.
     opens: Option<Kind>,
+    /// Its place in the corner and moved aside (x, width, text x); 0 to 1 between them.
+    home: (f32, f32, f32),
+    aside: Option<(f32, f32, f32)>,
+    moved: Spring,
 }
 
 /// A dropdown: its spring, size, where it ends up, and its content's offset.
@@ -281,6 +302,8 @@ struct App {
     away_since: Option<Instant>,
     notches: Vec<Notch>,
     memory: String,
+    /// The spread spring (notches sliding aside), as a template.
+    slide: Spring,
 }
 
 thread_local! {
@@ -357,6 +380,52 @@ fn private_mb() -> f64 {
         let _ = GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc as *mut _ as *mut PROCESS_MEMORY_COUNTERS, std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32);
     }
     pmc.PrivateUsage as f64 / (1024.0 * 1024.0)
+}
+
+/// Application windows on a monitor, by their visible bounds (as Kasumi
+/// app_windows): visible, not minimized or cloaked, with a frame and a title; not
+/// tool windows, the desktop or the taskbar.
+fn app_windows(m: RECT) -> Vec<RECT> {
+    unsafe extern "system" fn proc(h: HWND, data: LPARAM) -> BOOL {
+        let list = &mut *(data.0 as *mut Vec<HWND>);
+        list.push(h);
+        BOOL(1)
+    }
+    let mut all: Vec<HWND> = Vec::new();
+    let mut out = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(proc), LPARAM(&mut all as *mut _ as isize));
+        for h in all {
+            if !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+                continue;
+            }
+            let style = GetWindowLongW(h, GWL_STYLE) as u32;
+            let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
+            if style & (WS_CAPTION.0 | WS_THICKFRAME.0) == 0 || ex & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0 || GetWindowTextLengthW(h) == 0 {
+                continue;
+            }
+            let mut cloaked = 0u32;
+            let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4);
+            let mut buf = [0u16; 64];
+            let n = GetClassNameW(h, &mut buf) as usize;
+            let class = String::from_utf16_lossy(&buf[..n]);
+            if cloaked != 0 || matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+                continue;
+            }
+            let mut r = RECT::default();
+            if DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut _ as *mut _, std::mem::size_of::<RECT>() as u32).is_ok()
+                && r.right > r.left
+                && r.bottom > r.top
+                && r.left < m.right
+                && r.right > m.left
+                && r.top < m.bottom
+                && r.bottom > m.top
+            {
+                out.push(r);
+            }
+        }
+    }
+    out
 }
 
 /// Path commands into a Direct2D geometry (filled like SVG: nonzero).
@@ -462,24 +531,80 @@ impl App {
             let cw = self.measure(&text, size, icon)?;
             let corner = i != 1;
             let width = cw + 2.0 * nc + 2.0 * pad + if corner { extra } else { 0.0 };
-            let (x, text_x) = match i {
-                0 => (-nc, extra + pad),
-                1 => (w / 2.0 - width / 2.0, w / 2.0 - cw / 2.0),
-                _ => (w + nc - width, w - extra - pad - cw),
+            let home = match i {
+                0 => (-nc, width, extra + pad),
+                1 => (w / 2.0 - width / 2.0, width, w / 2.0 - cw / 2.0),
+                _ => (w + nc - width, width, w - extra - pad - cw),
             };
+            // Moved aside: off the corner (flares both sides, no edge padding), at the offset.
+            let side = if i == 0 { 0 } else { 1 };
+            let free = cw + 2.0 * nc + 2.0 * pad;
+            let off = self.look.offset[side];
+            let away = if i == 0 { (off, free, off + (free - cw) / 2.0) } else { (w - off - free, free, w - off - free + (free - cw) / 2.0) };
+            let (home, aside) = match corner {
+                false => (home, None),
+                true if !self.look.hug[side] => (away, None),
+                true if self.look.avoid[side] => (home, Some(away)),
+                true => (home, None),
+            };
+            // Keep a notch slide going across a relayout (the clock minute).
+            let moved = self.notches.get(i).map(|n| n.moved.clone()).unwrap_or_else(|| self.slide.clone());
             notches.push(Notch {
-                bump: Bump { x, width, height: self.look.notch_height, panel_width: 0.0, panel_height: 0.0, p: 0.0, in_hull: true },
+                bump: Bump { x: home.0, width: home.1, height: self.look.notch_height, panel_width: 0.0, panel_height: 0.0, p: 0.0, in_hull: true },
                 text,
-                text_x,
+                text_x: home.2,
                 text_w: cw,
                 size,
                 icon,
                 alpha,
                 opens,
+                home,
+                aside,
+                moved,
             });
         }
         self.notches = notches;
+        self.place();
         self.layout_panels()
+    }
+
+    /// Each notch where its slide has it, between its corner and its offset.
+    fn place(&mut self) {
+        for n in &mut self.notches {
+            let k = n.moved.value.clamp(0.0, 1.0);
+            let (x, w, t) = n.aside.map_or(n.home, |a| (n.home.0 + (a.0 - n.home.0) * k, n.home.1 + (a.1 - n.home.1) * k, n.home.2 + (a.2 - n.home.2) * k));
+            n.bump.x = x;
+            n.bump.width = w;
+            n.text_x = t;
+        }
+    }
+
+    /// Like Kasumi update_docking: a corner notch moves aside while an app window
+    /// top edge is under it (its own spot, flares included); the open bar docks all.
+    fn dock_check(&mut self) {
+        let wins = if self.open.target > 0.5 { Vec::new() } else { app_windows(self.monitor) };
+        let g = &self.look.g;
+        let m = self.monitor;
+        let reach = self.look.notch_height;
+        let mut changed = false;
+        for n in &mut self.notches {
+            if n.aside.is_none() {
+                continue;
+            }
+            let (x0, x1) = ((n.home.0 - g.concave_radius).max(0.0), (n.home.0 + n.home.1 + g.concave_radius).min((m.right - m.left) as f32));
+            let under = wins.iter().any(|r| {
+                let (l, t, rr, b) = ((r.left - m.left) as f32, (r.top - m.top) as f32, (r.right - m.left) as f32, (r.bottom - m.top) as f32);
+                l < x1 && rr > x0 && b > 0.0 && t < reach
+            });
+            let target = if under { 1.0 } else { 0.0 };
+            if n.moved.target != target {
+                n.moved.target = target;
+                changed = true;
+            }
+        }
+        if changed {
+            self.kick();
+        }
     }
 
     /// The menu's rows and size, and both panels' places (Kasumi's paddings).
@@ -621,6 +746,7 @@ impl App {
     /// One frame of Kasumi's shape and content into the layered window (only as tall
     /// as what shows: the window grows with a panel and shrinks back).
     fn render(&mut self) -> Result<()> {
+        self.place();
         let w = self.size.cx as f32;
         let h = self.look.g.expanded_height;
         let t = self.open.value;
@@ -690,6 +816,7 @@ impl App {
             return;
         }
         self.open.target = target;
+        self.dock_check();
         if open {
             self.memory = format!("{:.1} MB", private_mb());
             unsafe { SetTimer(Some(self.hwnd), MEMORY, 1000, None) };
@@ -722,6 +849,10 @@ impl App {
         for p in &mut self.panels {
             p.spring.step(dt);
             done &= p.spring.snap_if_settled();
+        }
+        for n in &mut self.notches {
+            n.moved.step(dt);
+            done &= n.moved.snap_if_settled();
         }
         if done {
             self.animating = false;
@@ -832,6 +963,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 let Some(app) = a.as_mut() else { return };
                 match wp.0 {
                     HOVER => app.hover(),
+                    DOCK => app.dock_check(),
                     CLOCK => {
                         let _ = app.layout();
                         let _ = app.render();
@@ -901,7 +1033,7 @@ fn main() -> Result<()> {
         let (mut dx, mut dy) = (96u32, 96u32);
         let _ = GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
         let s = dx as f32 / 96.0;
-        let (look, expand, panel) = read_config(s);
+        let (look, expand, panel, slide) = read_config(s);
         let m = info.rcMonitor;
         // Room for the tallest panel; the window itself is only as tall as what shows.
         let tall = look.g.expanded_height + 420.0 * s + look.g.screen_corner + 2.0;
@@ -985,6 +1117,7 @@ fn main() -> Result<()> {
             away_since: None,
             notches: Vec::new(),
             memory: String::new(),
+            slide,
         };
         app.layout()?;
         app.render()?;
@@ -1008,6 +1141,7 @@ fn main() -> Result<()> {
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
         SetTimer(Some(hwnd), HOVER, 100, None);
+        SetTimer(Some(hwnd), DOCK, 250, None);
         SetTimer(Some(hwnd), CLOCK, to_next_minute(), None);
         if has("--cycle") {
             SetTimer(Some(hwnd), CYCLE, 2000, None);
