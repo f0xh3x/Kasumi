@@ -394,7 +394,7 @@ html.bar-open .slot .widget.media.keys-open .media-controls { opacity: var(--bar
 .media-track { display: inline; }
 .media-echo { display: none; padding-left: 36px; }
 .media-text.scrolling { text-overflow: clip; mask-image: linear-gradient(90deg, transparent, #000 6px, #000 calc(100% - 14px), transparent); }
-.media-text.scrolling .media-track { display: inline-block; will-change: transform; }
+.media-text.scrolling .media-track { display: inline-block; }
 .media-text.scrolling .media-echo { display: inline; }
 
 /* Docks: notch widgets are the real (clickable) widgets. */
@@ -619,8 +619,8 @@ html.edge-bottom .launcher-own { border-bottom: 0; border-top: 1px solid rgba(25
 .high .meter-bar-fill { background: var(--warn); }
 .high .meter-ring .fill { stroke: var(--warn); }
 .claude-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); flex: none; }
-.claude-dot.busy { background: #d97757; animation: claude-pulse 1.2s ease-in-out infinite; }
-@keyframes claude-pulse { 50% { opacity: 0.35; } }
+/* Busy: claude.ts pulses it in a few steps (an animation would redraw every frame). */
+.claude-dot.busy { background: #d97757; }
 .claude-panel { display: flex; flex-direction: column; gap: 5px; width: 260px; }
 .claude-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--fg-dim); margin-top: 6px; }
 .claude-head:first-child { margin-top: 0; }

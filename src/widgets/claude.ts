@@ -118,11 +118,25 @@ export function claude(opts: Record<string, unknown>): Widget {
     ind?.set(v);
     root.classList.toggle("high", v >= 0.9);
     dot.classList.toggle("busy", !!u?.busy);
+    pulse(!!u?.busy);
     root.title = acc.session
       ? `Claude: ${pct(acc.session)} of the 5-hour limit, resets in ${duration(untilReset(acc.session))}${acc.week ? ` · week ${pct(acc.week)}` : ""}`
       : w
         ? `Claude Code: ${tokens(w.tokens)} tokens in this 5-hour window, resets in ${duration(w.end - now)}`
         : "Claude Code: no 5-hour window running";
+  };
+  // While Claude works the dot pulses: six opacity steps a cycle, a few small redraws a
+  // second rather than a CSS animation's one every display refresh.
+  let pulsing = 0;
+  const pulse = (on: boolean) => {
+    if (on === !!pulsing) return;
+    clearInterval(pulsing);
+    pulsing = 0;
+    dot.style.opacity = "";
+    if (!on) return;
+    const steps = [1, 0.8, 0.55, 0.35, 0.55, 0.8];
+    let i = 0;
+    pulsing = window.setInterval(() => (dot.style.opacity = String(steps[++i % steps.length])), 200);
   };
   const off = subscribe("claude", (u) => {
     latest = u;
@@ -130,7 +144,7 @@ export function claude(opts: Record<string, unknown>): Widget {
   });
   // The countdown moves on between updates.
   const timer = window.setInterval(draw, 30_000);
-  return { el: root, dispose: () => (off(), clearInterval(timer)) };
+  return { el: root, dispose: () => (off(), clearInterval(timer), clearInterval(pulsing)) };
 }
 
 /** The 5-hour window, today (per model), and the last 7 days. */

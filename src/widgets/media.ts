@@ -53,27 +53,29 @@ export function media(opts: Record<string, unknown>): Widget {
   }
   root.hidden = true;
 
-  let marquee: Animation | null = null;
+  // The title scrolls a whole pixel at a time: a redraw per pixel (`speed` a second)
+  // instead of one every display refresh (up to 165 a second, most of them moving it
+  // by a fraction of a pixel), the bulk of an idle Kasumi's CPU and GPU time.
+  let timer = 0;
   const fit = () => {
-    marquee?.cancel();
-    marquee = null;
+    clearTimeout(timer);
+    track.style.translate = "";
     const over = scroll && label.offsetWidth > text.clientWidth + 1;
     text.classList.toggle("scrolling", over);
     if (!over) return;
     const distance = label.offsetWidth + echo.offsetLeft - label.offsetLeft - label.offsetWidth;
     const hold = 1800;
-    const total = hold + (distance / speed) * 1000;
-    marquee = track.animate(
-      [
-        { transform: "translateX(0)" },
-        { transform: "translateX(0)", offset: hold / total },
-        { transform: `translateX(${-distance}px)` },
-      ],
-      { duration: total, iterations: Infinity },
-    );
-    // Pinned to the document's clock: the notch's and the bar's copies (same text,
-    // same timing) scroll in step, so the hand-over between them stays invisible.
-    marquee.startTime = 0;
+    const pixel = 1000 / speed;
+    const total = hold + distance * pixel;
+    const step = () => {
+      // On the document's clock: the notch's and the bar's copies (same text, same
+      // timing) scroll in step, so the hand-over between them stays invisible.
+      const t = performance.now() % total;
+      const x = t < hold ? 0 : Math.floor((t - hold) / pixel);
+      track.style.translate = x ? `${-x}px 0` : "";
+      timer = window.setTimeout(step, t < hold ? hold - t : pixel - ((t - hold) % pixel));
+    };
+    step();
   };
   const resized = new ResizeObserver(fit);
   if (scroll) resized.observe(text);
@@ -97,7 +99,7 @@ export function media(opts: Record<string, unknown>): Widget {
     dispose: () => {
       unsubscribe();
       resized.disconnect();
-      marquee?.cancel();
+      clearTimeout(timer);
     },
   };
 }

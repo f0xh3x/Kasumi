@@ -389,8 +389,14 @@ class Overlay {
       .map((side) => this.groups[side])
       .filter((g): g is HTMLDivElement => !!g && this.glides.some((x) => this.spacers.get(this.notchEls.find((e) => e.el === x.el)?.name ?? "")?.parentElement === g))
       .flatMap((g) => Array.from(g.children).filter((c): c is HTMLElement => !c.classList.contains("notch-spacer")));
-    this.kick();
+    // Redraw only if a glide changed (bar widgets resize all the time: clock, numbers).
+    const glides = this.glides.map((g) => `${g.to},${g.from},${g.left}`).join(";");
+    if (glides !== this.lastGlides) {
+      this.lastGlides = glides;
+      this.kick();
+    }
   }
+  private lastGlides = "";
 
   /** Bar widgets resized: re-place the pinned ones, and slide whatever moved. */
   private onBarResize(): void {
@@ -506,6 +512,7 @@ class Overlay {
     this.barX.clear();
     this.openLauncher = null;
     this.lastWidths = "";
+    this.lastShape = this.lastCorners = this.lastGlides = "";
     content.replaceChildren();
 
     const a = L.animation;
@@ -1341,9 +1348,16 @@ class Overlay {
     // its height changes); only the SVG shape is, being pure vector.
     const bottom = L.edge === "bottom";
     const away = bottom ? -1 : 1;
-    fill.setAttribute("d", frame.d);
-    cornersPath.setAttribute("d", frame.corners);
-    content.style.clipPath = `path("${bottom ? mirrorPath(frame.d, STAGE_HEIGHT) : frame.d}")`;
+    // Only when it changed: rewriting the same shape still repaints the whole window.
+    if (frame.d !== this.lastShape) {
+      this.lastShape = frame.d;
+      fill.setAttribute("d", frame.d);
+      content.style.clipPath = `path("${bottom ? mirrorPath(frame.d, STAGE_HEIGHT) : frame.d}")`;
+    }
+    if (frame.corners !== this.lastCorners) {
+      this.lastCorners = frame.corners;
+      cornersPath.setAttribute("d", frame.corners);
+    }
 
     // slide: the row rides the bar's far edge. reveal / fade: it waits in its open
     // spot and the growing shape (content's clip) uncovers it; reveal shows it at
@@ -1444,6 +1458,10 @@ class Overlay {
       }
     });
   }
+
+  /** The shape last drawn (render() skips writing an unchanged one). */
+  private lastShape = "";
+  private lastCorners = "";
 
   private kick(): void {
     if (this.running) return;
