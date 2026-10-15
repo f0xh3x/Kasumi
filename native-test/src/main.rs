@@ -794,22 +794,24 @@ impl App {
         unsafe { SetTimer(Some(self.hwnd), HOVER, if fast { self.look.poll_ms } else { 100 }, None) };
     }
 
-    /// A click: a notch opens its panel; a menu row runs its item.
-    fn click(&mut self, x: f32, y: f32) {
+    /// A click: a notch opens its panel; a menu row closes the menu and hands back
+    /// its item, run once the app is released (opening it pumps messages).
+    fn click(&mut self, x: f32, y: f32) -> Option<MenuItem> {
         if let Some((p, r)) = self.open_panel() {
             if x >= r.left && x <= r.right && y >= r.top && y <= r.bottom {
                 if p.kind == Kind::Menu {
                     let hit = self.rows.iter().find(|row| y >= r.top + row.top && y < r.top + row.top + row.height).map(|row| row.item);
                     if let Some(i) = hit.filter(|&i| !self.look.menu[i].separator) {
-                        run(&self.look.menu[i]);
                         self.toggle(Kind::Menu);
+                        let item = &self.look.menu[i];
+                        return Some(MenuItem { label: item.label.clone(), icon: String::new(), action: item.action.clone(), target: item.target.clone(), separator: false });
                     }
                 }
-                return;
+                return None;
             }
         }
         if y > self.look.notch_height.max(self.look.g.expanded_height) {
-            return;
+            return None;
         }
         let w = self.size.cx as f32;
         let hit = self.notches.iter().find(|n| x >= n.bump.x.max(0.0) && x <= (n.bump.x + n.bump.width).min(w)).and_then(|n| n.opens);
@@ -817,6 +819,7 @@ impl App {
             self.set_open(true);
             self.toggle(kind);
         }
+        None
     }
 }
 
@@ -824,7 +827,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
     match msg {
         WM_TIMER => {
             APP.with(|a| {
-                let mut a = a.borrow_mut();
+                // Busy (a call that pumps messages): skip; timers come again.
+                let Ok(mut a) = a.try_borrow_mut() else { return };
                 let Some(app) = a.as_mut() else { return };
                 match wp.0 {
                     HOVER => app.hover(),
@@ -851,11 +855,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         }
         WM_LBUTTONUP => {
             let (x, y) = ((lp.0 & 0xffff) as i16 as f32, ((lp.0 >> 16) & 0xffff) as i16 as f32);
-            APP.with(|a| {
-                if let Some(app) = a.borrow_mut().as_mut() {
-                    app.click(x, y);
-                }
-            });
+            let item = APP.with(|a| a.try_borrow_mut().ok().and_then(|mut a| a.as_mut().and_then(|app| app.click(x, y))));
+            if let Some(item) = item {
+                run(&item);
+            }
             LRESULT(0)
         }
         WM_RBUTTONUP => {
@@ -1016,29 +1019,34 @@ fn main() -> Result<()> {
         // Idle: wait for messages. Animating: one frame per display refresh (DwmFlush
         // waits for the next composition), handling messages in between.
         let mut msg = MSG::default();
-        loop {
-            let animating = APP.with(|a| a.borrow().as_ref().is_some_and(|app| app.animating));
+        'run: loop {
+            let animating = APP.with(|a| a.try_borrow().is_ok_and(|a| a.as_ref().is_some_and(|app| app.animating)));
             if animating {
                 while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                     if msg.message == WM_QUIT {
-                        return Ok(());
+                        break 'run;
                     }
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
                 APP.with(|a| {
-                    if let Some(app) = a.borrow_mut().as_mut() {
-                        app.frame();
+                    if let Ok(mut a) = a.try_borrow_mut() {
+                        if let Some(app) = a.as_mut() {
+                            app.frame();
+                        }
                     }
                 });
                 let _ = DwmFlush();
             } else {
                 if !GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                    return Ok(());
+                    break 'run;
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         }
+        // Release Direct2D / DirectWrite now, not in the thread's late teardown.
+        APP.with(|a| a.borrow_mut().take());
     }
+    Ok(())
 }
