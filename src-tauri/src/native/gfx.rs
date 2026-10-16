@@ -278,6 +278,32 @@ impl Gfx {
         Ok(Text { layout, width, height })
     }
 
+    /// Text wrapped to `width`, at most `lines` lines (the rest cut with an ellipsis:
+    /// CSS line-clamp). Its height is what shows.
+    pub fn paragraph(&self, s: &str, font: &Font, width: f32, lines: u32) -> Option<Text> {
+        let wide: Vec<u16> = s.encode_utf16().collect();
+        let format = self.format(font).ok()?;
+        unsafe {
+            let layout = self.dw.CreateTextLayout(&wide, &format, width.max(1.0), 100_000.0).ok()?;
+            layout.SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP).ok()?;
+            if font.family != Family::Icons {
+                let _ = layout.SetTypography(&self.typography, DWRITE_TEXT_RANGE { startPosition: 0, length: wide.len() as u32 });
+            }
+            let mut m = DWRITE_TEXT_METRICS::default();
+            layout.GetMetrics(&mut m).ok()?;
+            let line_h = if m.lineCount > 0 { m.height / m.lineCount as f32 } else { m.height };
+            let mut height = m.height;
+            if m.lineCount > lines {
+                height = line_h * lines as f32;
+                layout.SetMaxHeight(height).ok()?;
+                let sign = self.dw.CreateEllipsisTrimmingSign(&format).ok()?;
+                let trim = DWRITE_TRIMMING { granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER, delimiter: 0, delimiterCount: 0 };
+                layout.SetTrimming(&trim, &sign).ok()?;
+            }
+            Some(Text { layout, width, height })
+        }
+    }
+
     /// Width of a string in a font (0 if it can't be laid out).
     pub fn measure(&self, s: &str, font: &Font) -> f32 {
         self.text(s, font).map_or(0.0, |t| t.width)

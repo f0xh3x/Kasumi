@@ -201,7 +201,8 @@ impl Widget for Media {
                 }))
             }
             Some(_) => Reply::None,
-            None => Reply::TogglePanel,
+            None if button == Button::Left => Reply::TogglePanel,
+            None => Reply::None,
         }
     }
 }

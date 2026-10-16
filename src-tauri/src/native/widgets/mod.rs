@@ -10,6 +10,7 @@ pub mod icon;
 mod menu;
 mod panels;
 mod panels2;
+mod panels3;
 mod quick;
 mod shell;
 mod tasks;
@@ -455,8 +456,13 @@ pub trait Widget {
     fn hover(&mut self, _at: Option<(f32, f32)>) -> bool {
         false
     }
-    fn click(&mut self, _button: Button, _at: (f32, f32)) -> Reply {
-        Reply::TogglePanel
+    /// A click (by default the left button opens or closes its panel).
+    fn click(&mut self, button: Button, _at: (f32, f32)) -> Reply {
+        if button == Button::Left {
+            Reply::TogglePanel
+        } else {
+            Reply::None
+        }
     }
     /// Its icon's centre x from its left (a menu panel lines its icons up under it).
     fn icon_x(&self) -> Option<f32> {
@@ -580,6 +586,9 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
         "claude" => Box::new(panels2::ClaudePanel::new(opts)),
         "media" => Box::new(panels2::MediaPanel::new()),
         "quick" => Box::new(quick::QuickPanel::new(opts)),
+        "clipboard" => Box::new(panels3::ClipboardPanel::new()),
+        "notifications" => Box::new(panels3::NotificationsPanel::new(opts)),
+        "tasks" => Box::new(panels3::TasksPanel::new(opts)),
         _ => return None,
     })
 }

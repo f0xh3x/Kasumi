@@ -255,6 +255,10 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
                     for s in n.surfaces.iter_mut().filter(|s| s.animating) {
                         s.frame(&n.gfx, dt);
                         FRAMES.fetch_add(1, Ordering::Relaxed);
+                        // What panels asked for as they shut (clear_on_close).
+                        for act in s.take_acts() {
+                            run_act(act, n.app.clone());
+                        }
                     }
                     report(n);
                 });

@@ -17,6 +17,15 @@ use crate::native::gfx::{rect, white, with_alpha};
 
 const EASE: (f32, f32, f32, f32) = (0.2, 0.8, 0.2, 1.0);
 
+thread_local! {
+    /// The app the tasks panel is about (set on right click), as the page's menuTarget.
+    static MENU_TARGET: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+pub fn menu_target() -> String {
+    MENU_TARGET.with(|t| t.borrow().clone())
+}
+
 #[derive(Clone, Debug)]
 struct Win {
     hwnd: i64,
@@ -391,7 +400,10 @@ impl Widget for Tasks {
                 None => Reply::None,
             },
             // The app's menu (its windows, a new window, pin, close all): the tasks panel.
-            Button::Right => Reply::None,
+            Button::Right => {
+                MENU_TARGET.with(|t| *t.borrow_mut() = a.key.clone());
+                Reply::TogglePanel
+            }
         }
     }
 }

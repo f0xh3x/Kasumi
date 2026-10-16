@@ -88,8 +88,8 @@ impl Widget for Temps {
     fn animating(&self, now: Instant) -> bool {
         self.cpu.animating(now) || self.gpu.animating(now)
     }
-    fn click(&mut self, _: Button, _: (f32, f32)) -> Reply {
-        Reply::TogglePanel
+    fn click(&mut self, button: Button, _: (f32, f32)) -> Reply {
+        if button == Button::Left { Reply::TogglePanel } else { Reply::None }
     }
 }
 

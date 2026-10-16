@@ -1413,11 +1413,10 @@ impl Surface {
                 other => other,
             };
             match reply {
-                Reply::TogglePanel if button == Button::Left => {
+                Reply::TogglePanel => {
                     self.toggle_panel_of(gfx, wi);
                     Reply::None
                 }
-                Reply::TogglePanel => Reply::None,
                 Reply::ToggleAnd(act) => {
                     self.toggle_panel_of(gfx, wi);
                     Reply::Do(act)
