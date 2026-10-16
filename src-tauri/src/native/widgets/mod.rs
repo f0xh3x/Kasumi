@@ -10,6 +10,7 @@ pub mod icon;
 mod menu;
 mod panels;
 mod panels2;
+mod quick;
 mod shell;
 mod tasks;
 mod weather;
@@ -499,7 +500,9 @@ pub trait Panel {
     fn press(&mut self, _at: (f32, f32)) -> bool {
         false
     }
-    fn drag(&mut self, _at: (f32, f32)) {}
+    fn drag(&mut self, _at: (f32, f32)) -> Reply {
+        Reply::None
+    }
     fn release(&mut self, _at: (f32, f32)) -> Reply {
         Reply::None
     }
@@ -510,6 +513,14 @@ pub trait Panel {
     /// Whether what `tick` changes can change its size (false: only redraw).
     fn tick_resizes(&self) -> bool {
         true
+    }
+    /// Something it wants done after a tick (asking the backend for a list it shows).
+    fn act(&mut self) -> Option<Act> {
+        None
+    }
+    /// Still moving (a list sliding open): frames, measuring it each one.
+    fn animating(&self, _now: Instant) -> bool {
+        false
     }
     /// Panels whose icon column lines up under the widget's icon (the menu): its
     /// centre's x in the content.
@@ -568,6 +579,7 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
         "tray" => Box::new(panels::TrayPanel::new(opts)),
         "claude" => Box::new(panels2::ClaudePanel::new(opts)),
         "media" => Box::new(panels2::MediaPanel::new()),
+        "quick" => Box::new(quick::QuickPanel::new(opts)),
         _ => return None,
     })
 }

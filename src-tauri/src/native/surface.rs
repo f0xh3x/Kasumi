@@ -563,6 +563,11 @@ impl Surface {
     }
 
     /// Widgets' timers.
+    /// What panels asked for in their ticks.
+    pub fn take_acts(&mut self) -> Vec<Act> {
+        self.panels.iter_mut().filter_map(|p| p.p.act()).collect()
+    }
+
     pub fn tick(&mut self, gfx: &Gfx, now: Instant) {
         let mut changed = false;
         let mut redraw = false;
@@ -1047,6 +1052,12 @@ impl Surface {
 
     /// One animation step (once per display refresh while something moves).
     pub fn frame(&mut self, gfx: &Gfx, dt: f64) {
+        let now = Instant::now();
+        let panels_moving = self.panels.iter().any(|p| p.p.animating(now));
+        if panels_moving {
+            // A list sliding open inside a panel: the panel's shape follows every frame.
+            self.measure_panels(gfx);
+        }
         let mut springs: Vec<&mut Spring> = vec![&mut self.expand, &mut self.spread, &mut self.nudge];
         for d in &mut self.drops {
             springs.push(&mut d.spring);
@@ -1063,8 +1074,7 @@ impl Surface {
         for s in springs.iter_mut() {
             s.step(dt);
         }
-        let now = Instant::now();
-        let busy = self.widgets.iter().any(|w| w.w.animating(now));
+        let busy = self.widgets.iter().any(|w| w.w.animating(now)) || panels_moving;
         if springs.iter().all(|s| s.settled()) && !busy {
             for s in springs.iter_mut() {
                 s.snap();
@@ -1422,6 +1432,9 @@ impl Surface {
 
     /// What a reply asks of the surface; the action to run, if any.
     fn answer(&mut self, gfx: &Gfx, reply: Reply) -> Option<Act> {
+        if self.panels.iter().any(|p| p.p.animating(Instant::now())) {
+            self.kick();
+        }
         match reply {
             Reply::None | Reply::TogglePanel => None,
             Reply::Redraw => {
@@ -1465,11 +1478,12 @@ impl Surface {
         self.captured.is_some()
     }
 
-    pub fn drag(&mut self, gfx: &Gfx, at: (i32, i32)) {
-        if let Some((pi, local)) = self.captured_local(at) {
-            self.panels[pi].p.drag(local);
-            self.redraw(gfx);
-        }
+    pub fn drag(&mut self, gfx: &Gfx, at: (i32, i32)) -> Option<Act> {
+        let (pi, local) = self.captured_local(at)?;
+        let reply = self.panels[pi].p.drag(local);
+        let act = self.answer(gfx, reply);
+        self.redraw(gfx);
+        act
     }
 
     pub fn release(&mut self, gfx: &Gfx, at: (i32, i32)) -> Option<Act> {

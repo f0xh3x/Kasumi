@@ -409,9 +409,10 @@ impl Panel for MediaPanel {
         self.drag(at);
         true
     }
-    fn drag(&mut self, at: (f32, f32)) {
+    fn drag(&mut self, at: (f32, f32)) -> Reply {
         let (tx, tw) = self.track;
         self.dragging = Some(((at.0 - tx) / tw.max(1.0)).clamp(0.0, 1.0));
+        Reply::None
     }
     fn release(&mut self, at: (f32, f32)) -> Reply {
         self.drag(at);

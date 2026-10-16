@@ -390,6 +390,9 @@ impl Native {
         let now = Instant::now();
         for s in &mut self.surfaces {
             s.tick(&self.gfx, now);
+            for act in s.take_acts() {
+                run_act(act, self.app.clone());
+            }
         }
         let next = self.surfaces.iter().filter_map(|s| s.wake()).min();
         unsafe {
@@ -443,7 +446,9 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             with_native(|n| {
                 if let Some(s) = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd) {
                     if s.dragging() {
-                        s.drag(&n.gfx, (x, y));
+                        if let Some(act) = s.drag(&n.gfx, (x, y)) {
+                            run_act(act, n.app.clone());
+                        }
                     } else {
                         s.mouse_move(&n.gfx, Some((x, y)));
                     }
