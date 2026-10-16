@@ -6,7 +6,7 @@ mod volume;
 
 use crate::providers::SharedConfig;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, EventTarget, Manager};
+use tauri::{AppHandle, Manager};
 
 /// Until when volume changes don't pop the OSD (set while a quick settings
 /// slider is being dragged: the slider shows the level itself).
@@ -23,7 +23,7 @@ pub fn emit(app: &AppHandle, kind: &str, event: &str, payload: Value) -> usize {
     for (label, notch) in &targets {
         let mut p = payload.clone();
         p["notch"] = json!(notch);
-        let _ = app.emit_to(EventTarget::WebviewWindow { label: label.clone() }, event, p);
+        crate::ui::event(app, label, event, p);
     }
     targets.len()
 }

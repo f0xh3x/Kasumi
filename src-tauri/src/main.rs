@@ -12,12 +12,14 @@ mod keyhook;
 mod launcher;
 mod legacy;
 mod logfile;
+mod native;
 mod osd;
 mod presets;
 mod providers;
 mod settings;
 mod taskbar;
 mod tray;
+mod ui;
 mod updater;
 mod webmem;
 mod win;
@@ -27,6 +29,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--keyhook") {
         keyhook::helper(args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(0));
+        return;
+    }
+    // Native bars drawn off screen into PNGs (native/snapshot.rs): nothing else of the app.
+    if args.iter().any(|a| a == "--native-snapshot") {
+        native::snapshot::run(&args);
         return;
     }
     legacy::migrate();
@@ -48,6 +55,11 @@ fn main() {
             taskbar::start();
             corners::start();
             launcher::start(app.handle());
+            // [general] renderer: the bars drawn natively instead of as WebView2 pages.
+            let native = std::env::args().any(|a| a == "--native") || config::load().is_ok_and(|c| c.general.renderer == "native");
+            if native {
+                native::start(app.handle());
+            }
             engine::start(app.handle());
             osd::start(app.handle());
             keyhook::start(osd::volume_key);

@@ -1,0 +1,480 @@
+//! The native renderer ([general] renderer = "native"): the bars and docks drawn
+//! with Direct2D / DirectWrite into layered windows instead of WebView2 pages.
+//! One thread owns every surface; the engine and providers talk to it through
+//! `ui.rs`, which posts `Msg`s here. A surface reports what a page reported
+//! (notch widths, interactive regions) straight to the engine.
+
+pub mod geometry;
+mod gfx;
+pub mod snapshot;
+mod surface;
+mod widgets;
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
+use serde_json::Value;
+use tauri::AppHandle;
+use windows::core::w;
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Dwm::DwmFlush;
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::WindowsAndMessaging::*;
+
+use crate::engine::{Layout, NotchLayout};
+use crate::win::Monitor;
+use widgets::{Act, Button};
+
+pub use surface::Surface;
+
+/// Damped spring (src/spring.ts), integrated in fixed sub-steps.
+#[derive(Clone, Debug)]
+pub struct Spring {
+    pub value: f64,
+    pub velocity: f64,
+    pub target: f64,
+    pub stiffness: f64,
+    pub damping: f64,
+    pub mass: f64,
+    /// Speed while heading to 1 (opening) and to 0 (closing).
+    pub open: f64,
+    pub close: f64,
+    /// [animation] bounce: may overshoot; off: at least critically damped.
+    pub bounce: bool,
+}
+
+impl Spring {
+    pub fn new(value: f64, stiffness: f64, damping: f64) -> Spring {
+        Spring { value, velocity: 0.0, target: value, stiffness, damping, mass: 1.0, open: 1.0, close: 1.0, bounce: false }
+    }
+
+    pub fn step(&mut self, dt: f64) {
+        let f = if self.target >= 0.5 { self.open } else { self.close };
+        let k = self.stiffness * f * f;
+        let c = if self.bounce { self.damping * f } else { (self.damping * f).max(2.0 * (k * self.mass).sqrt()) };
+        let mut left = dt;
+        while left > 0.0 {
+            let s = left.min(1.0 / 240.0);
+            let a = (-k * (self.value - self.target) - c * self.velocity) / self.mass;
+            self.velocity += a * s;
+            self.value += self.velocity * s;
+            left -= s;
+        }
+    }
+
+    pub fn settled(&self) -> bool {
+        (self.value - self.target).abs() < 5e-4 && self.velocity.abs() < 5e-3
+    }
+
+    pub fn snap(&mut self) {
+        self.value = self.target;
+        self.velocity = 0.0;
+    }
+
+    /// Stiffness, damping and mass ([animation]), the open / close speeds, bounce.
+    pub fn configure(&mut self, stiffness: f64, damping: f64, a: &crate::config::Animation) {
+        self.stiffness = stiffness;
+        self.damping = damping;
+        self.mass = a.mass.max(0.01);
+        let ok = |v: f64| if v.is_finite() && v > 0.0 { v.clamp(0.25, 4.0) } else { 1.0 };
+        self.open = ok(a.open_speed);
+        self.close = ok(a.close_speed);
+        self.bounce = a.bounce;
+    }
+}
+
+/// What the engine and providers tell the native thread.
+pub enum Msg {
+    Create { label: String, monitor: Monitor, layout: Box<Layout>, reply: Sender<isize> },
+    Destroy(String),
+    Layout(String, Box<Layout>),
+    /// The monitor or the window's height changed (engine `win::place`).
+    Place(String, Monitor),
+    State(String, bool),
+    Positions(String, Vec<NotchLayout>),
+    Nudge(String, Option<String>),
+    /// Pop-ups and the rest: event name and payload, as the pages got them.
+    Event(String, String, Value),
+    Data(String, Value),
+    /// Entries of an object key that changed (publish_entries).
+    Entries(String, serde_json::Map<String, Value>),
+    Shown(String, bool),
+    ClickThrough(String, bool),
+}
+
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+static SENDER: OnceLock<Mutex<Sender<Msg>>> = OnceLock::new();
+/// The thread's message-only window: posting to it wakes the thread.
+static WAKE: AtomicIsize = AtomicIsize::new(0);
+const WM_WAKE: u32 = WM_APP + 1;
+/// The cursor left a window (TrackMouseEvent).
+const WM_MOUSELEAVE: u32 = 0x02A3;
+const TIMER_WIDGETS: usize = 1;
+
+/// Whether the native renderer draws the bars (chosen at start).
+pub fn active() -> bool {
+    ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Hands a message to the native thread.
+pub fn post(msg: Msg) {
+    let Some(tx) = SENDER.get() else { return };
+    if tx.lock().unwrap().send(msg).is_ok() {
+        let h = WAKE.load(Ordering::Relaxed);
+        if h != 0 {
+            unsafe {
+                let _ = PostMessageW(Some(HWND(h as *mut _)), WM_WAKE, WPARAM(0), LPARAM(0));
+            }
+        }
+    }
+}
+
+/// Creates a surface's window on the native thread; its handle (0 on failure).
+pub fn create(label: &str, monitor: &Monitor, layout: &Layout) -> isize {
+    let (reply, rx) = mpsc::channel();
+    post(Msg::Create { label: label.to_string(), monitor: monitor.clone(), layout: Box::new(layout.clone()), reply });
+    rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap_or(0)
+}
+
+/// Starts the native thread (the renderer is native from here on).
+pub fn start(app: &AppHandle) {
+    let (tx, rx) = mpsc::channel();
+    if SENDER.set(Mutex::new(tx)).is_err() {
+        return;
+    }
+    ACTIVE.store(true, Ordering::Relaxed);
+    let app = app.clone();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("kasumi-native".into())
+        .spawn(move || run(Some(app), rx, ready_tx))
+        .expect("spawn native thread");
+    // The engine creates surfaces right away: wait for the wake window.
+    let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(5));
+}
+
+/// Everything the native thread owns.
+pub(crate) struct Native {
+    gfx: gfx::Gfx,
+    surfaces: Vec<Surface>,
+    /// Every published value (all keys: a surface built later catches up from here).
+    store: HashMap<String, Value>,
+    app: Option<AppHandle>,
+}
+
+thread_local! {
+    static NATIVE: RefCell<Option<Native>> = const { RefCell::new(None) };
+}
+
+pub(crate) const SURFACE_CLASS: windows::core::PCWSTR = w!("KasumiNativeSurface");
+
+/// Registers the surface window class (once per process).
+pub(crate) fn register_class() {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    unsafe {
+        let instance = GetModuleHandleW(None).unwrap_or_default();
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(surface_proc),
+            hInstance: instance.into(),
+            lpszClassName: SURFACE_CLASS,
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            ..Default::default()
+        });
+        RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(wake_proc), hInstance: instance.into(), lpszClassName: w!("KasumiNativeWake"), ..Default::default() });
+    }
+}
+
+fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+    register_class();
+    let gfx = match gfx::Gfx::new() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("[kasumi] native: Direct2D unavailable: {e}");
+            return;
+        }
+    };
+    let wake = unsafe {
+        CreateWindowExW(WINDOW_EX_STYLE(0), w!("KasumiNativeWake"), w!("Kasumi"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None)
+    };
+    let Ok(wake) = wake else {
+        eprintln!("[kasumi] native: no message window");
+        return;
+    };
+    WAKE.store(wake.0 as isize, Ordering::Relaxed);
+    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app }));
+    INBOX.with(|i| *i.borrow_mut() = Some(rx));
+    let _ = ready.send(());
+    eprintln!("[kasumi] native renderer started");
+
+    // Idle: wait for messages. Animating: one frame per display refresh (DwmFlush
+    // waits for the next composition), handling messages in between.
+    let mut msg = MSG::default();
+    let mut last = Instant::now();
+    'run: loop {
+        let animating = NATIVE.with(|n| n.try_borrow().is_ok_and(|n| n.as_ref().is_some_and(|n| n.surfaces.iter().any(|s| s.animating))));
+        unsafe {
+            if animating {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    if msg.message == WM_QUIT {
+                        break 'run;
+                    }
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                let now = Instant::now();
+                let dt = (now - last).as_secs_f64().min(0.05);
+                last = now;
+                with_native(|n| {
+                    for s in n.surfaces.iter_mut().filter(|s| s.animating) {
+                        s.frame(&n.gfx, dt);
+                    }
+                    report(n);
+                });
+                let _ = DwmFlush();
+            } else {
+                if !GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    break 'run;
+                }
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+                last = Instant::now();
+            }
+        }
+    }
+    NATIVE.with(|n| n.borrow_mut().take());
+}
+
+thread_local! {
+    static INBOX: RefCell<Option<Receiver<Msg>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` on the native state unless it's busy (a call that pumps messages
+/// re-entered the window procedure): then it's skipped (timers and the inbox
+/// come again).
+fn with_native<R>(f: impl FnOnce(&mut Native) -> R) -> Option<R> {
+    NATIVE.with(|n| {
+        let mut n = n.try_borrow_mut().ok()?;
+        n.as_mut().map(f)
+    })
+}
+
+/// Sends the engine what surfaces measured (notch widths, regions).
+fn report(n: &mut Native) {
+    let Some(app) = n.app.as_ref() else { return };
+    for s in &mut n.surfaces {
+        if let Some(widths) = s.take_widths() {
+            crate::engine::native_widths(app, &s.label, widths);
+        }
+        if let Some(regions) = s.take_regions() {
+            crate::engine::native_regions(app, &s.label, regions);
+        }
+    }
+}
+
+impl Native {
+    fn surface(&mut self, label: &str) -> Option<&mut Surface> {
+        self.surfaces.iter_mut().find(|s| s.label == label)
+    }
+
+    fn handle(&mut self, msg: Msg) {
+        match msg {
+            Msg::Create { label, monitor, layout, reply } => {
+                let hwnd = match Surface::new(&self.gfx, &label, monitor, *layout, &self.store, false) {
+                    Ok(s) => {
+                        let h = s.hwnd.0 as isize;
+                        self.surfaces.push(s);
+                        h
+                    }
+                    Err(e) => {
+                        eprintln!("[kasumi] native: {label}: {e}");
+                        0
+                    }
+                };
+                let _ = reply.send(hwnd);
+            }
+            Msg::Destroy(label) => self.surfaces.retain(|s| s.label != label),
+            Msg::Layout(label, layout) => {
+                let store = std::mem::take(&mut self.store);
+                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                    s.apply(&self.gfx, *layout, &store);
+                }
+                self.store = store;
+            }
+            Msg::Place(label, monitor) => {
+                if let Some(s) = self.surface(&label) {
+                    s.place(monitor);
+                }
+            }
+            Msg::State(label, expanded) => {
+                let gfx = &self.gfx;
+                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                    s.set_expanded(gfx, expanded);
+                }
+            }
+            Msg::Positions(label, notches) => {
+                let gfx = &self.gfx;
+                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                    s.update_positions(gfx, notches);
+                }
+            }
+            Msg::Nudge(label, notch) => {
+                if let Some(s) = self.surface(&label) {
+                    s.set_nudge(notch);
+                }
+            }
+            Msg::Event(label, event, payload) => {
+                let gfx = &self.gfx;
+                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                    s.event(gfx, &event, &payload);
+                }
+            }
+            Msg::Data(key, value) => {
+                for s in &mut self.surfaces {
+                    s.data(&self.gfx, &key, &value);
+                }
+                self.store.insert(key, value);
+            }
+            Msg::Entries(key, entries) => {
+                let held = self.store.entry(key.clone()).or_insert_with(|| Value::Object(Default::default()));
+                if let Some(map) = held.as_object_mut() {
+                    map.extend(entries);
+                }
+                let value = held.clone();
+                for s in &mut self.surfaces {
+                    s.data(&self.gfx, &key, &value);
+                }
+            }
+            Msg::Shown(label, shown) => {
+                if let Some(s) = self.surface(&label) {
+                    s.set_shown(shown);
+                }
+            }
+            Msg::ClickThrough(label, ignore) => {
+                if let Some(s) = self.surface(&label) {
+                    s.set_click_through(ignore);
+                }
+            }
+        }
+    }
+
+    /// Widgets' timers: run the due ones, then sleep until the next.
+    fn tick_widgets(&mut self, wake: HWND) {
+        let now = Instant::now();
+        for s in &mut self.surfaces {
+            s.tick(&self.gfx, now);
+        }
+        let next = self.surfaces.iter().filter_map(|s| s.wake()).min();
+        unsafe {
+            match next {
+                Some(t) => {
+                    let ms = t.saturating_duration_since(Instant::now()).as_millis().clamp(10, 3_600_000) as u32;
+                    SetTimer(Some(wake), TIMER_WIDGETS, ms, None);
+                }
+                None => {
+                    let _ = KillTimer(Some(wake), TIMER_WIDGETS);
+                }
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn wake_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_WAKE => {
+            let handled = with_native(|n| {
+                let msgs: Vec<Msg> = INBOX.with(|i| i.borrow().as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default());
+                for m in msgs {
+                    n.handle(m);
+                }
+                n.tick_widgets(hwnd);
+                report(n);
+            });
+            if handled.is_none() {
+                // Busy (a call that pumps messages): the messages wait in the channel.
+                let _ = PostMessageW(Some(hwnd), WM_WAKE, WPARAM(0), LPARAM(0));
+            }
+            LRESULT(0)
+        }
+        WM_TIMER if wp.0 == TIMER_WIDGETS => {
+            with_native(|n| {
+                n.tick_widgets(hwnd);
+                report(n);
+            });
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    let point = || ((lp.0 & 0xffff) as i16 as i32, ((lp.0 >> 16) & 0xffff) as i16 as i32);
+    match msg {
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_MOUSEMOVE => {
+            let (x, y) = point();
+            with_native(|n| {
+                if let Some(s) = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd) {
+                    s.mouse_move(&n.gfx, Some((x, y)));
+                }
+            });
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            with_native(|n| {
+                if let Some(s) = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd) {
+                    s.mouse_move(&n.gfx, None);
+                }
+            });
+            LRESULT(0)
+        }
+        WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP => {
+            let (x, y) = point();
+            let button = match msg {
+                WM_LBUTTONUP => Button::Left,
+                WM_RBUTTONUP => Button::Right,
+                _ => Button::Middle,
+            };
+            // What the click asks for runs once the state is released (it may pump messages).
+            let act = with_native(|n| {
+                let gfx = &n.gfx;
+                let act = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| s.click(gfx, button, (x, y)));
+                report(n);
+                act.map(|a| (a, n.app.clone()))
+            })
+            .flatten();
+            if let Some((act, app)) = act {
+                run_act(act, app);
+            }
+            LRESULT(0)
+        }
+        // Clicks are handled on release; nothing should take the focus.
+        WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => LRESULT(0),
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+fn run_act(act: Act, app: Option<AppHandle>) {
+    match act {
+        Act::Run { action, target } => {
+            let Some(app) = app else { return };
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::actions::run_action(app, action.clone(), target).await {
+                    eprintln!("[kasumi] {action}: {e}");
+                }
+            });
+        }
+    }
+}

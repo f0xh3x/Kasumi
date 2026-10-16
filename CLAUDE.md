@@ -205,3 +205,14 @@ Installer: `npx tauri build`; silent test install
   imaging stack costs ~13 MB in any process that loads it). Measure CPU with
   `QueryProcessCycleTime`: process CPU times move in 15.6 ms ticks. Quit Kasumi (`Local\Kasumi.Quit` event)
   while the user tries it, and start Kasumi again afterwards.
+* **Native renderer** (branch `native`, plan and phases in `docs/NATIVE-PLAN.md`):
+  `[general] renderer = "native"` (or `--native`) draws the bars in Kasumi itself
+  with Direct2D instead of WebView2. `src-tauri/src/ui.rs` is the seam: the engine,
+  providers and pop-ups send bars everything through it, never `emit_to` /
+  `get_webview_window` directly. `native/geometry.rs` ports `src/geometry.ts`
+  (change both together), `native/surface.rs` ports `Overlay` (src/main.ts),
+  `native/widgets/*` the widgets (port the TS and styles.css values, don't
+  approximate). Check it off screen: `kasumi.exe --native-snapshot <dir> [--data
+  values.json]` draws every surface of the live config in its states into PNGs
+  (`<dir>/snapshot.txt` lists the measured notches) without touching the running
+  Kasumi.

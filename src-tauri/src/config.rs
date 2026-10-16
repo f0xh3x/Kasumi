@@ -201,11 +201,24 @@ pub struct General {
     pub auto_update: bool,
     /// After Kasumi updates, a window shows what's new (settings.rs `startup`).
     pub update_notes: bool,
+    /// What draws the bars: "web" (WebView2 pages) or "native" (Direct2D, native/).
+    /// Read at start.
+    pub renderer: String,
 }
 
 impl Default for General {
     fn default() -> Self {
-        Self { hide_in_fullscreen: true, rounded_corners: false, corner_radius: 10.0, corners_attached: true, tooltips: true, check_updates: true, auto_update: false, update_notes: true }
+        Self {
+            hide_in_fullscreen: true,
+            rounded_corners: false,
+            corner_radius: 10.0,
+            corners_attached: true,
+            tooltips: true,
+            check_updates: true,
+            auto_update: false,
+            update_notes: true,
+            renderer: "web".into(),
+        }
     }
 }
 

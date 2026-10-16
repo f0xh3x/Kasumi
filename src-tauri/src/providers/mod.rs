@@ -57,14 +57,8 @@ fn consumers(key: &str) -> Option<&'static [&'static str]> {
 /// for a key without a listed consumer): a page that has no such widget would
 /// only wake up to throw it away.
 fn emit_data(app: &AppHandle, key: &str, value: &Value) {
-    let payload = json!({ "key": key, "value": value });
-    let Some(types) = consumers(key) else {
-        let _ = app.emit("notch://data", payload);
-        return;
-    };
-    for label in crate::engine::overlays_showing(app, types) {
-        let _ = app.emit_to(EventTarget::WebviewWindow { label }, "notch://data", payload.clone());
-    }
+    let labels = (!crate::ui::native()).then(|| consumers(key).map(|types| crate::engine::overlays_showing(app, types))).flatten();
+    crate::ui::data(app, labels, key, value);
 }
 
 /// Stores `value` under `key` and sends it to the pages that use it, if it changed.
@@ -99,7 +93,8 @@ pub fn publish_entries(app: &AppHandle, key: &str, entries: serde_json::Map<Stri
         changed
     };
     if !changed.is_empty() {
-        emit_data(app, key, &Value::Object(changed));
+        let labels = (!crate::ui::native()).then(|| consumers(key).map(|types| crate::engine::overlays_showing(app, types))).flatten();
+        crate::ui::data_entries(app, labels, key, &changed);
     }
 }
 
@@ -107,6 +102,10 @@ pub fn publish_entries(app: &AppHandle, key: &str, entries: serde_json::Map<Stri
 /// a widget it didn't show before may have arrived, and what was published
 /// meanwhile went only to the pages that had one.
 pub fn resend(app: &AppHandle, label: &str) {
+    // The native renderer keeps every value it was sent.
+    if crate::ui::native() {
+        return;
+    }
     let keys: Vec<String> = app.state::<DataStore>().values.lock().unwrap().keys().cloned().collect();
     for key in keys {
         let Some(types) = consumers(&key) else { continue };
