@@ -459,6 +459,11 @@ pub trait Widget {
             Reply::None
         }
     }
+    /// It wants its panel open now (the tasks widget, hovered a moment over an app
+    /// with several windows). Asked after its ticks.
+    fn wants_panel(&mut self) -> bool {
+        false
+    }
     /// Its icon's centre x from its left (a menu panel lines its icons up under it).
     fn icon_x(&self) -> Option<f32> {
         None

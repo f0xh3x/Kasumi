@@ -143,6 +143,17 @@ export const pages: Page[] = [
             path: ["shell", "hide_taskbar"],
             default: false,
           },
+          {
+            kind: "select",
+            label: "Drawing",
+            help: "What draws the bars and docks. Native is much lighter (a few MB instead of a browser engine). Takes effect when Kasumi restarts.",
+            path: ["general", "renderer"],
+            default: "web",
+            options: [
+              { value: "web", label: "Web (WebView2)" },
+              { value: "native", label: "Native (Direct2D)" },
+            ],
+          },
         ],
       },
       {

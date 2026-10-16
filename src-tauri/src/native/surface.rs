@@ -222,6 +222,9 @@ pub struct Surface {
     captured: Option<usize>,
     /// Acts the surface itself asks for (the launcher's apps).
     pending: Vec<Act>,
+    /// A panel a widget opened on hover (the tasks widget's): its widget, and when
+    /// the cursor left both (it closes 350 ms after).
+    hover_panel: Option<(usize, Option<Instant>)>,
 }
 
 impl std::ops::Drop for Surface {
@@ -291,6 +294,7 @@ impl Surface {
             remeasure: true,
             captured: None,
             pending: Vec::new(),
+            hover_panel: None,
         };
         s.apply(gfx, layout, store);
         let _ = s.render(gfx);
@@ -728,6 +732,14 @@ impl Surface {
     }
 
     pub fn tick(&mut self, gfx: &Gfx, now: Instant) {
+        // A hover-opened panel the cursor has left.
+        if let Some((wi, Some(left))) = self.hover_panel {
+            if now >= left + std::time::Duration::from_millis(350) {
+                self.hover_panel = None;
+                self.panel_of(gfx, wi, Some(false));
+                self.kick();
+            }
+        }
         if self.pop.tick(now) {
             self.kick();
         }
@@ -759,10 +771,19 @@ impl Surface {
         } else if redraw {
             self.redraw(gfx);
         }
+        // Panels widgets asked for in their ticks (a hover).
+        for wi in 0..self.widgets.len() {
+            if self.widgets[wi].w.wants_panel() && self.expanded {
+                self.panel_of(gfx, wi, Some(true));
+                self.hover_panel = Some((wi, None));
+                self.kick();
+            }
+        }
     }
 
     pub fn wake(&self) -> Option<Instant> {
-        self.widgets.iter().filter_map(|w| w.w.wake()).chain(self.panels.iter().filter_map(|p| p.p.wake())).chain(self.pop.wake()).min()
+        let hover = self.hover_panel.and_then(|(_, left)| left).map(|t| t + std::time::Duration::from_millis(350));
+        hover.into_iter().chain(self.widgets.iter().filter_map(|w| w.w.wake())).chain(self.panels.iter().filter_map(|p| p.p.wake())).chain(self.pop.wake()).min()
     }
 
     pub fn set_shown(&mut self, shown: bool) {
@@ -1677,6 +1698,19 @@ impl Surface {
             changed |= self.panels[pi].p.hover(local);
         }
         let over_widget = if over_panel.is_none() { pt.and_then(|(x, y)| self.widget_at(gfx, x, y)) } else { None };
+        // A hover-opened panel stays while the cursor is on its widget or on it.
+        if let Some((wi, _)) = self.hover_panel {
+            let drop = self.drops.iter().position(|d| d.anchor == Some(wi) || d.panels.iter().any(|(w, _)| *w == wi));
+            let open = drop.is_some_and(|di| self.drops[di].spring.target > 0.5);
+            let inside = over_widget.is_some_and(|(w, _)| w == wi) || over_panel.is_some_and(|(di, _, _)| Some(di) == drop);
+            self.hover_panel = if !open {
+                None
+            } else if inside {
+                Some((wi, None))
+            } else {
+                Some((wi, self.hover_panel.and_then(|h| h.1).or(Some(Instant::now()))))
+            };
+        }
         for wi in 0..self.widgets.len() {
             let local = over_widget.filter(|(w, _)| *w == wi).map(|(_, l)| l);
             changed |= self.widgets[wi].w.hover(local);
@@ -1709,6 +1743,8 @@ impl Surface {
             let origin = self.widgets[wi].drawn.map_or((0.0, 0.0), |(wx, cy, _)| (wx, cy));
             let (pos, scale) = (self.pos, self.scale());
             let to_screen = move |at: (f32, f32)| (pos.x as f32 + (origin.0 + at.0) * scale, pos.y as f32 + (origin.1 + at.1) * scale);
+            // A click opens or closes a panel for good (not as a hover).
+            self.hover_panel = None;
             let reply = match self.widgets[wi].w.click(button, local) {
                 Reply::Do(Act::Tray { id, button, at }) => Reply::Do(Act::Tray { id, button, at: to_screen(at) }),
                 other => other,

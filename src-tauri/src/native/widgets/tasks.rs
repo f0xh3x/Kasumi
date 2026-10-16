@@ -74,6 +74,9 @@ pub struct Tasks {
     h: f32,
     hovered: Option<usize>,
     cursor: Option<f32>,
+    /// Hovering an app with several windows: which, since when (its windows pop up after 450 ms).
+    hover_since: Option<(usize, Instant)>,
+    open_request: bool,
     /// Magnify: each icon's scale now (eased toward the cursor's), and when last stepped.
     scales: Cell<[f32; 64]>,
     stepped: Cell<Option<Instant>>,
@@ -96,6 +99,8 @@ impl Tasks {
             h: 30.0,
             hovered: None,
             cursor: None,
+            hover_since: None,
+            open_request: false,
             scales: Cell::new([1.0; 64]),
             stepped: Cell::new(None),
             active: None,
@@ -357,9 +362,31 @@ impl Widget for Tasks {
         let i = at.and_then(|(x, _)| self.boxes.iter().position(|(_, bx, bw)| x >= *bx && x < bx + bw));
         let cursor = at.map(|(x, _)| x);
         let changed = i != self.hovered || (self.opts.magnify && cursor != self.cursor);
+        if i != self.hovered {
+            self.hover_since = i.filter(|&k| self.apps.get(k).is_some_and(|a| a.wins.len() >= 2)).map(|k| (k, Instant::now()));
+        }
         self.hovered = i;
         self.cursor = cursor;
         changed
+    }
+
+    fn wake(&self) -> Option<Instant> {
+        self.hover_since.map(|(_, t)| t + std::time::Duration::from_millis(450))
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        if let Some((k, t)) = self.hover_since {
+            if now >= t + std::time::Duration::from_millis(450) && self.hovered == Some(k) {
+                MENU_TARGET.with(|m| *m.borrow_mut() = self.apps[k].key.clone());
+                self.open_request = true;
+            }
+            self.hover_since = None;
+        }
+        false
+    }
+
+    fn wants_panel(&mut self) -> bool {
+        std::mem::take(&mut self.open_request)
     }
 
     fn animating(&self, now: Instant) -> bool {
@@ -400,6 +427,7 @@ impl Widget for Tasks {
             },
             // The app's menu (its windows, a new window, pin, close all): the tasks panel.
             Button::Right => {
+                self.hover_since = None;
                 MENU_TARGET.with(|t| *t.borrow_mut() = a.key.clone());
                 Reply::TogglePanel
             }
