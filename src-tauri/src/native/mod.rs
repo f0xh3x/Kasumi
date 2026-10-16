@@ -5,6 +5,7 @@
 //! (notch widths, interactive regions) straight to the engine.
 
 pub mod geometry;
+mod drop;
 mod gfx;
 mod icons;
 mod popup;
@@ -24,7 +25,6 @@ use tauri::AppHandle;
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmFlush;
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -210,7 +210,8 @@ pub(crate) fn register_class() {
 
 fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        // OLE (an STA, as COM needs for the shell) for the windows' file drop targets.
+        let _ = windows::Win32::System::Ole::OleInitialize(None);
         let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
     register_class();

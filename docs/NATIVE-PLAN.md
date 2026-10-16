@@ -52,3 +52,12 @@ The prototype in `native-test/` proved the look, motion and cost (~16 MB vs ~375
 
 Each phase is committed on branch `native`; the web renderer keeps working the
 whole time.
+
+## Status (2026-10-16)
+
+Phases 1-4 done; phase 5 done except tooltips and two small motions (covered
+widgets fading out, bar widgets sliding when the row changes); phase 6 has the
+settings switch (General > Drawing). Everything is checked off screen only
+(snapshots and the headless live test: 4-6 surfaces in about 17 MB, no CPU at
+rest). Next: try it on screen with the user, fix what that shows, then make
+native the default.

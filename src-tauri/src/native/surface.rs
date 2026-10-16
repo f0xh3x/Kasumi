@@ -304,6 +304,7 @@ impl Surface {
             unsafe {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
+            super::drop::register(hwnd, label);
         }
         Ok(s)
     }
@@ -598,6 +599,14 @@ impl Surface {
             "notch://osd" => self.pop.osd(gfx, &self.look, &self.layout, payload),
             "notch://notification" => self.pop.notification(gfx, &self.look, &self.layout, payload),
             "notch://keyboard" => self.keyboard(gfx, payload),
+            // Files dropped on the bar: the first widget that takes them (tasks pins them).
+            "notch://drop" => {
+                let paths: Vec<String> = payload.get("paths").and_then(|p| p.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+                if let Some(act) = self.widgets.iter_mut().find_map(|w| w.w.dropped(&paths)) {
+                    self.pending.push(act);
+                }
+                return;
+            }
             "notch://launcher" => {
                 let open = payload.get("open").and_then(|o| o.as_bool()).unwrap_or(false);
                 self.set_launcher(gfx, open);

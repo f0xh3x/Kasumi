@@ -470,6 +470,10 @@ pub trait Widget {
     fn release(&mut self, _at: (f32, f32)) -> Reply {
         Reply::None
     }
+    /// Files dropped on the bar: something to do with them (the tasks widget pins them).
+    fn dropped(&mut self, _paths: &[String]) -> Option<Act> {
+        None
+    }
     /// It wants its panel open now (the tasks widget, hovered a moment over an app
     /// with several windows). Asked after its ticks.
     fn wants_panel(&mut self) -> bool {

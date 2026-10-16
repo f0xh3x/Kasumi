@@ -94,6 +94,8 @@ pub struct Tasks {
     /// The order the user dragged apps into, until the backend's catches up; every app's key.
     local_order: Option<Vec<String>>,
     all_keys: Vec<String>,
+    /// The pin list as written in the config (app keys / dropped files' paths).
+    pins: Vec<String>,
     /// Magnify: each icon's scale now (eased toward the cursor's), and when last stepped.
     scales: Cell<[f32; 64]>,
     stepped: Cell<Option<Instant>>,
@@ -121,6 +123,7 @@ impl Tasks {
             drag: None,
             local_order: None,
             all_keys: Vec::new(),
+            pins: Vec::new(),
             scales: Cell::new([1.0; 64]),
             stepped: Cell::new(None),
             active: None,
@@ -265,6 +268,11 @@ impl Widget for Tasks {
             })
             .unwrap_or_default();
         let mut apps = apps;
+        self.pins = v
+            .get("apps")
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter(|x| x.get("pinned").and_then(|p| p.as_bool()) == Some(true)).filter_map(|x| x.get("pin").and_then(|p| p.as_str()).or(x.get("key").and_then(|k| k.as_str())).map(String::from)).collect())
+            .unwrap_or_default();
         self.all_keys = v.get("apps").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(|x| x.get("key")?.as_str().map(String::from)).collect()).unwrap_or_default();
         if let Some(order) = &self.local_order {
             // The new order has arrived from the backend: stop overriding it.
@@ -431,6 +439,24 @@ impl Widget for Tasks {
             || self.glide.as_ref().is_some_and(|gl| now.saturating_duration_since(gl.start).as_secs_f32() * 1000.0 < gl.ms + 20.0)
             || self.slides.values().any(|(_, t)| now.saturating_duration_since(*t).as_secs_f32() < 0.22)
             || self.fresh.values().any(|t| now.saturating_duration_since(*t).as_secs_f32() < 0.2)
+    }
+
+    fn dropped(&mut self, paths: &[String]) -> Option<Act> {
+        if self.opts.flag("pinning") == Some(false) || self.opts.flag("pinned") == Some(false) {
+            return None;
+        }
+        let added: Vec<String> = paths.iter().filter(|p| !self.pins.iter().any(|x| x.eq_ignore_ascii_case(p))).cloned().collect();
+        if added.is_empty() {
+            return None;
+        }
+        eprintln!("[kasumi] tasks: pinning {added:?}");
+        let mut pins = self.pins.clone();
+        pins.extend(added);
+        Some(Act::call(move |_| {
+            use crate::config_edit::Seg::Key;
+            let path = vec![Key("widgets".into()), Key("tasks".into()), Key("pins".into())];
+            let _ = tauri::async_runtime::block_on(crate::config_edit::config_write(path, Some(serde_json::json!(pins))));
+        }))
     }
 
     fn press(&mut self, at: (f32, f32)) -> bool {
