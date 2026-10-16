@@ -45,8 +45,9 @@ struct Placed {
     opts: Opts,
     /// The notch drop it sits in (bars: it stays there and glides to its place in the open bar).
     notch: Option<usize>,
-    /// Its width as last measured.
+    /// Its width as last measured, and with the bar open (open-only parts: media keys).
     width: f32,
+    open_width: f32,
     /// Bar widgets: x in the open bar's row. Pinned ones: their place there (a spacer), if any.
     bar_x: Option<f32>,
     /// Notch widgets: their x in their notch's slot (from the slot's left).
@@ -425,7 +426,7 @@ impl Surface {
     fn add_widget(&mut self, name: &str, notch: Option<usize>) -> usize {
         let opts = self.opts_for(name);
         let w = widgets::create(name, opts.clone());
-        self.widgets.push(Placed { name: name.to_string(), w, opts, notch, width: 0.0, bar_x: None, slot_x: 0.0, fades: false, drawn: None });
+        self.widgets.push(Placed { name: name.to_string(), w, opts, notch, width: 0.0, open_width: 0.0, bar_x: None, slot_x: 0.0, fades: false, drawn: None });
         self.widgets.len() - 1
     }
 
@@ -561,10 +562,19 @@ impl Surface {
     /// Widgets' timers.
     pub fn tick(&mut self, gfx: &Gfx, now: Instant) {
         let mut changed = false;
+        let mut redraw = false;
         for w in &mut self.widgets {
             if w.w.wake().is_some_and(|t| t <= now) {
-                changed |= w.w.tick(now);
+                let looks = w.w.tick(now);
+                if w.w.tick_resizes() {
+                    changed |= looks;
+                } else {
+                    redraw |= looks;
+                }
             }
+        }
+        if redraw && !changed {
+            self.redraw(gfx);
         }
         for p in &mut self.panels {
             if p.p.wake().is_some_and(|t| t <= now) {
@@ -660,20 +670,27 @@ impl Surface {
             let opts = self.widgets[i].opts.clone();
             let row = if dock { rest_h } else { l.geometry.notch_height as f32 };
             let w0 = {
-                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 0.0, h: row };
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 0.0, h: row, open: 0.0 };
                 self.widgets[i].w.width(&cx)
             };
             let w1 = if dock {
-                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: open_h };
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: open_h, open: 1.0 };
                 self.widgets[i].w.width(&cx)
             } else {
                 w0
+            };
+            let w1 = if dock {
+                w1
+            } else {
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: l.geometry.expanded_height as f32, open: 1.0 };
+                self.widgets[i].w.width(&cx)
             };
             widths.push(w0);
             open_widths.push(w1);
         }
         for (i, w) in widths.iter().enumerate() {
             self.widgets[i].width = *w;
+            self.widgets[i].open_width = open_widths[i];
         }
         // Each notch's content width (plus its curves and padding), at rest and open.
         let g = &self.layout.geometry;
@@ -755,7 +772,7 @@ impl Surface {
         // A pinned widget shows if its notch does and it isn't hidden under a window.
         let pinned_shown = |wi: usize| {
             let p = &self.widgets[wi];
-            p.width > 0.0 && notch_of(&p.name).is_some_and(|n| !n.hidden && !n.hidden_widgets.contains(&p.name))
+            p.open_width > 0.0 && notch_of(&p.name).is_some_and(|n| !n.hidden && !n.hidden_widgets.contains(&p.name))
         };
         let mut places: Vec<(usize, f32)> = Vec::new();
         let mut fades: Vec<usize> = Vec::new();
@@ -768,23 +785,23 @@ impl Surface {
                     if p.notch.is_some() {
                         include_pinned && pinned_shown(wi)
                     } else {
-                        p.width > 0.0
+                        p.open_width > 0.0
                     }
                 })
                 .collect()
         };
-        let span = |list: &[usize]| -> f32 { list.iter().map(|&wi| self.widgets[wi].width).sum::<f32>() + gap * (list.len().max(1) as f32 - 1.0) };
+        let span = |list: &[usize]| -> f32 { list.iter().map(|&wi| self.widgets[wi].open_width).sum::<f32>() + gap * (list.len().max(1) as f32 - 1.0) };
         let left = group(&l.bar.left, true);
         let right = group(&l.bar.right, true);
         let mut x = pad;
         for &wi in &left {
             places.push((wi, x));
-            x += self.widgets[wi].width + gap;
+            x += self.widgets[wi].open_width + gap;
         }
         let mut x = w - pad - span(&right);
         for &wi in &right {
             places.push((wi, x));
-            x += self.widgets[wi].width + gap;
+            x += self.widgets[wi].open_width + gap;
         }
         for side in [&left, &right] {
             if side.iter().any(|&wi| self.widgets[wi].notch.is_some()) {
@@ -803,12 +820,12 @@ impl Surface {
                 let mut x = x0 - gap - span(&before);
                 for &wi in &before {
                     places.push((wi, x));
-                    x += self.widgets[wi].width + gap;
+                    x += self.widgets[wi].open_width + gap;
                 }
                 let mut x = x1 + gap;
                 for &wi in &after {
                     places.push((wi, x));
-                    x += self.widgets[wi].width + gap;
+                    x += self.widgets[wi].open_width + gap;
                 }
             }
             _ => {
@@ -816,7 +833,7 @@ impl Surface {
                 let mut x = w / 2.0 - span(&center) / 2.0;
                 for &wi in &center {
                     places.push((wi, x));
-                    x += self.widgets[wi].width + gap;
+                    x += self.widgets[wi].open_width + gap;
                 }
             }
         }
@@ -839,7 +856,7 @@ impl Surface {
         for pi in 0..self.panels.len() {
             let opts = self.panels[pi].opts.clone();
             let size = {
-                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: l.geometry.expanded_height as f32 };
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: l.geometry.expanded_height as f32, open: 1.0 };
                 self.panels[pi].p.size(&cx)
             };
             let (_, _, px) = self.panels[pi].p.pad();
@@ -856,7 +873,7 @@ impl Surface {
                 let Some(pi) = self.drops[di].active else { continue };
                 // Under the widget where it ends up in the open bar.
                 let Some(ax) = self.open_x(wi) else { continue };
-                let ww = self.widgets[wi].width;
+                let ww = self.widgets[wi].open_width;
                 let pb = &mut self.panels[pi];
                 let (_, _, px) = pb.p.pad();
                 let x = match (self.widgets[wi].w.icon_x(), pb.p.icon_x()) {
@@ -1066,7 +1083,7 @@ impl Surface {
         let row_h_dock = lerp(self.layout.rest_height, self.layout.open_height, ex as f64) as f32;
         let dock_widths: Vec<f32> = if self.dock() {
             let look = &self.look;
-            self.widgets.iter_mut().map(|p| p.w.width(&Ctx { gfx, look, opts: &p.opts, t: ex, h: row_h_dock })).collect()
+            self.widgets.iter_mut().map(|p| p.w.width(&Ctx { gfx, look, opts: &p.opts, t: ex, h: row_h_dock, open: ex })).collect()
         } else {
             Vec::new()
         };
@@ -1116,6 +1133,8 @@ impl Surface {
         }
 
         let t_dock = ex;
+        // Open-only parts (media keys): the dock's opening, a bar's second half (--bar-fade).
+        let bar_open = if dock { ex } else if ex >= 0.999 { 1.0 } else { clamp01((ex as f64 - 0.5) / 0.5) as f32 };
         let mut drawn: Vec<(usize, Option<(f32, f32, f32)>)> = Vec::new();
 
         // Notch content.
@@ -1158,7 +1177,7 @@ impl Surface {
                     }
                 }
                 let x = (x * scale).round() / scale;
-                let cx = Ctx { gfx, look: &self.look, opts: &p.opts, t: if dock { t_dock } else { 1.0 }, h: if dock { row_h_dock } else { row as f32 } };
+                let cx = Ctx { gfx, look: &self.look, opts: &p.opts, t: if dock { t_dock } else { 1.0 }, h: if dock { row_h_dock } else { row as f32 }, open: bar_open };
                 if alpha > 0.0 {
                     p.w.draw(&cx, x, cy, alpha);
                 }
@@ -1182,7 +1201,7 @@ impl Surface {
                 let Some(x) = p.bar_x else { continue };
                 let a = alpha as f32 * if p.fades { fade } else { 1.0 };
                 if a > 0.0 {
-                    let cx = Ctx { gfx, look: &self.look, opts: &p.opts, t: 1.0, h: h_bar as f32 };
+                    let cx = Ctx { gfx, look: &self.look, opts: &p.opts, t: 1.0, h: h_bar as f32, open: 1.0 };
                     p.w.draw(&cx, x, cy, a);
                 }
                 drawn.push((wi, if a > 0.0 { Some((x, cy, a)) } else { None }));
@@ -1215,7 +1234,7 @@ impl Surface {
                 };
             let top = if bottom { y(near + pb.h) + pad_far } else { y(near) + pad_near };
             let (left, top) = ((left * scale).round() / scale, (top * scale).round() / scale);
-            let cx = Ctx { gfx, look: &self.look, opts: &pb.opts, t: 1.0, h: h_bar as f32 };
+            let cx = Ctx { gfx, look: &self.look, opts: &pb.opts, t: 1.0, h: h_bar as f32, open: 1.0 };
             pb.p.draw(&cx, left, top, alpha);
             panel_drawn.push((pi, Some((left, top))));
         }
@@ -1300,7 +1319,7 @@ impl Surface {
         self.widgets.iter().enumerate().find_map(|(wi, p)| {
             let (wx, cy, a) = p.drawn?;
             let half = (self.layout.geometry.expanded_height as f32).max(self.layout.geometry.notch_height as f32) / 2.0;
-            (a > 0.05 && x >= wx && x <= wx + p.width && (y - cy).abs() <= half).then_some((wi, (x - wx, y - cy)))
+            (a > 0.05 && x >= wx && x <= wx + p.width.max(p.open_width) && (y - cy).abs() <= half).then_some((wi, (x - wx, y - cy)))
         })
     }
 
@@ -1344,7 +1363,13 @@ impl Surface {
             changed |= self.widgets[wi].w.hover(local);
         }
         if changed {
-            self.redraw(gfx);
+            // Hover effects that move (dock icons magnifying) draw frames until they settle.
+            let now = Instant::now();
+            if self.widgets.iter().any(|w| w.w.animating(now)) {
+                self.kick();
+            } else {
+                self.redraw(gfx);
+            }
         }
     }
 
@@ -1354,7 +1379,15 @@ impl Surface {
         let reply = if let Some((_, pi, local)) = self.panel_at(x, y) {
             self.panels[pi].p.click(button, local)
         } else if let Some((wi, local)) = self.widget_at(gfx, x, y) {
-            match self.widgets[wi].w.click(button, local) {
+            // A tray click's point, local to the widget: on screen, in device px.
+            let origin = self.widgets[wi].drawn.map_or((0.0, 0.0), |(wx, cy, _)| (wx, cy));
+            let (pos, scale) = (self.pos, self.scale());
+            let to_screen = move |at: (f32, f32)| (pos.x as f32 + (origin.0 + at.0) * scale, pos.y as f32 + (origin.1 + at.1) * scale);
+            let reply = match self.widgets[wi].w.click(button, local) {
+                Reply::Do(Act::Tray { id, button, at }) => Reply::Do(Act::Tray { id, button, at: to_screen(at) }),
+                other => other,
+            };
+            match reply {
                 Reply::TogglePanel if button == Button::Left => {
                     self.toggle_panel_of(gfx, wi);
                     Reply::None

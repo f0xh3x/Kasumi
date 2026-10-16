@@ -455,15 +455,20 @@ pub async fn tray_click(
     x: f64,
     y: f64,
 ) -> Result<(), String> {
+    let (sx, sy) = crate::engine::to_screen(window.app_handle(), window.label(), x, y).unwrap_or((0, 0));
+    click_at(&id, &button, sx, sy)
+}
+
+/// A click on a hosted tray icon at a screen point (physical px): forwarded to its app.
+pub fn click_at(id: &str, button: &str, sx: i32, sy: i32) -> Result<(), String> {
     let icon = {
         let t = tray().lock().unwrap();
         t.icons
             .values()
-            .find(|i| i.guid.as_deref() == Some(id.as_str()) || format!("{:x}:{}", i.hwnd, i.uid) == id)
+            .find(|i| i.guid.as_deref() == Some(id) || format!("{:x}:{}", i.hwnd, i.uid) == id)
             .cloned()
             .ok_or("icon is gone")?
     };
-    let (sx, sy) = crate::engine::to_screen(window.app_handle(), window.label(), x, y).unwrap_or((0, 0));
     eprintln!(
         "[kasumi] tray click {button} {} v{} cb={:#x} hwnd={:#x} uid={} at {sx},{sy}",
         icon.exe, icon.version, icon.callback, icon.hwnd, icon.uid
@@ -482,7 +487,7 @@ pub async fn tray_click(
             };
             let _ = PostMessageW(Some(target), icon.callback, WPARAM(wp), LPARAM(lp as isize));
         };
-        match button.as_str() {
+        match button {
             "left" => {
                 post(WM_LBUTTONDOWN);
                 post(WM_LBUTTONUP);

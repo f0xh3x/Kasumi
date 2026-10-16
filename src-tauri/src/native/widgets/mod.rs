@@ -6,7 +6,10 @@
 mod basic;
 mod clock;
 mod extras;
+pub mod icon;
 mod menu;
+mod shell;
+mod tasks;
 mod weather;
 
 use std::time::Instant;
@@ -34,6 +37,8 @@ pub struct Look {
     pub font_size: f32,
     pub main: Family,
     pub secondary: Family,
+    /// A bottom surface (things that grow from the edge grow up).
+    pub bottom: bool,
 }
 
 impl Look {
@@ -49,6 +54,7 @@ impl Look {
             font_size: t.font_size as f32,
             main: Family::from_config(&t.font),
             secondary: if t.font_secondary.trim().is_empty() { Family::from_config(&t.font) } else { Family::from_config(&t.font_secondary) },
+            bottom: l.edge == crate::config::Edge::Bottom,
         }
     }
 
@@ -98,6 +104,8 @@ pub struct Ctx<'a> {
     /// (the pages' --t / --h); bars: 1 and the row height.
     pub t: f32,
     pub h: f32,
+    /// How open the bar is for open-only parts (media keys): 0 closed, 1 open (the pages' bar-open / --bar-fade).
+    pub open: f32,
 }
 
 impl Ctx<'_> {
@@ -145,6 +153,9 @@ pub enum Act {
     Run { action: String, target: Option<String> },
     /// Anything else the pages invoked: run with the app, on a thread of its own.
     Call(Box<dyn FnOnce(tauri::AppHandle) + Send>),
+    /// A hosted tray icon clicked ("left" | "right"), at a point local to the widget
+    /// (the surface makes it a screen point: apps put their menus there).
+    Tray { id: String, button: &'static str, at: (f32, f32) },
 }
 
 impl Act {
@@ -428,6 +439,11 @@ pub trait Widget {
     fn tick(&mut self, _now: Instant) -> bool {
         false
     }
+    /// Whether what `tick` changes can change its width (false: only redraw; a
+    /// scrolling title moving a pixel).
+    fn tick_resizes(&self) -> bool {
+        true
+    }
     /// Its width at the context's size (0: nothing to show, it takes no room).
     fn width(&mut self, cx: &Ctx) -> f32;
     /// Draws itself from x, centred on the row's middle `cy`.
@@ -515,6 +531,10 @@ pub fn create(name: &str, opts: Opts) -> Box<dyn Widget> {
         "clipboard" => Box::new(extras::Clipboard::new(opts)),
         "notifications" => Box::new(extras::Notifications::new(opts)),
         "claude" => Box::new(extras::Claude::new(opts)),
+        "tasks" => Box::new(tasks::Tasks::new(opts)),
+        "media" => Box::new(shell::Media::new(opts)),
+        "quick" => Box::new(shell::Quick::new(opts)),
+        "tray" => Box::new(shell::Tray::new(opts)),
         _ => Box::new(Unknown(name.to_string())),
     }
 }

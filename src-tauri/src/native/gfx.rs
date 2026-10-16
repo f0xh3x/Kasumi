@@ -177,6 +177,8 @@ pub struct Gfx {
     svgs: RefCell<HashMap<usize, ID2D1PathGeometry>>,
     /// Round line ends (ring meters).
     round_caps: windows::Win32::Graphics::Direct2D::ID2D1StrokeStyle,
+    /// The scale of the surface being drawn (device px per logical px).
+    scale: std::cell::Cell<f32>,
 }
 
 impl Gfx {
@@ -225,6 +227,7 @@ impl Gfx {
                 texts: RefCell::new(HashMap::new()),
                 svgs: RefCell::new(HashMap::new()),
                 round_caps,
+                scale: std::cell::Cell::new(1.0),
             })
         }
     }
@@ -291,9 +294,20 @@ impl Gfx {
     /// Draws text vertically centred on `cy`, starting at x. Returns its width.
     pub fn text_at(&self, s: &str, font: &Font, x: f32, cy: f32, c: Color) -> f32 {
         let Ok(t) = self.text(s, font) else { return 0.0 };
-        // Whole pixels: text at fractional offsets shimmers as things move.
-        self.draw_text(&t, x.round(), (cy - t.height / 2.0).round(), c);
+        // Whole device pixels: text at fractional offsets shimmers as things move.
+        self.draw_text(&t, self.snap(x), self.snap(cy - t.height / 2.0), c);
         t.width
+    }
+
+    /// The scale of the surface being drawn.
+    pub fn scale(&self) -> f32 {
+        self.scale.get()
+    }
+
+    /// A logical coordinate on a whole device pixel.
+    pub fn snap(&self, v: f32) -> f32 {
+        let k = self.scale.get();
+        (v * k).round() / k
     }
 
     pub fn fill_rect(&self, r: D2D_RECT_F, c: Color) {
@@ -416,6 +430,39 @@ impl Gfx {
         }
     }
 
+    /// Clips what's drawn next to a rectangle whose ends fade out over `left` / `right`
+    /// px (a scrolling title's CSS mask), until `pop_fade`.
+    pub fn push_fade(&self, r: D2D_RECT_F, left: f32, right: f32) {
+        use windows::Win32::Graphics::Direct2D::*;
+        let w = (r.right - r.left).max(1.0);
+        let stops = [
+            windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP { position: 0.0, color: rgba(0.0, 0.0, 0.0, 0.0) },
+            windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP { position: (left / w).clamp(0.0, 0.5), color: rgba(0.0, 0.0, 0.0, 1.0) },
+            windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP { position: (1.0 - right / w).clamp(0.5, 1.0), color: rgba(0.0, 0.0, 0.0, 1.0) },
+            windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP { position: 1.0, color: rgba(0.0, 0.0, 0.0, 0.0) },
+        ];
+        unsafe {
+            let Ok(coll) = self.rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP) else { return };
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: Vector2 { X: r.left, Y: r.top }, endPoint: Vector2 { X: r.right, Y: r.top } };
+            let Ok(brush) = self.rt.CreateLinearGradientBrush(&props, None, &coll) else { return };
+            let params = D2D1_LAYER_PARAMETERS {
+                contentBounds: r,
+                geometricMask: std::mem::ManuallyDrop::new(None),
+                maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                maskTransform: Matrix3x2::identity(),
+                opacity: 1.0,
+                opacityBrush: std::mem::ManuallyDrop::new(Some(brush.into())),
+                layerOptions: D2D1_LAYER_OPTIONS_NONE,
+            };
+            self.rt.PushLayer(&params, None);
+            std::mem::ManuallyDrop::into_inner(params.opacityBrush);
+        }
+    }
+
+    pub fn pop_fade(&self) {
+        unsafe { self.rt.PopLayer() }
+    }
+
     /// Clips what's drawn next to a rectangle (until `unclip`).
     pub fn clip(&self, r: D2D_RECT_F) {
         unsafe { self.rt.PushAxisAlignedClip(&r, windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED) }
@@ -430,6 +477,7 @@ impl Gfx {
         unsafe {
             self.rt.BindDC(dc, &RECT { left: 0, top: 0, right: w, bottom: h })?;
             self.rt.SetDpi(96.0 * scale, 96.0 * scale);
+            self.scale.set(scale);
             self.rt.BeginDraw();
             self.rt.SetTransform(&Matrix3x2::identity());
             self.rt.Clear(Some(&rgba(0.0, 0.0, 0.0, 0.0)));

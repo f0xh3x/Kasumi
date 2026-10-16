@@ -487,6 +487,12 @@ fn run_act(act: Act, app: Option<AppHandle>) {
             let Some(app) = app else { return };
             std::thread::spawn(move || f(app));
         }
+        // The surface turned it into a screen point (physical px) already.
+        Act::Tray { id, button, at } => {
+            if let Err(e) = crate::providers::systray::click_at(&id, button, at.0 as i32, at.1 as i32) {
+                eprintln!("[kasumi] tray click: {e}");
+            }
+        }
         Act::Run { action, target } => {
             let Some(app) = app else { return };
             tauri::async_runtime::spawn(async move {
