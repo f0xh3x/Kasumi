@@ -502,9 +502,15 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         *LAUNCHER_CLOSED_OVER_FULLSCREEN.lock().unwrap() = Some(Instant::now() + Duration::from_millis(1500));
     }
     let _ = app.run_on_main_thread(move || {
-        let Some(w) = handle.get_webview_window(&l) else { return };
+        // Native bars have no page: only their window (it takes the focus the same way).
+        let w = handle.get_webview_window(&l);
         if unhide {
-            let _ = w.show();
+            match &w {
+                Some(w) => {
+                    let _ = w.show();
+                }
+                None => crate::ui::set_shown(&handle, &l, Some(hwnd), true),
+            }
         }
         if back {
             // Over a fullscreen app: hand it the focus while the bar still has it (once the
@@ -513,11 +519,15 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             win::focus(prev);
         }
         win::set_activatable(hwnd, opening);
-        let _ = w.set_focusable(opening);
+        if let Some(w) = &w {
+            let _ = w.set_focusable(opening);
+        }
         if opening {
             win::raise_topmost(hwnd);
             win::focus(hwnd);
-            let _ = w.set_focus();
+            if let Some(w) = &w {
+                let _ = w.set_focus();
+            }
         } else if (refocus || back) && ours.contains(&win::foreground()) {
             // Closed from the keyboard (Esc, the hotkey, the Windows key): back to the
             // app that had focus, not left on a bar that can't take typing.

@@ -4,6 +4,7 @@
 //! providers publish (the same JSON the pages got).
 
 mod basic;
+pub mod launcher;
 pub use basic::language_code;
 pub mod clock;
 mod extras;
@@ -159,6 +160,10 @@ pub enum Act {
     /// A hosted tray icon clicked ("left" | "right"), at a point local to the widget
     /// (the surface makes it a screen point: apps put their menus there).
     Tray { id: String, button: &'static str, at: (f32, f32) },
+    /// Open or close the launcher on this surface (engine launcher_toggle).
+    Launcher { open: bool, refocus: bool },
+    /// Several, in order.
+    Seq(Vec<Act>),
 }
 
 impl Act {
@@ -167,6 +172,10 @@ impl Act {
     }
     pub fn open(target: &str) -> Act {
         Act::Run { action: "open".into(), target: Some(target.into()) }
+    }
+    /// This, then that.
+    pub fn then(self, next: Act) -> Act {
+        Act::Seq(vec![self, next])
     }
 }
 
@@ -559,6 +568,7 @@ pub fn create(name: &str, opts: Opts) -> Box<dyn Widget> {
         "notifications" => Box::new(extras::Notifications::new(opts)),
         "claude" => Box::new(extras::Claude::new(opts)),
         "tasks" => Box::new(tasks::Tasks::new(opts)),
+        "launcher" => Box::new(launcher::LauncherWidget::new(&opts, false)),
         "media" => Box::new(shell::Media::new(opts)),
         "quick" => Box::new(shell::Quick::new(opts)),
         "tray" => Box::new(shell::Tray::new(opts)),
@@ -580,6 +590,7 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
         "clipboard" => Box::new(panels3::ClipboardPanel::new()),
         "notifications" => Box::new(panels3::NotificationsPanel::new(opts)),
         "tasks" => Box::new(panels3::TasksPanel::new(opts)),
+        "launcher" => Box::new(launcher::LauncherPanel::new(opts, false)),
         _ => return None,
     })
 }

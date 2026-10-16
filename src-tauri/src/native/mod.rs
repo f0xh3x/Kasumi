@@ -445,7 +445,24 @@ unsafe extern "system" fn wake_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let point = || ((lp.0 & 0xffff) as i16 as i32, ((lp.0 >> 16) & 0xffff) as i16 as i32);
     match msg {
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        // Clicks never take the focus, except into the open launcher (it types there).
+        WM_MOUSEACTIVATE => {
+            let launcher = with_native(|n| n.surfaces.iter().find(|s| s.hwnd == hwnd).is_some_and(|s| s.launcher_open())).unwrap_or(false);
+            LRESULT(if launcher { MA_ACTIVATE } else { MA_NOACTIVATE } as isize)
+        }
+        WM_KEYDOWN | WM_SYSKEYDOWN | WM_CHAR => {
+            let ctrl = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(0x11) } < 0;
+            let act = with_native(|n| {
+                let gfx = &n.gfx;
+                let act = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| if msg == WM_CHAR { s.char(gfx, wp.0 as u32) } else { s.key(gfx, wp.0 as u16, ctrl) });
+                act.map(|a| (a, n.app.clone()))
+            })
+            .flatten();
+            if let Some((act, app)) = act {
+                run_act(act, app);
+            }
+            LRESULT(0)
+        }
         WM_MOUSEMOVE => {
             let (x, y) = point();
             with_native(|n| {
@@ -533,6 +550,13 @@ fn run_act(act: Act, app: Option<AppHandle>) {
             let Some(app) = app else { return };
             std::thread::spawn(move || f(app));
         }
+        Act::Seq(list) => {
+            for a in list {
+                run_act(a, app.clone());
+            }
+        }
+        // The surface made it a call with its label (Surface::answer); a stray one does nothing.
+        Act::Launcher { .. } => {}
         // The surface turned it into a screen point (physical px) already.
         Act::Tray { id, button, at } => {
             if let Err(e) = crate::providers::systray::click_at(&id, button, at.0 as i32, at.1 as i32) {

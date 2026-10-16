@@ -220,6 +220,8 @@ pub struct Surface {
     remeasure: bool,
     /// The panel dragging with the mouse captured (a slider).
     captured: Option<usize>,
+    /// Acts the surface itself asks for (the launcher's apps).
+    pending: Vec<Act>,
 }
 
 impl std::ops::Drop for Surface {
@@ -288,6 +290,7 @@ impl Surface {
             pending_regions: None,
             remeasure: true,
             captured: None,
+            pending: Vec::new(),
         };
         s.apply(gfx, layout, store);
         let _ = s.render(gfx);
@@ -416,6 +419,35 @@ impl Surface {
                         self.drops[di].panels.push((wi, pi));
                     }
                 }
+            }
+        }
+        let has_widget = self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "launcher");
+        if self.layout.launcher && !has_widget {
+            let lopts = self.opts_for("launcher");
+            if dock {
+                let w = self.layout.width;
+                let middle = (0..self.drops.len())
+                    .filter(|&i| self.drops[i].in_hull && self.drops[i].notch.is_some())
+                    .min_by(|&a, &b| {
+                        let c = |i: usize| (self.drops[i].x + self.drops[i].width / 2.0 - w / 2.0).abs();
+                        c(a).total_cmp(&c(b))
+                    });
+                if let Some(di) = middle {
+                    self.widgets.push(Placed { name: "launcher".into(), w: Box::new(widgets::launcher::LauncherWidget::new(&lopts, true)), opts: lopts.clone(), notch: Some(di), width: 0.0, open_width: 0.0, bar_x: None, slot_x: 0.0, fades: false, drawn: None });
+                    let wi = self.widgets.len() - 1;
+                    self.drops[di].slot.push(wi);
+                    let pi = self.panels.len();
+                    self.panels.push(PanelBox { p: Box::new(widgets::launcher::LauncherPanel::new(&lopts, false)), opts: lopts, content: (0.0, 0.0), w: 0.0, h: 0.0, shift: 0.0, align: Align::Center, drawn: None, cascade: None });
+                    self.drops[di].panels.push((wi, pi));
+                }
+            } else {
+                let pi = self.panels.len();
+                self.panels.push(PanelBox { p: Box::new(widgets::launcher::LauncherPanel::new(&lopts, true)), opts: lopts, content: (0.0, 0.0), w: 0.0, h: 0.0, shift: 0.0, align: Align::Center, drawn: None, cascade: None });
+                let mut d = Drop::new("bar:launcher".into(), self.panel_spring(&prev, "bar:launcher"));
+                d.x = self.layout.width / 2.0;
+                d.has_panel = true;
+                d.active = Some(pi);
+                self.drops.push(d);
             }
         }
         // Pop-up notches for spots without a notch ([osd] spot): zero-size until a pop-up
@@ -560,9 +592,72 @@ impl Surface {
             "notch://osd" => self.pop.osd(gfx, &self.look, &self.layout, payload),
             "notch://notification" => self.pop.notification(gfx, &self.look, &self.layout, payload),
             "notch://keyboard" => self.keyboard(gfx, payload),
+            "notch://launcher" => {
+                let open = payload.get("open").and_then(|o| o.as_bool()).unwrap_or(false);
+                self.set_launcher(gfx, open);
+            }
             _ => return,
         }
         self.kick();
+    }
+
+    /// Rust opened (focused this surface) or closed the launcher.
+    fn set_launcher(&mut self, gfx: &Gfx, open: bool) {
+        widgets::launcher::set_open(open);
+        if !open {
+            self.close_all();
+        } else {
+            self.pending.push(widgets::launcher::load_apps());
+            // Its panel: a launcher widget's, the dock's middle notch's, or the bar's own.
+            let wi = self.widgets.iter().position(|w| widgets::widget_type(&w.name) == "launcher");
+            match wi {
+                Some(wi) => self.panel_of(gfx, wi, Some(true)),
+                None => {
+                    if let Some(di) = self.drops.iter().position(|d| d.key == "bar:launcher") {
+                        for (i, d) in self.drops.iter_mut().enumerate() {
+                            d.spring.target = if i == di { 1.0 } else { 0.0 };
+                        }
+                    }
+                }
+            }
+        }
+        // The field grows the notch (its other widgets step aside): measure again.
+        self.remeasure = true;
+        self.measure(gfx);
+        self.kick();
+        self.update_regions();
+    }
+
+    pub fn launcher_open(&self) -> bool {
+        widgets::launcher::searching() && self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "launcher") || (widgets::launcher::searching() && self.drops.iter().any(|d| d.key == "bar:launcher" && d.spring.target > 0.5))
+    }
+
+    /// A key while the launcher's field has the focus.
+    pub fn key(&mut self, gfx: &Gfx, vk: u16, ctrl: bool) -> Option<Act> {
+        if ctrl && vk == 0x56 {
+            if let Some(t) = widgets::launcher::clipboard_text() {
+                widgets::launcher::paste(&t);
+                self.changed(gfx);
+            }
+            return None;
+        }
+        match widgets::launcher::key(vk, ctrl, self.bottom()) {
+            widgets::launcher::Out::None => None,
+            widgets::launcher::Out::Redraw => {
+                self.changed(gfx);
+                None
+            }
+            widgets::launcher::Out::Launch(id) => self.answer(gfx, Reply::Do(widgets::launcher::launch(id))),
+            widgets::launcher::Out::Close => self.answer(gfx, Reply::Do(Act::Launcher { open: false, refocus: true })),
+        }
+    }
+
+    /// Typed text (WM_CHAR).
+    pub fn char(&mut self, gfx: &Gfx, c: u32) -> Option<Act> {
+        if char::from_u32(c).is_some_and(widgets::launcher::type_char) {
+            self.changed(gfx);
+        }
+        None
     }
 
     /// The keyboard layout changed: the peek at the language widget, or the pill.
@@ -628,6 +723,7 @@ impl Surface {
     pub fn take_acts(&mut self) -> Vec<Act> {
         let mut acts: Vec<Act> = self.panels.iter_mut().filter_map(|p| p.p.act()).collect();
         acts.extend(self.pop.pending.take());
+        acts.append(&mut self.pending);
         acts
     }
 
@@ -729,6 +825,15 @@ impl Surface {
         self.layout.widgets.get(name).and_then(|v| v.get("hide_when_maximized")).and_then(|v| v.as_bool()) == Some(true)
     }
 
+    /// A widget stepping aside for the launcher's field in its notch (while it searches).
+    fn aside_in(&self, d: &Drop, wi: usize) -> bool {
+        widgets::launcher::searching() && widgets::widget_type(&self.widgets[wi].name) != "launcher" && d.slot.iter().any(|&k| widgets::widget_type(&self.widgets[k].name) == "launcher")
+    }
+
+    fn aside(&self, di: usize, wi: usize) -> bool {
+        self.aside_in(&self.drops[di], wi)
+    }
+
     fn covered(&self, d: &Drop, wi: usize) -> bool {
         d.notch.as_ref().is_some_and(|n| n.hidden_widgets.contains(&self.widgets[wi].name))
     }
@@ -778,7 +883,7 @@ impl Surface {
         let mut report: HashMap<String, NotchWidth> = HashMap::new();
         for d in &self.drops {
             let Some(n) = &d.notch else { continue };
-            let kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| widths[wi] > 0.0).collect();
+            let kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| widths[wi] > 0.0 && !self.aside_in(d, wi)).collect();
             let span = |ws: &[f32], list: &[usize], pad: f64| -> f64 {
                 if list.is_empty() {
                     return 0.0;
@@ -811,7 +916,7 @@ impl Surface {
         let gap = self.layout.bar.gap as f32;
         for di in 0..self.drops.len() {
             let Some(n) = self.drops[di].notch.clone() else { continue };
-            let kids: Vec<usize> = self.drops[di].slot.iter().copied().filter(|&wi| self.widgets[wi].width > 0.0 && !self.covered(&self.drops[di], wi)).collect();
+            let kids: Vec<usize> = self.drops[di].slot.iter().copied().filter(|&wi| self.widgets[wi].width > 0.0 && !self.covered(&self.drops[di], wi) && !self.aside(di, wi)).collect();
             let cw: f32 = kids.iter().map(|&wi| self.widgets[wi].width).sum::<f32>() + gap * (kids.len().max(1) as f32 - 1.0);
             let (pl, pr) = self.slot_pads(&n, 1.0);
             let avail = n.width as f32 - pl - pr;
@@ -946,6 +1051,15 @@ impl Surface {
             pb.align = Align::Center;
             pb.w = (size.0 + 2.0 * px) as f64;
             pb.h = (size.1 + near + far) as f64;
+        }
+        if let Some(di) = self.drops.iter().position(|d| d.key == "bar:launcher") {
+            if let Some(pi) = self.drops[di].active {
+                let (w, h) = (self.panels[pi].w, self.panels[pi].h);
+                let d = &mut self.drops[di];
+                d.x = l.width / 2.0;
+                d.panel_w = w;
+                d.panel_h = h;
+            }
         }
         for di in 0..self.drops.len() {
             if let Some(wi) = self.drops[di].anchor {
@@ -1306,7 +1420,7 @@ impl Surface {
             let alpha = shown * fits * if osd_here { 1.0 - clamp01(self.pop.osd.value * 1.8) as f32 } else { 1.0 };
             let cy = y(row / 2.0);
             // Docks lay the slot out at its current (morphing) size.
-            let kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| self.widgets[wi].width > 0.0 && !self.covered(d, wi)).collect();
+            let kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| self.widgets[wi].width > 0.0 && !self.covered(d, wi) && !self.aside(di, wi)).collect();
             let gap = l.bar.gap as f32;
             let mut xoff = if dock {
                 // A dock corner notch's curves grow with it: so does its content's inset.
@@ -1617,7 +1731,25 @@ impl Surface {
     }
 
     /// What a reply asks of the surface; the action to run, if any.
+    /// The launcher acts in a reply, made calls with this surface's label.
+    fn with_label(&self, act: Act) -> Act {
+        match act {
+            Act::Launcher { open, refocus } => {
+                let label = self.label.clone();
+                Act::call(move |app| crate::engine::launcher_toggle(&app, Some(label), Some(open), refocus))
+            }
+            Act::Seq(list) => Act::Seq(list.into_iter().map(|a| self.with_label(a)).collect()),
+            other => other,
+        }
+    }
+
     fn answer(&mut self, gfx: &Gfx, reply: Reply) -> Option<Act> {
+        let reply = match reply {
+            Reply::Do(a) => Reply::Do(self.with_label(a)),
+            Reply::CloseAnd(a) => Reply::CloseAnd(self.with_label(a)),
+            Reply::ToggleAnd(a) => Reply::ToggleAnd(self.with_label(a)),
+            other => other,
+        };
         if self.panels.iter().any(|p| p.p.animating(Instant::now())) {
             self.kick();
         }
