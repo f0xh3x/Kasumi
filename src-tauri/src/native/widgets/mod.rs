@@ -4,7 +4,8 @@
 //! providers publish (the same JSON the pages got).
 
 mod basic;
-mod clock;
+pub use basic::language_code;
+pub mod clock;
 mod extras;
 pub mod icon;
 mod menu;
@@ -104,9 +105,7 @@ pub struct Ctx<'a> {
     pub gfx: &'a Gfx,
     pub look: &'a Look,
     pub opts: &'a Opts,
-    /// Docks: open progress (0 rest, 1 open) and the notch row's current height
-    /// (the pages' --t / --h); bars: 1 and the row height.
-    pub t: f32,
+    /// The notch row's current height (docks grow it: the pages' --h); bars: the row height.
     pub h: f32,
     /// How open the bar is for open-only parts (media keys): 0 closed, 1 open (the pages' bar-open / --bar-fade).
     pub open: f32,
@@ -294,19 +293,6 @@ pub fn row_draw(g: &Gfx, pieces: &[Piece], x: f32, cy: f32, alpha: f32) {
         p.draw(g, x, cy, alpha);
         x += p.width(g);
     }
-}
-
-/// The piece under a local x (gaps don't count).
-pub fn row_hit(g: &Gfx, pieces: &[Piece], lx: f32) -> Option<usize> {
-    let mut x = 0.0;
-    for (i, p) in pieces.iter().enumerate() {
-        let w = p.width(g);
-        if !matches!(p, Piece::Gap(_)) && lx >= x && lx < x + w {
-            return Some(i);
-        }
-        x += w;
-    }
-    None
 }
 
 /// Text cut to fit `max` px, with an ellipsis (text-overflow: ellipsis).

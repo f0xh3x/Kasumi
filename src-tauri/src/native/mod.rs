@@ -7,6 +7,7 @@
 pub mod geometry;
 mod gfx;
 mod icons;
+mod popup;
 pub mod snapshot;
 mod surface;
 mod widgets;

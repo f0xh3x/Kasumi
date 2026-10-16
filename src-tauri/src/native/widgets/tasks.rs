@@ -38,7 +38,6 @@ struct Win {
 #[derive(Clone, Debug)]
 struct App {
     key: String,
-    name: String,
     wins: Vec<Win>,
 }
 
@@ -235,7 +234,7 @@ impl Widget for Tasks {
                         let key = a.get("key")?.as_str()?.to_string();
                         let pinned = a.get("pinned").and_then(|p| p.as_bool()).unwrap_or(false);
                         let w: Vec<Win> = mine.iter().filter(|(k, _, _)| *k == key).map(|(_, w, _)| w.clone()).collect();
-                        ((pinning && pinned) || !w.is_empty()).then(|| App { key, name: a.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(), wins: w })
+                        ((pinning && pinned) || !w.is_empty()).then(|| App { key, wins: w })
                     })
                     .collect()
             })

@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use super::icon::{decode, AppIcon, Style};
 use super::shell::{battery_glyph, network_glyph, volume_glyph};
-use super::{ease, fit_text, Act, Button, Ctx, Opts, Panel, Reply};
+use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply};
 use crate::native::gfx::{rect, white, with_alpha, Color, Font, Gfx};
 
 /// Tiles: id -> (label, glyph, what it opens) (src/quick-tiles.ts).

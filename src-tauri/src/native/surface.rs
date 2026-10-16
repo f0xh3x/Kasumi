@@ -198,6 +198,8 @@ pub struct Surface {
     nudge: Spring,
     nudge_key: Option<String>,
     drops: Vec<Drop>,
+    /// Pop-ups out of a notch (OSD, notifications) and the keyboard peek.
+    pop: super::popup::Popups,
     widgets: Vec<Placed>,
     panels: Vec<PanelBox>,
     /// Bar mode: where the side groups lie, for the glide of pinned widgets.
@@ -267,6 +269,7 @@ impl Surface {
             expanded: false,
             expand,
             spread,
+            pop: super::popup::Popups::new(a),
             nudge,
             nudge_key: None,
             drops: Vec::new(),
@@ -348,6 +351,7 @@ impl Surface {
         self.expand.configure(a.expand_stiffness, a.expand_damping, &a);
         self.spread.configure(a.spread_stiffness, a.spread_damping, &a);
         self.nudge.configure(600.0, 30.0, &a);
+        self.pop.configure(&a);
         if first {
             self.expanded = self.layout.expanded;
             self.expand.target = if self.expanded { 1.0 } else { 0.0 };
@@ -414,6 +418,17 @@ impl Surface {
                 }
             }
         }
+        // Pop-up notches for spots without a notch ([osd] spot): zero-size until a pop-up
+        // grows out of one; corners reach past the screen edge like a notch hugging one.
+        let r = self.layout.geometry.notch_corner_radius;
+        let w = self.layout.width;
+        for (side, x) in [("left", -r), ("center", w / 2.0), ("right", w + r)] {
+            let mut d = Drop::new(format!("spot:{side}"), Spring::new(0.0, 1.0, 1.0));
+            d.x = x;
+            self.drops.push(d);
+        }
+        // The keyboard peek: a zero-size bump until it pops (x holds its centre).
+        self.drops.push(Drop::new("peek".into(), Spring::new(0.0, 1.0, 1.0)));
         // Data the widgets read, as it stands.
         for w in &mut self.widgets {
             for key in w.w.keys() {
@@ -540,9 +555,46 @@ impl Surface {
     }
 
     /// Pop-ups and the launcher (later phases).
-    pub fn event(&mut self, _gfx: &Gfx, _event: &str, _payload: &Value) {}
+    pub fn event(&mut self, gfx: &Gfx, event: &str, payload: &Value) {
+        match event {
+            "notch://osd" => self.pop.osd(gfx, &self.look, &self.layout, payload),
+            "notch://notification" => self.pop.notification(gfx, &self.look, &self.layout, payload),
+            "notch://keyboard" => self.keyboard(gfx, payload),
+            _ => return,
+        }
+        self.kick();
+    }
+
+    /// The keyboard layout changed: the peek at the language widget, or the pill.
+    fn keyboard(&mut self, gfx: &Gfx, e: &Value) {
+        let format = self.layout.widgets.get("language").and_then(|w| w.get("format")).and_then(|v| v.as_str()).map(String::from);
+        let code = super::widgets::language_code(e, format.as_deref());
+        let word = serde_json::json!({ "kind": "keyboard", "level": 0, "muted": false, "text": code, "notch": e.get("notch") });
+        // Out of a notch like the other pop-ups ([osd] keyboard_spot), not the peek.
+        if e.get("notch").is_some_and(|n| !n.is_null()) {
+            self.pop.osd(gfx, &self.look, &self.layout, &word);
+            return;
+        }
+        // The language widget shows the new layout itself whenever it can be seen.
+        let lang = self.widgets.iter().find(|w| w.name == "language");
+        let in_notch = self.layout.notches.iter().find(|n| n.widgets.iter().any(|w| w == "language"));
+        let visible = (self.expanded && lang.is_some())
+            || in_notch.is_some_and(|n| !n.hidden && !n.hidden_widgets.iter().any(|w| w == "language") && (!self.dock() || (!n.shrunk && self.layout.rest != crate::config::SizeName::Tiny)));
+        if visible {
+            return;
+        }
+        // Docks (and an open bar): the pill rather than a second bump.
+        let at = lang.and_then(|w| w.drawn.map(|(x, _, _)| x as f64 + w.width as f64 / 2.0));
+        match at {
+            Some(x) if !self.expanded && !self.dock() => self.pop.peek(code, x, self.layout.osd.duration_ms),
+            _ => self.pop.osd(gfx, &self.look, &self.layout, &serde_json::json!({ "kind": "keyboard", "level": 0, "muted": false, "text": code })),
+        }
+    }
 
     pub fn data(&mut self, gfx: &Gfx, key: &str, v: &Value) {
+        if key == "appIcons" && self.pop.data(v) && self.pop.show.is_some() {
+            self.redraw(gfx);
+        }
         let mut changed = false;
         for w in &mut self.widgets {
             if w.w.keys().contains(&key) {
@@ -574,10 +626,15 @@ impl Surface {
     /// Widgets' timers.
     /// What panels asked for in their ticks.
     pub fn take_acts(&mut self) -> Vec<Act> {
-        self.panels.iter_mut().filter_map(|p| p.p.act()).collect()
+        let mut acts: Vec<Act> = self.panels.iter_mut().filter_map(|p| p.p.act()).collect();
+        acts.extend(self.pop.pending.take());
+        acts
     }
 
     pub fn tick(&mut self, gfx: &Gfx, now: Instant) {
+        if self.pop.tick(now) {
+            self.kick();
+        }
         let mut changed = false;
         let mut redraw = false;
         for w in &mut self.widgets {
@@ -609,7 +666,7 @@ impl Surface {
     }
 
     pub fn wake(&self) -> Option<Instant> {
-        self.widgets.iter().filter_map(|w| w.w.wake()).chain(self.panels.iter().filter_map(|p| p.p.wake())).min()
+        self.widgets.iter().filter_map(|w| w.w.wake()).chain(self.panels.iter().filter_map(|p| p.p.wake())).chain(self.pop.wake()).min()
     }
 
     pub fn set_shown(&mut self, shown: bool) {
@@ -692,11 +749,11 @@ impl Surface {
             let opts = self.widgets[i].opts.clone();
             let row = if dock { rest_h } else { l.geometry.notch_height as f32 };
             let w0 = {
-                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 0.0, h: row, open: 0.0 };
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, h: row, open: 0.0 };
                 self.widgets[i].w.width(&cx)
             };
             let w1 = if dock {
-                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: open_h, open: 1.0 };
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, h: open_h, open: 1.0 };
                 self.widgets[i].w.width(&cx)
             } else {
                 w0
@@ -704,7 +761,7 @@ impl Surface {
             let w1 = if dock {
                 w1
             } else {
-                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: l.geometry.expanded_height as f32, open: 1.0 };
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, h: l.geometry.expanded_height as f32, open: 1.0 };
                 self.widgets[i].w.width(&cx)
             };
             widths.push(w0);
@@ -878,7 +935,7 @@ impl Surface {
         for pi in 0..self.panels.len() {
             let opts = self.panels[pi].opts.clone();
             let size = {
-                let cx = Ctx { gfx, look: &self.look, opts: &opts, t: 1.0, h: l.geometry.expanded_height as f32, open: 1.0 };
+                let cx = Ctx { gfx, look: &self.look, opts: &opts, h: l.geometry.expanded_height as f32, open: 1.0 };
                 self.panels[pi].p.size(&cx)
             };
             let (_, _, px) = self.panels[pi].p.pad();
@@ -988,14 +1045,54 @@ impl Surface {
         }
     }
 
+    /// The drop a pop-up grows out of: the notch Rust picked ([osd] spot), else the centre one.
+    fn osd_drop(&self) -> Option<usize> {
+        let by_key = |k: &str| self.drops.iter().position(|d| d.key == k);
+        self.pop
+            .notch
+            .as_deref()
+            .and_then(|n| by_key(&format!("notch:{n}")).or_else(|| by_key(n)))
+            .or_else(|| by_key("notch:center"))
+            .or_else(|| self.drops.iter().position(|d| d.in_hull))
+    }
+
+    /// Whether the pop-up drops below the open bar (it would hide a grown notch) instead.
+    fn osd_below(&self, use_target: bool) -> bool {
+        !self.dock() && (if use_target { self.expand.target } else { self.expand.value }) > 0.5
+    }
+
+    /// The corner a drop hugs (-1 left, 1 right, 0 none).
+    fn side_of(&self, di: usize) -> i32 {
+        let d = &self.drops[di];
+        match (d.key.as_str(), d.notch.as_ref().and_then(|n| n.edge.as_deref())) {
+            ("spot:left", _) | (_, Some("left")) => -1,
+            ("spot:right", _) | (_, Some("right")) => 1,
+            _ => 0,
+        }
+    }
+
+    /// The pop-up pill's size (a word's or a notification's, else [osd] width x height).
+    fn osd_size(&self) -> (f64, f64) {
+        self.pop.size.unwrap_or((self.layout.osd.width, self.layout.osd.height))
+    }
+
     fn bumps(&self, order: &[usize], use_target: bool) -> Vec<Bump> {
         let l = &self.layout;
         let dock = self.dock();
         let val = |s: &Spring| if use_target { s.target } else { s.value };
+        let od = self.osd_drop();
+        let o = val(&self.pop.osd).max(0.0);
+        let below = self.osd_below(use_target);
+        let (ow, oh) = self.osd_size();
         order
             .iter()
             .map(|&di| {
                 let d = &self.drops[di];
+                if d.key == "peek" {
+                    let k = val(&self.pop.peek).max(0.0);
+                    let width = l.osd.keyboard_width * k;
+                    return Bump { x: self.pop.peek_x - width / 2.0, width, height: l.geometry.notch_height * k, panel_width: width, ..Default::default() };
+                }
                 let mut x = d.xs.as_ref().map_or(d.x, val);
                 if !dock {
                     x += self.glide_shift(di, x) * clamp01((val(&self.expand) - 0.85) / 0.15);
@@ -1025,13 +1122,27 @@ impl Surface {
                     width *= s;
                     height *= s;
                 }
+                let is_osd = od == Some(di) && o > 0.0;
+                if is_osd && !below {
+                    // Grow from the notch's side: a corner one keeps its outer edge (the pill
+                    // stays on screen), the others their centre.
+                    let from = x;
+                    width = d.width + (ow - d.width) * o;
+                    height = d.height + (oh - d.height) * o;
+                    x = match self.side_of(di) {
+                        -1 => from,
+                        1 => from + d.width - width,
+                        _ => (from + d.width / 2.0 - width / 2.0).clamp(0.0, (l.width - width).max(0.0)),
+                    };
+                }
+                let osd_panel = is_osd && below;
                 Bump {
                     x,
                     width,
                     height,
-                    panel_width: d.panel_w,
-                    panel_height: d.panel_h,
-                    p: if d.has_panel && d.active.is_some() { val(&d.spring) } else { 0.0 },
+                    panel_width: if osd_panel { ow } else { d.panel_w },
+                    panel_height: if osd_panel { oh } else { d.panel_h },
+                    p: if osd_panel { o } else if d.has_panel && d.active.is_some() { val(&d.spring) } else { 0.0 },
                     in_hull: d.in_hull,
                     rounded: None,
                     scale,
@@ -1080,7 +1191,8 @@ impl Surface {
             // A list sliding open inside a panel: the panel's shape follows every frame.
             self.measure_panels(gfx);
         }
-        let mut springs: Vec<&mut Spring> = vec![&mut self.expand, &mut self.spread, &mut self.nudge];
+        let bouncing = self.pop.bouncing(now);
+        let mut springs: Vec<&mut Spring> = vec![&mut self.expand, &mut self.spread, &mut self.nudge, &mut self.pop.osd, &mut self.pop.peek];
         for d in &mut self.drops {
             springs.push(&mut d.spring);
             if let Some(s) = d.xs.as_mut() {
@@ -1098,7 +1210,7 @@ impl Surface {
         }
         // Cascades run on time (a spring is nearly open within ~100 ms): frames until they're done.
         let cascading = self.panels.iter().any(|p| p.cascade.is_some_and(|t0| now < t0 + cascade_length(p.p.pieces().len())));
-        let busy = self.widgets.iter().any(|w| w.w.animating(now)) || panels_moving || cascading;
+        let busy = self.widgets.iter().any(|w| w.w.animating(now)) || panels_moving || cascading || bouncing;
         if springs.iter().all(|s| s.settled()) && !busy {
             for s in springs.iter_mut() {
                 s.snap();
@@ -1126,7 +1238,7 @@ impl Surface {
         let row_h_dock = lerp(self.layout.rest_height, self.layout.open_height, ex as f64) as f32;
         let dock_widths: Vec<f32> = if self.dock() {
             let look = &self.look;
-            self.widgets.iter_mut().map(|p| p.w.width(&Ctx { gfx, look, opts: &p.opts, t: ex, h: row_h_dock, open: ex })).collect()
+            self.widgets.iter_mut().map(|p| p.w.width(&Ctx { gfx, look, opts: &p.opts, h: row_h_dock, open: ex })).collect()
         } else {
             Vec::new()
         };
@@ -1175,7 +1287,6 @@ impl Surface {
             std::mem::ManuallyDrop::into_inner(params.geometricMask);
         }
 
-        let t_dock = ex;
         // Open-only parts (media keys): the dock's opening, a bar's second half (--bar-fade).
         let bar_open = if dock { ex } else if ex >= 0.999 { 1.0 } else { clamp01((ex as f64 - 0.5) / 0.5) as f32 };
         let mut drawn: Vec<(usize, Option<(f32, f32, f32)>)> = Vec::new();
@@ -1190,7 +1301,9 @@ impl Surface {
             let slot_x = (bf.anchor_cx - w / 2.0) as f32;
             let shown = d.shown.as_ref().map_or(1.0, |s| clamp01(s.value * 1.5 - 0.5)) as f32;
             let fits = if dock { clamp01((bf.row_depth - 16.0) / 10.0) as f32 } else { 1.0 };
-            let alpha = shown * fits;
+            // The notch's own content cross-fades with a pop-up growing out of it.
+            let osd_here = self.osd_drop() == Some(di) && !self.osd_below(false);
+            let alpha = shown * fits * if osd_here { 1.0 - clamp01(self.pop.osd.value * 1.8) as f32 } else { 1.0 };
             let cy = y(row / 2.0);
             // Docks lay the slot out at its current (morphing) size.
             let kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| self.widgets[wi].width > 0.0 && !self.covered(d, wi)).collect();
@@ -1220,11 +1333,38 @@ impl Surface {
                     }
                 }
                 let x = (x * scale).round() / scale;
-                let cx = Ctx { gfx, look: &self.look, opts: &p.opts, t: if dock { t_dock } else { 1.0 }, h: if dock { row_h_dock } else { row as f32 }, open: bar_open };
+                let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: if dock { row_h_dock } else { row as f32 }, open: bar_open };
                 if alpha > 0.0 {
                     p.w.draw(&cx, x, cy, alpha);
                 }
                 drawn.push((wi, Some((x, cy, alpha))));
+            }
+        }
+
+        // The pop-up's content: in the grown notch, or in its pill below the open bar.
+        let o = clamp01(self.pop.osd.value) as f32;
+        if let (Some(od), true) = (self.osd_drop(), o > 0.01) {
+            if let Some(i) = order.iter().position(|&di| di == od) {
+                let bf = &frame.bumps[i];
+                let (ow, _) = self.osd_size();
+                let inner = (ow - 2.0 * l.geometry.notch_corner_radius - 8.0) as f32;
+                let (cx, cy) = if self.osd_below(false) {
+                    ((bf.panel_x + ow / 2.0) as f32, y(h_bar + (bf.depth - h_bar) / 2.0))
+                } else {
+                    (bf.cx as f32, y(bf.row_depth.round() / 2.0))
+                };
+                let side = self.side_of(od);
+                let nudge = l.widgets.get("notifications").and_then(|w| w.get("anim_nudge")).and_then(|v| v.as_bool()).unwrap_or(l.animation.notification_nudge);
+                let accent = l.theme.accent_details;
+                let look = self.look.clone();
+                self.pop.draw(gfx, &look, accent, cx, cy, inner, side, (o * 1.8 - 0.5).clamp(0.0, 1.0), nudge);
+            }
+        }
+        let k = clamp01(self.pop.peek.value) as f32;
+        if k > 0.01 {
+            if let Some(i) = order.iter().position(|&di| self.drops[di].key == "peek") {
+                let bf = &frame.bumps[i];
+                self.pop.draw_peek(gfx, &self.look, bf.cx as f32, y(bf.row_depth.round() / 2.0), (k * 1.8 - 0.5).clamp(0.0, 1.0) * (1.0 - ex));
             }
         }
 
@@ -1244,7 +1384,7 @@ impl Surface {
                 let Some(x) = p.bar_x else { continue };
                 let a = alpha as f32 * if p.fades { fade } else { 1.0 };
                 if a > 0.0 {
-                    let cx = Ctx { gfx, look: &self.look, opts: &p.opts, t: 1.0, h: h_bar as f32, open: 1.0 };
+                    let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: h_bar as f32, open: 1.0 };
                     p.w.draw(&cx, x, cy, a);
                 }
                 drawn.push((wi, if a > 0.0 { Some((x, cy, a)) } else { None }));
@@ -1277,7 +1417,7 @@ impl Surface {
                 };
             let top = if bottom { y(near + pb.h) + pad_far } else { y(near) + pad_near };
             let (left, top) = ((left * scale).round() / scale, (top * scale).round() / scale);
-            let cx = Ctx { gfx, look: &self.look, opts: &pb.opts, t: 1.0, h: h_bar as f32, open: 1.0 };
+            let cx = Ctx { gfx, look: &self.look, opts: &pb.opts, h: h_bar as f32, open: 1.0 };
             match pb.cascade.filter(|_| pb.opts.cascade) {
                 // Cascade: each piece fades in and slides 8 px into place (from the bar's side)
                 // a little after the one before.
@@ -1629,6 +1769,8 @@ impl Surface {
                 s.snap();
             }
         }
+        self.pop.osd.snap();
+        self.pop.peek.snap();
         // Posed open: any cascade has long finished.
         for pb in &mut self.panels {
             pb.cascade = Some(Instant::now() - std::time::Duration::from_secs(10));

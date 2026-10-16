@@ -92,7 +92,7 @@ pub fn run(args: &[String]) {
                     shots.push((name.clone(), true, Some(name), 1.0));
                 }
             }
-            for (state, open, panel, p) in shots {
+            for (state, open, panel, p) in shots.iter().cloned() {
                 surface.pose(&gfx, open, panel.as_deref(), p);
                 if let Err(e) = surface.render(&gfx) {
                     say(format!("  {state}: {e}"));
@@ -101,6 +101,21 @@ pub fn run(args: &[String]) {
                 let (px, w, h) = surface.pixels();
                 let file = dir.join(format!("{label}-{state}.png").replace('#', "_"));
                 save_png(&file, px, w, h);
+            }
+            // Pop-ups out of the notch: a level, a word, a notification.
+            let pops = [
+                ("osd-volume", "notch://osd", serde_json::json!({ "kind": "volume", "level": 0.42, "muted": false })),
+                ("osd-caps", "notch://osd", serde_json::json!({ "kind": "caps", "level": 0, "muted": false, "text": "Caps Lock on" })),
+                ("osd-note", "notch://notification", serde_json::json!({ "app": "Discord", "aumid": "", "title": "Kip", "body": "are you coming tonight?" })),
+            ];
+            for (state, event, payload) in pops {
+                surface.pose(&gfx, false, None, 0.0);
+                surface.event(&gfx, event, &payload);
+                surface.pose(&gfx, false, None, 0.0);
+                if surface.render(&gfx).is_ok() {
+                    let (px, w, h) = surface.pixels();
+                    save_png(&dir.join(format!("{label}-{state}.png")), px, w, h);
+                }
             }
         }
     }
