@@ -35,7 +35,7 @@ pub fn run(args: &[String]) {
         let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED);
     }
-    let cfg = match crate::config::load() {
+    let cfg = match load_config(value("--config")) {
         Ok(c) => c,
         Err(e) => {
             say(format!("config error: {e}"));
@@ -103,6 +103,14 @@ pub fn run(args: &[String]) {
                 save_png(&file, px, w, h);
             }
         }
+    }
+}
+
+/// The live config, or `--config <file>` (to try layouts the user doesn't have).
+fn load_config(file: Option<String>) -> Result<crate::config::Config, String> {
+    match file {
+        Some(f) => toml::from_str(&std::fs::read_to_string(f).map_err(|e| e.to_string())?).map_err(|e| e.to_string()),
+        None => crate::config::load(),
     }
 }
 

@@ -506,7 +506,9 @@ impl Surface {
                 d.notch = Some(n);
             }
         }
+        self.layout_slots();
         self.layout_bar(gfx);
+        self.measure_panels(gfx);
         self.kick();
         self.update_regions();
     }
@@ -540,8 +542,18 @@ impl Surface {
             }
         }
         if changed {
-            self.remeasure = true;
-            self.measure(gfx);
+            self.changed(gfx);
+        }
+    }
+
+    /// Content changed: measure again, and draw (frames while something rolls).
+    fn changed(&mut self, gfx: &Gfx) {
+        self.remeasure = true;
+        self.measure(gfx);
+        let now = Instant::now();
+        if self.widgets.iter().any(|w| w.w.animating(now)) {
+            self.kick();
+        } else {
             self.redraw(gfx);
         }
     }
@@ -560,9 +572,7 @@ impl Surface {
             }
         }
         if changed {
-            self.remeasure = true;
-            self.measure(gfx);
-            self.redraw(gfx);
+            self.changed(gfx);
         }
     }
 
@@ -1350,20 +1360,24 @@ impl Surface {
                     Reply::None
                 }
                 Reply::TogglePanel => Reply::None,
+                Reply::ToggleAnd(act) => {
+                    self.toggle_panel_of(gfx, wi);
+                    Reply::Do(act)
+                }
                 other => other,
             }
         } else {
             Reply::None
         };
         match reply {
-            Reply::None => None,
+            Reply::None | Reply::TogglePanel => None,
             Reply::Redraw => {
                 self.remeasure = true;
                 self.measure(gfx);
                 self.kick();
                 None
             }
-            Reply::TogglePanel => None,
+            Reply::ToggleAnd(act) | Reply::Do(act) => Some(act),
             Reply::CloseAnd(act) => {
                 self.close_all();
                 Some(act)

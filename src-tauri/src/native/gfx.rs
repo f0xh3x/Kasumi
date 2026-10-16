@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use windows::core::{Interface, Result, HSTRING, PCWSTR};
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE_WINDING,
-    D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_CLOSED,
+    D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE_WINDING, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Bitmap, ID2D1DCRenderTarget, ID2D1Factory, ID2D1PathGeometry, ID2D1SolidColorBrush, D2D1_BITMAP_PROPERTIES,
@@ -173,6 +173,10 @@ pub struct Gfx {
     formats: RefCell<HashMap<(Family, u32, u32), IDWriteTextFormat>>,
     /// Text layouts by (text, font): widgets draw the same strings every frame.
     texts: RefCell<HashMap<(String, Family, u32, u32), (IDWriteTextLayout, f32, f32)>>,
+    /// SVG icon geometries, by their path string's address.
+    svgs: RefCell<HashMap<usize, ID2D1PathGeometry>>,
+    /// Round line ends (ring meters).
+    round_caps: windows::Win32::Graphics::Direct2D::ID2D1StrokeStyle,
 }
 
 impl Gfx {
@@ -202,7 +206,26 @@ impl Gfx {
             let typography = dw.CreateTypography()?;
             typography.AddFontFeature(DWRITE_FONT_FEATURE { nameTag: DWRITE_FONT_FEATURE_TAG(tag(b"tnum")), parameter: 1 })?;
             typography.AddFontFeature(DWRITE_FONT_FEATURE { nameTag: DWRITE_FONT_FEATURE_TAG(tag(b"cv11")), parameter: 1 })?;
-            Ok(Gfx { d2d, dw, rt, brush, inter, typography, formats: RefCell::new(HashMap::new()), texts: RefCell::new(HashMap::new()) })
+            let round_caps = d2d.CreateStrokeStyle(
+                &windows::Win32::Graphics::Direct2D::D2D1_STROKE_STYLE_PROPERTIES {
+                    startCap: windows::Win32::Graphics::Direct2D::D2D1_CAP_STYLE_ROUND,
+                    endCap: windows::Win32::Graphics::Direct2D::D2D1_CAP_STYLE_ROUND,
+                    ..Default::default()
+                },
+                None,
+            )?;
+            Ok(Gfx {
+                d2d,
+                dw,
+                rt,
+                brush,
+                inter,
+                typography,
+                formats: RefCell::new(HashMap::new()),
+                texts: RefCell::new(HashMap::new()),
+                svgs: RefCell::new(HashMap::new()),
+                round_caps,
+            })
         }
     }
 
@@ -339,6 +362,69 @@ impl Gfx {
         unsafe { self.rt.CreateBitmap(D2D_SIZE_U { width: w, height: h }, Some(px.as_ptr() as *const _), w * 4, &props) }
     }
 
+    /// An SVG path's `d` (absolute and relative M L H V C S Q T A Z) as a geometry,
+    /// cached (icons are drawn every frame).
+    pub fn svg(&self, d: &'static str) -> Result<ID2D1PathGeometry> {
+        if let Some(g) = self.svgs.borrow().get(&(d.as_ptr() as usize)) {
+            return Ok(g.clone());
+        }
+        let g = svg_path(&self.d2d, d)?;
+        self.svgs.borrow_mut().insert(d.as_ptr() as usize, g.clone());
+        Ok(g)
+    }
+
+    /// Fills an SVG icon (`view` px square) `size` px wide with its top-left at (x, y).
+    pub fn draw_svg(&self, d: &'static str, view: f32, x: f32, y: f32, size: f32, c: Color) {
+        let Ok(g) = self.svg(d) else { return };
+        let k = size / view;
+        unsafe {
+            let mut was = Matrix3x2::identity();
+            self.rt.GetTransform(&mut was);
+            self.rt.SetTransform(&(Matrix3x2 { M11: k, M12: 0.0, M21: 0.0, M22: k, M31: x, M32: y } * was));
+            self.brush.SetColor(&c);
+            self.rt.FillGeometry(&g, &self.brush, None::<&windows::Win32::Graphics::Direct2D::ID2D1Brush>);
+            self.rt.SetTransform(&was);
+        }
+    }
+
+    /// A ring meter: a track circle and an arc from the top, clockwise, `v` of the way round.
+    pub fn ring(&self, cx: f32, cy: f32, r: f32, width: f32, v: f32, track: Color, fill: Color) {
+        use windows::Win32::Graphics::Direct2D::*;
+        unsafe {
+            self.brush.SetColor(&track);
+            self.rt.DrawEllipse(&D2D1_ELLIPSE { point: Vector2 { X: cx, Y: cy }, radiusX: r, radiusY: r }, &self.brush, width, None);
+            let v = v.clamp(0.0, 1.0);
+            if v <= 0.0 {
+                return;
+            }
+            let Ok(geom) = self.d2d.CreatePathGeometry() else { return };
+            let Ok(sink) = geom.Open() else { return };
+            let at = |a: f32| Vector2 { X: cx + r * a.sin(), Y: cy - r * a.cos() };
+            let end = (v.min(0.9999)) * std::f32::consts::TAU;
+            sink.BeginFigure(at(0.0), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink.AddArc(&D2D1_ARC_SEGMENT {
+                point: at(end),
+                size: D2D_SIZE_F { width: r, height: r },
+                rotationAngle: 0.0,
+                sweepDirection: D2D1_SWEEP_DIRECTION_CLOCKWISE,
+                arcSize: if v > 0.5 { D2D1_ARC_SIZE_LARGE } else { D2D1_ARC_SIZE_SMALL },
+            });
+            sink.EndFigure(D2D1_FIGURE_END_OPEN);
+            let _ = sink.Close();
+            self.brush.SetColor(&fill);
+            self.rt.DrawGeometry(&geom, &self.brush, width, &self.round_caps);
+        }
+    }
+
+    /// Clips what's drawn next to a rectangle (until `unclip`).
+    pub fn clip(&self, r: D2D_RECT_F) {
+        unsafe { self.rt.PushAxisAlignedClip(&r, windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED) }
+    }
+
+    pub fn unclip(&self) {
+        unsafe { self.rt.PopAxisAlignedClip() }
+    }
+
     /// Starts drawing into a surface's bitmap (physical w × h) at its monitor's scale.
     pub fn begin(&self, dc: HDC, w: i32, h: i32, scale: f32) -> Result<()> {
         unsafe {
@@ -353,6 +439,174 @@ impl Gfx {
 
     pub fn end(&self) -> Result<()> {
         unsafe { self.rt.EndDraw(None, None) }
+    }
+}
+
+/// Parses an SVG path into a Direct2D geometry (nonzero fill, as SVG's default).
+fn svg_path(d2d: &ID2D1Factory, d: &str) -> Result<ID2D1PathGeometry> {
+    use windows::Win32::Graphics::Direct2D::*;
+    let b = d.as_bytes();
+    let mut i = 0;
+    let skip = |i: &mut usize| {
+        while *i < b.len() && (b[*i] == b' ' || b[*i] == b',' || b[*i] == b'\n' || b[*i] == b'\t' || b[*i] == b'\r') {
+            *i += 1;
+        }
+    };
+    let number = |i: &mut usize| -> Option<f32> {
+        skip(i);
+        let start = *i;
+        if *i < b.len() && (b[*i] == b'-' || b[*i] == b'+') {
+            *i += 1;
+        }
+        let mut dot = false;
+        while *i < b.len() && (b[*i].is_ascii_digit() || (b[*i] == b'.' && !dot)) {
+            dot |= b[*i] == b'.';
+            *i += 1;
+        }
+        if *i < b.len() && (b[*i] == b'e' || b[*i] == b'E') {
+            *i += 1;
+            if *i < b.len() && (b[*i] == b'-' || b[*i] == b'+') {
+                *i += 1;
+            }
+            while *i < b.len() && b[*i].is_ascii_digit() {
+                *i += 1;
+            }
+        }
+        std::str::from_utf8(&b[start..*i]).ok()?.parse().ok()
+    };
+    // Arc flags may be written without separators ("a1 1 0 01.5.5").
+    let flag = |i: &mut usize| -> Option<bool> {
+        skip(i);
+        let f = *b.get(*i)?;
+        *i += 1;
+        Some(f == b'1')
+    };
+    let v = |x: f32, y: f32| Vector2 { X: x, Y: y };
+    unsafe {
+        let geom = d2d.CreatePathGeometry()?;
+        let sink = geom.Open()?;
+        sink.SetFillMode(D2D1_FILL_MODE_WINDING);
+        let (mut cx, mut cy, mut sx, mut sy) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        // The last control point (S / T reflect it) and which kind of curve set it.
+        let (mut qx, mut qy, mut last) = (0.0f32, 0.0f32, b' ');
+        let mut open = false;
+        let mut cmd = b'M';
+        loop {
+            skip(&mut i);
+            if i >= b.len() {
+                break;
+            }
+            if b[i].is_ascii_alphabetic() {
+                cmd = b[i];
+                i += 1;
+            }
+            let rel = cmd.is_ascii_lowercase();
+            let (ox, oy) = if rel { (cx, cy) } else { (0.0, 0.0) };
+            let begin = |open: &mut bool, x: f32, y: f32| {
+                if !*open {
+                    sink.BeginFigure(v(x, y), D2D1_FIGURE_BEGIN_FILLED);
+                    *open = true;
+                }
+            };
+            match cmd.to_ascii_uppercase() {
+                b'Z' => {
+                    if open {
+                        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                        open = false;
+                    }
+                    cx = sx;
+                    cy = sy;
+                    last = b'Z';
+                    continue;
+                }
+                b'M' => {
+                    let (Some(x), Some(y)) = (number(&mut i), number(&mut i)) else { break };
+                    if open {
+                        sink.EndFigure(D2D1_FIGURE_END_OPEN);
+                        open = false;
+                    }
+                    cx = ox + x;
+                    cy = oy + y;
+                    sx = cx;
+                    sy = cy;
+                    begin(&mut open, cx, cy);
+                    // Further pairs are line-tos.
+                    cmd = if rel { b'l' } else { b'L' };
+                }
+                b'L' | b'H' | b'V' => {
+                    let up = cmd.to_ascii_uppercase();
+                    let (x, y) = match up {
+                        b'H' => (number(&mut i).map(|x| ox + x), Some(cy)),
+                        b'V' => (Some(cx), number(&mut i).map(|y| oy + y)),
+                        _ => (number(&mut i).map(|x| ox + x), number(&mut i).map(|y| oy + y)),
+                    };
+                    let (Some(x), Some(y)) = (x, y) else { break };
+                    begin(&mut open, cx, cy);
+                    sink.AddLine(v(x, y));
+                    cx = x;
+                    cy = y;
+                }
+                b'C' | b'S' => {
+                    let (x1, y1) = if cmd.to_ascii_uppercase() == b'S' {
+                        if last == b'C' { (2.0 * cx - qx, 2.0 * cy - qy) } else { (cx, cy) }
+                    } else {
+                        let (Some(a), Some(b2)) = (number(&mut i), number(&mut i)) else { break };
+                        (ox + a, oy + b2)
+                    };
+                    let (Some(x2), Some(y2), Some(x), Some(y)) = (number(&mut i), number(&mut i), number(&mut i), number(&mut i)) else { break };
+                    let (x2, y2, x, y) = (ox + x2, oy + y2, ox + x, oy + y);
+                    begin(&mut open, cx, cy);
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT { point1: v(x1, y1), point2: v(x2, y2), point3: v(x, y) });
+                    qx = x2;
+                    qy = y2;
+                    cx = x;
+                    cy = y;
+                    last = b'C';
+                    continue;
+                }
+                b'Q' | b'T' => {
+                    let (x1, y1) = if cmd.to_ascii_uppercase() == b'T' {
+                        if last == b'Q' { (2.0 * cx - qx, 2.0 * cy - qy) } else { (cx, cy) }
+                    } else {
+                        let (Some(a), Some(b2)) = (number(&mut i), number(&mut i)) else { break };
+                        (ox + a, oy + b2)
+                    };
+                    let (Some(x), Some(y)) = (number(&mut i), number(&mut i)) else { break };
+                    let (x, y) = (ox + x, oy + y);
+                    begin(&mut open, cx, cy);
+                    sink.AddQuadraticBezier(&D2D1_QUADRATIC_BEZIER_SEGMENT { point1: v(x1, y1), point2: v(x, y) });
+                    qx = x1;
+                    qy = y1;
+                    cx = x;
+                    cy = y;
+                    last = b'Q';
+                    continue;
+                }
+                b'A' => {
+                    let (Some(rx), Some(ry), Some(rot)) = (number(&mut i), number(&mut i), number(&mut i)) else { break };
+                    let (Some(large), Some(sweep)) = (flag(&mut i), flag(&mut i)) else { break };
+                    let (Some(x), Some(y)) = (number(&mut i), number(&mut i)) else { break };
+                    let (x, y) = (ox + x, oy + y);
+                    begin(&mut open, cx, cy);
+                    sink.AddArc(&D2D1_ARC_SEGMENT {
+                        point: v(x, y),
+                        size: D2D_SIZE_F { width: rx.abs(), height: ry.abs() },
+                        rotationAngle: rot,
+                        sweepDirection: if sweep { D2D1_SWEEP_DIRECTION_CLOCKWISE } else { D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE },
+                        arcSize: if large { D2D1_ARC_SIZE_LARGE } else { D2D1_ARC_SIZE_SMALL },
+                    });
+                    cx = x;
+                    cy = y;
+                }
+                _ => break,
+            }
+            last = cmd.to_ascii_uppercase();
+        }
+        if open {
+            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+        }
+        sink.Close()?;
+        Ok(geom)
     }
 }
 

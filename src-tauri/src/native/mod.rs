@@ -6,6 +6,7 @@
 
 pub mod geometry;
 mod gfx;
+mod icons;
 pub mod snapshot;
 mod surface;
 mod widgets;
@@ -482,6 +483,10 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
 
 fn run_act(act: Act, app: Option<AppHandle>) {
     match act {
+        Act::Call(f) => {
+            let Some(app) = app else { return };
+            std::thread::spawn(move || f(app));
+        }
         Act::Run { action, target } => {
             let Some(app) = app else { return };
             tauri::async_runtime::spawn(async move {

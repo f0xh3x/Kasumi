@@ -3,14 +3,17 @@
 //! is what drops out of the bar or a notch for it. Both may take data keys the
 //! providers publish (the same JSON the pages got).
 
+mod basic;
 mod clock;
+mod extras;
 mod menu;
+mod weather;
 
 use std::time::Instant;
 
 use serde_json::Value;
 
-use super::gfx::{hex, rgba, white, with_alpha, Color, Family, Font, Gfx};
+use super::gfx::{hex, rect, rgba, white, with_alpha, Color, Family, Font, Gfx};
 use crate::engine::Layout;
 
 /// Segoe Fluent Icons glyphs (src/widgets/index.ts `Glyph`).
@@ -137,22 +140,275 @@ pub enum Button {
 }
 
 /// Something to do once the surface is released (it may pump messages).
-#[derive(Clone, Debug)]
 pub enum Act {
     /// actions.rs `run_action`.
     Run { action: String, target: Option<String> },
+    /// Anything else the pages invoked: run with the app, on a thread of its own.
+    Call(Box<dyn FnOnce(tauri::AppHandle) + Send>),
+}
+
+impl Act {
+    pub fn call(f: impl FnOnce(tauri::AppHandle) + Send + 'static) -> Act {
+        Act::Call(Box::new(f))
+    }
+    pub fn open(target: &str) -> Act {
+        Act::Run { action: "open".into(), target: Some(target.into()) }
+    }
 }
 
 /// What a click asks for.
-#[derive(Clone, Debug)]
 pub enum Reply {
     None,
     /// The widget's own panel: open or close it.
     TogglePanel,
+    /// Its panel too, and something to do (the notifications bell marks them seen).
+    ToggleAnd(Act),
     /// Close the open panel and do something.
     CloseAnd(Act),
+    /// Do something, leaving panels as they are.
+    Do(Act),
     /// Redraw (it changed how it looks).
     Redraw,
+}
+
+// ----------------------------------------------------------------------
+// A widget as a row of pieces (most are: icons, texts, meters), measured and
+// drawn left to right, centred on the row (the pages' flex rows).
+
+/// Where a rolling number is (the pages' setText with `roll`).
+#[derive(Clone)]
+pub struct RollAt {
+    pub prev: String,
+    pub up: bool,
+    /// Eased progress, 0 → 1.
+    pub k: f32,
+}
+
+pub enum Piece {
+    Text { s: String, font: Font, color: Color, roll: Option<RollAt> },
+    /// An icon-font glyph; `dy` nudges it (.icon sits 1 px low).
+    Glyph { s: String, size: f32, color: Color, dy: f32 },
+    /// A Fluent SVG icon (20 px view box).
+    Svg { d: &'static str, size: f32, color: Color },
+    Gap(f32),
+    /// A meter bar `len` long, `v` full.
+    Bar { len: f32, v: f32, fill: Color },
+    /// A meter ring (15 px), `v` round.
+    Ring { v: f32, fill: Color },
+    Dot { d: f32, color: Color },
+    /// A rounded box (workspace dots).
+    Pill { w: f32, h: f32, color: Color },
+    /// A square button with a glyph in it (`.btn`): side, glyph size, background.
+    Button { side: f32, glyph: String, size: f32, color: Color, bg: Option<Color> },
+    /// Text in a padded box (workspace numbers): padding x / y, radius, background.
+    Label { s: String, font: Font, color: Color, pad: (f32, f32), bg: Option<Color> },
+}
+
+impl Piece {
+    pub fn text(s: impl Into<String>, font: Font, color: Color) -> Piece {
+        Piece::Text { s: s.into(), font, color, roll: None }
+    }
+    pub fn glyph(s: impl Into<String>, size: f32, color: Color) -> Piece {
+        Piece::Glyph { s: s.into(), size, color, dy: 1.0 }
+    }
+
+    pub fn width(&self, g: &Gfx) -> f32 {
+        match self {
+            Piece::Text { s, font, .. } => g.measure(s, font),
+            Piece::Glyph { s, size, .. } => g.measure(s, &Font::icons(*size)),
+            Piece::Svg { size, .. } => *size,
+            Piece::Gap(w) => *w,
+            Piece::Bar { len, .. } => *len,
+            Piece::Ring { .. } => 15.0,
+            Piece::Dot { d, .. } => *d,
+            Piece::Pill { w, .. } => *w,
+            Piece::Button { side, .. } => *side,
+            Piece::Label { s, font, pad, .. } => g.measure(s, font) + 2.0 * pad.0,
+        }
+    }
+
+    fn draw(&self, g: &Gfx, x: f32, cy: f32, alpha: f32) {
+        let a = |c: &Color| with_alpha(*c, alpha);
+        match self {
+            Piece::Text { s, font, color, roll: None } => {
+                g.text_at(s, font, x, cy, a(color));
+            }
+            Piece::Text { s, font, color, roll: Some(r) } => draw_rolling(g, s, r, font, x, cy, a(color)),
+            Piece::Glyph { s, size, color, dy } => {
+                g.text_at(s, &Font::icons(*size), x, cy + dy, a(color));
+            }
+            Piece::Svg { d, size, color } => g.draw_svg(d, 20.0, x, (cy - size / 2.0).round(), *size, a(color)),
+            Piece::Gap(_) => {}
+            Piece::Bar { len, v, fill } => {
+                let r = rect(x, cy - 2.5, *len, 5.0);
+                g.fill_round(r, 2.5, white(0.18 * alpha));
+                if *v > 0.0 {
+                    g.fill_round(rect(x, cy - 2.5, len * v.clamp(0.0, 1.0), 5.0), 2.5, a(fill));
+                }
+            }
+            Piece::Ring { v, fill } => g.ring(x + 7.5, cy, 6.0 * 15.0 / 16.0, 2.5 * 15.0 / 16.0, *v, white(0.18 * alpha), a(fill)),
+            Piece::Dot { d, color } => g.fill_round(rect(x, cy - d / 2.0, *d, *d), d / 2.0, a(color)),
+            Piece::Pill { w, h, color } => g.fill_round(rect(x, cy - h / 2.0, *w, *h), h / 2.0, a(color)),
+            Piece::Button { side, glyph, size, color, bg } => {
+                if let Some(bg) = bg {
+                    g.fill_round(rect(x, cy - side / 2.0, *side, *side), side * 0.25, a(bg));
+                }
+                let f = Font::icons(*size);
+                let w = g.measure(glyph, &f);
+                g.text_at(glyph, &f, x + (side - w) / 2.0, cy, a(color));
+            }
+            Piece::Label { s, font, color, pad, bg } => {
+                let w = g.measure(s, font);
+                if let Some(bg) = bg {
+                    let h = g.text(s, font).map_or(16.0, |t| t.height) + 2.0 * pad.1;
+                    g.fill_round(rect(x, cy - h / 2.0, w + 2.0 * pad.0, h), 6.0, a(bg));
+                }
+                g.text_at(s, font, x + pad.0, cy, a(color));
+            }
+        }
+    }
+}
+
+pub fn row_width(g: &Gfx, pieces: &[Piece]) -> f32 {
+    pieces.iter().map(|p| p.width(g)).sum()
+}
+
+pub fn row_draw(g: &Gfx, pieces: &[Piece], x: f32, cy: f32, alpha: f32) {
+    let mut x = x;
+    for p in pieces {
+        p.draw(g, x, cy, alpha);
+        x += p.width(g);
+    }
+}
+
+/// The piece under a local x (gaps don't count).
+pub fn row_hit(g: &Gfx, pieces: &[Piece], lx: f32) -> Option<usize> {
+    let mut x = 0.0;
+    for (i, p) in pieces.iter().enumerate() {
+        let w = p.width(g);
+        if !matches!(p, Piece::Gap(_)) && lx >= x && lx < x + w {
+            return Some(i);
+        }
+        x += w;
+    }
+    None
+}
+
+/// Text cut to fit `max` px, with an ellipsis (text-overflow: ellipsis).
+pub fn fit_text(g: &Gfx, s: &str, font: &Font, max: f32) -> String {
+    if g.measure(s, font) <= max {
+        return s.to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let (mut lo, mut hi) = (0, chars.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let t: String = chars[..mid].iter().collect::<String>() + "…";
+        if g.measure(&t, font) <= max {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    chars[..lo].iter().collect::<String>().trim_end().to_string() + "…"
+}
+
+/// CSS cubic-bezier easing (x1, y1, x2, y2) at time t.
+pub fn ease(c: (f32, f32, f32, f32), t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let bez = |a: f32, b: f32, s: f32| 3.0 * a * s * (1.0 - s) * (1.0 - s) + 3.0 * b * s * s * (1.0 - s) + s * s * s;
+    // Solve x(s) = t by bisection (monotonic for CSS curves), then y(s).
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.0;
+        if bez(c.0, c.2, mid) < t {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    bez(c.1, c.3, (lo + hi) / 2.0)
+}
+
+/// A number's text that rolls its changed digits to the new value ([animation] rolling).
+#[derive(Default)]
+pub struct Roll {
+    pub text: String,
+    prev: String,
+    up: bool,
+    start: Option<Instant>,
+}
+
+const ROLL_MS: f32 = 340.0;
+
+impl Roll {
+    /// New text; true if it changed. With `on`, digits roll (same length only).
+    pub fn set(&mut self, s: String, on: bool) -> bool {
+        if s == self.text {
+            return false;
+        }
+        let num = |t: &str| t.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse::<f64>().unwrap_or(0.0);
+        if on && !self.text.is_empty() && self.text.chars().count() == s.chars().count() {
+            self.up = num(&s) >= num(&self.text);
+            self.prev = std::mem::take(&mut self.text);
+            self.start = Some(Instant::now());
+        } else {
+            self.start = None;
+        }
+        self.text = s;
+        true
+    }
+
+    pub fn at(&self, now: Instant) -> Option<RollAt> {
+        let start = self.start?;
+        let t = now.saturating_duration_since(start).as_secs_f32() * 1000.0 / ROLL_MS;
+        (t < 1.0).then(|| RollAt { prev: self.prev.clone(), up: self.up, k: ease((0.2, 0.8, 0.2, 1.0), t) })
+    }
+
+    pub fn animating(&self, now: Instant) -> bool {
+        self.start.is_some_and(|s| now.saturating_duration_since(s).as_secs_f32() * 1000.0 < ROLL_MS + 20.0)
+    }
+
+    /// The text as a piece (rolling while it does).
+    pub fn piece(&self, font: Font, color: Color) -> Piece {
+        Piece::Text { s: self.text.clone(), font, color, roll: self.at(Instant::now()) }
+    }
+}
+
+/// Text whose changed digits roll: up (the new one comes from below) or down.
+fn draw_rolling(g: &Gfx, s: &str, r: &RollAt, font: &Font, x: f32, cy: f32, c: Color) {
+    let line = g.text("0", font).map_or(16.0, |t| t.height);
+    let prev: Vec<char> = r.prev.chars().collect();
+    let mut cx = x;
+    let mut run = String::new();
+    let mut run_x = x;
+    let flush = |run: &mut String, run_x: f32| {
+        if !run.is_empty() {
+            g.text_at(run, font, run_x, cy, c);
+            run.clear();
+        }
+    };
+    for (i, ch) in s.chars().enumerate() {
+        let w = g.measure(&ch.to_string(), font);
+        let old = prev.get(i).copied().unwrap_or(ch);
+        if old != ch && old.is_ascii_digit() && ch.is_ascii_digit() {
+            flush(&mut run, run_x);
+            let top = (cy - line / 2.0).round();
+            g.clip(rect(cx, top, w + 1.0, line));
+            let (from, to) = if r.up { (-r.k * line, line - r.k * line) } else { (r.k * line, -line + r.k * line) };
+            g.text_at(&old.to_string(), font, cx, cy + from, c);
+            g.text_at(&ch.to_string(), font, cx, cy + to, c);
+            g.unclip();
+            run_x = cx + w;
+        } else {
+            if run.is_empty() {
+                run_x = cx;
+            }
+            run.push(ch);
+        }
+        cx += w;
+    }
+    flush(&mut run, run_x);
 }
 
 pub trait Widget {
@@ -238,7 +494,7 @@ pub fn widget_type(name: &str) -> &str {
 pub fn panel_for(name: &str) -> Option<String> {
     match widget_type(name) {
         "clock" => Some(name.replacen("clock", "calendar", 1)),
-        "menu" => Some(name.to_string()),
+        "menu" | "tray" | "media" | "weather" | "temps" | "tasks" | "quick" | "launcher" | "privacy" | "claude" | "clipboard" | "notifications" => Some(name.to_string()),
         _ => None,
     }
 }
@@ -247,6 +503,18 @@ pub fn create(name: &str, opts: Opts) -> Box<dyn Widget> {
     match widget_type(name) {
         "clock" => Box::new(clock::Clock::new(opts)),
         "menu" => Box::new(menu::MenuButton::default()),
+        "temps" => Box::new(basic::Temps::new(opts)),
+        "disk" => Box::new(basic::Disk::new(opts)),
+        "buttons" => Box::new(basic::Buttons::new(opts)),
+        "language" => Box::new(basic::Language::new(opts)),
+        "workspaces" => Box::new(basic::Workspaces::new(opts)),
+        "weather" => Box::new(weather::Weather::new(opts)),
+        "focus" => Box::new(extras::Focus::new(opts)),
+        "netspeed" => Box::new(extras::Netspeed::new(opts)),
+        "privacy" => Box::new(extras::Privacy::new(opts)),
+        "clipboard" => Box::new(extras::Clipboard::new(opts)),
+        "notifications" => Box::new(extras::Notifications::new(opts)),
+        "claude" => Box::new(extras::Claude::new(opts)),
         _ => Box::new(Unknown(name.to_string())),
     }
 }
