@@ -218,8 +218,9 @@ pub struct Surface {
     pending_regions: Option<Vec<Rect>>,
     /// Needs measuring (content changed size).
     remeasure: bool,
-    /// The panel dragging with the mouse captured (a slider).
+    /// The panel dragging with the mouse captured (a slider), or the widget (tasks reordering).
     captured: Option<usize>,
+    captured_widget: Option<usize>,
     /// Acts the surface itself asks for (the launcher's apps).
     pending: Vec<Act>,
     /// A panel a widget opened on hover (the tasks widget's): its widget, and when
@@ -293,6 +294,7 @@ impl Surface {
             pending_regions: None,
             remeasure: true,
             captured: None,
+            captured_widget: None,
             pending: Vec::new(),
             hover_panel: None,
         };
@@ -1808,7 +1810,18 @@ impl Surface {
     /// The left button down: a panel part that drags (a slider) takes the mouse.
     pub fn press(&mut self, gfx: &Gfx, at: (i32, i32)) -> bool {
         let (x, y) = self.logical(at);
-        let Some((_, pi, local)) = self.panel_at(x, y) else { return false };
+        let Some((_, pi, local)) = self.panel_at(x, y) else {
+            // A widget that drags (tasks).
+            let Some((wi, local)) = self.widget_at(gfx, x, y) else { return false };
+            if !self.expanded && !self.dock() || !self.widgets[wi].w.press(local) {
+                return false;
+            }
+            self.captured_widget = Some(wi);
+            unsafe {
+                SetCapture(self.hwnd);
+            }
+            return true;
+        };
         if !self.panels[pi].p.press(local) {
             return false;
         }
@@ -1829,10 +1842,24 @@ impl Surface {
     }
 
     pub fn dragging(&self) -> bool {
-        self.captured.is_some()
+        self.captured.is_some() || self.captured_widget.is_some()
+    }
+
+    /// The point local to the captured widget.
+    fn widget_local(&self, wi: usize, at: (i32, i32)) -> (f32, f32) {
+        let (x, y) = self.logical(at);
+        let (wx, cy, _) = self.widgets[wi].drawn.unwrap_or((0.0, 0.0, 0.0));
+        (x - wx, y - cy)
     }
 
     pub fn drag(&mut self, gfx: &Gfx, at: (i32, i32)) -> Option<Act> {
+        if let Some(wi) = self.captured_widget {
+            let local = self.widget_local(wi, at);
+            let reply = self.widgets[wi].w.drag(local);
+            let act = self.answer(gfx, reply);
+            self.redraw(gfx);
+            return act;
+        }
         let (pi, local) = self.captured_local(at)?;
         let reply = self.panels[pi].p.drag(local);
         let act = self.answer(gfx, reply);
@@ -1841,6 +1868,23 @@ impl Surface {
     }
 
     pub fn release(&mut self, gfx: &Gfx, at: (i32, i32)) -> Option<Act> {
+        if let Some(wi) = self.captured_widget.take() {
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+            let local = self.widget_local(wi, at);
+            let reply = match self.widgets[wi].w.release(local) {
+                Reply::TogglePanel => {
+                    self.hover_panel = None;
+                    self.toggle_panel_of(gfx, wi);
+                    Reply::None
+                }
+                other => other,
+            };
+            let act = self.answer(gfx, reply);
+            self.changed(gfx);
+            return act;
+        }
         let (pi, local) = self.captured_local(at)?;
         self.captured = None;
         unsafe {

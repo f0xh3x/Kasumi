@@ -39,6 +39,19 @@ struct Win {
 struct App {
     key: String,
     wins: Vec<Win>,
+    pinned: bool,
+    /// Its entry in the pin list (an app key or a dropped file's path).
+    pin: Option<String>,
+}
+
+/// An app being dragged to a new place: which, where the press was, how far it's
+/// moved, whether it's really a drag yet, and where it would land.
+struct Drag {
+    i: usize,
+    x0: f32,
+    dx: f32,
+    moved: bool,
+    to: usize,
 }
 
 /// The window a click should front, and whether clicking it again minimizes (one window).
@@ -77,6 +90,10 @@ pub struct Tasks {
     /// Hovering an app with several windows: which, since when (its windows pop up after 450 ms).
     hover_since: Option<(usize, Instant)>,
     open_request: bool,
+    drag: Option<Drag>,
+    /// The order the user dragged apps into, until the backend's catches up; every app's key.
+    local_order: Option<Vec<String>>,
+    all_keys: Vec<String>,
     /// Magnify: each icon's scale now (eased toward the cursor's), and when last stepped.
     scales: Cell<[f32; 64]>,
     stepped: Cell<Option<Instant>>,
@@ -101,6 +118,9 @@ impl Tasks {
             cursor: None,
             hover_since: None,
             open_request: false,
+            drag: None,
+            local_order: None,
+            all_keys: Vec::new(),
             scales: Cell::new([1.0; 64]),
             stepped: Cell::new(None),
             active: None,
@@ -239,11 +259,24 @@ impl Widget for Tasks {
                         let key = a.get("key")?.as_str()?.to_string();
                         let pinned = a.get("pinned").and_then(|p| p.as_bool()).unwrap_or(false);
                         let w: Vec<Win> = mine.iter().filter(|(k, _, _)| *k == key).map(|(_, w, _)| w.clone()).collect();
-                        ((pinning && pinned) || !w.is_empty()).then(|| App { key, wins: w })
+                        ((pinning && pinned) || !w.is_empty()).then(|| App { key, wins: w, pinned, pin: a.get("pin").and_then(|p| p.as_str()).map(String::from) })
                     })
                     .collect()
             })
             .unwrap_or_default();
+        let mut apps = apps;
+        self.all_keys = v.get("apps").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(|x| x.get("key")?.as_str().map(String::from)).collect()).unwrap_or_default();
+        if let Some(order) = &self.local_order {
+            // The new order has arrived from the backend: stop overriding it.
+            let theirs: Vec<&String> = self.all_keys.iter().filter(|k| order.contains(k)).collect();
+            let mine: Vec<&String> = order.iter().filter(|k| self.all_keys.contains(k)).collect();
+            if theirs == mine {
+                self.local_order = None;
+            } else {
+                let at = |k: &str| order.iter().position(|o| o == k).unwrap_or(usize::MAX);
+                apps.sort_by_key(|a| at(&a.key));
+            }
+        }
         let active = apps.iter().find(|a| a.wins.iter().any(|w| w.active)).map(|a| a.key.clone());
         if self.opts.glide && active.is_some() && self.active.is_some() && active != self.active {
             let from = self.glide_x(Instant::now()).or_else(|| self.active.as_deref().and_then(|k| self.dot_x(k)));
@@ -290,7 +323,7 @@ impl Widget for Tasks {
         let glide = self.glide.as_ref().filter(|gl| now.saturating_duration_since(gl.start).as_secs_f32() * 1000.0 < gl.ms);
         for (i, a) in self.apps.iter().enumerate() {
             let Some((_, bx, bw)) = self.boxes.iter().find(|b| b.0 == a.key).cloned() else { continue };
-            let mut bx = x + bx + self.slide_offset(&a.key, now);
+            let mut bx = x + bx + self.slide_offset(&a.key, now) + self.drag_offset(i);
             // New buttons grow in (180 ms).
             let grow = self.fresh.get(&a.key).map_or(1.0, |t0| ease(EASE, now.saturating_duration_since(*t0).as_secs_f32() / 0.18));
             let a_alpha = alpha * grow;
@@ -400,6 +433,67 @@ impl Widget for Tasks {
             || self.fresh.values().any(|t| now.saturating_duration_since(*t).as_secs_f32() < 0.2)
     }
 
+    fn press(&mut self, at: (f32, f32)) -> bool {
+        let Some(i) = self.boxes.iter().position(|(_, bx, bw)| at.0 >= *bx && at.0 < bx + bw) else { return false };
+        self.drag = Some(Drag { i, x0: at.0, dx: 0.0, moved: false, to: i });
+        true
+    }
+
+    fn drag(&mut self, at: (f32, f32)) -> Reply {
+        let Some(d) = self.drag.as_mut() else { return Reply::None };
+        let dx = at.0 - d.x0;
+        if !d.moved && dx.abs() < 6.0 {
+            return Reply::None;
+        }
+        d.moved = true;
+        self.hover_since = None;
+        // Stays within the widget, give or take enough to pass the ends' middles.
+        let (_, me_x, me_w) = self.boxes[d.i].clone();
+        let (first, last) = (self.boxes[0].1, self.boxes.last().map_or(0.0, |b| b.1 + b.2));
+        let over = me_w / 2.0 + 6.0;
+        d.dx = dx.clamp(first - me_x - over, last - (me_x + me_w) + over);
+        let centre = me_x + me_w / 2.0 + d.dx;
+        let mut to = d.i;
+        for (j, (_, bx, bw)) in self.boxes.iter().enumerate() {
+            let mid = bx + bw / 2.0;
+            if j > d.i && centre > mid {
+                to = to.max(j);
+            } else if j < d.i && centre < mid {
+                to = to.min(j);
+            }
+        }
+        d.to = to;
+        Reply::Redraw
+    }
+
+    fn release(&mut self, at: (f32, f32)) -> Reply {
+        let Some(d) = self.drag.take() else { return Reply::None };
+        if !d.moved {
+            return self.click(Button::Left, at);
+        }
+        if d.to == d.i {
+            return Reply::Redraw;
+        }
+        let app = self.apps.remove(d.i);
+        self.apps.insert(d.to, app);
+        // New order: what's shown here, then everything else as it was.
+        let shown: Vec<String> = self.apps.iter().map(|a| a.key.clone()).collect();
+        let mut order = shown.clone();
+        order.extend(self.all_keys.iter().filter(|k| !shown.contains(k)).cloned());
+        self.local_order = Some(order.clone());
+        // Pinned apps keep their new order across restarts.
+        let pins: Vec<String> = self.apps.iter().filter(|a| a.pinned).map(|a| a.pin.clone().unwrap_or_else(|| a.key.clone())).collect();
+        let pinning = self.opts.flag("pinning") != Some(false) && self.opts.flag("pinned") != Some(false);
+        Reply::Do(Act::call(move |_| {
+            let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_reorder(order));
+            if pinning && !pins.is_empty() {
+                use crate::config_edit::Seg::Key;
+                let path = vec![Key("widgets".into()), Key("tasks".into()), Key("pins".into())];
+                let _ = tauri::async_runtime::block_on(crate::config_edit::config_write(path, Some(serde_json::json!(pins))));
+            }
+        }))
+    }
+
     fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
         let Some(i) = self.boxes.iter().position(|(_, bx, bw)| at.0 >= *bx && at.0 < bx + bw) else { return Reply::None };
         let a = &self.apps[i];
@@ -436,6 +530,21 @@ impl Widget for Tasks {
 }
 
 impl Tasks {
+    fn drag_offset(&self, i: usize) -> f32 {
+        let Some(d) = self.drag.as_ref().filter(|d| d.moved) else { return 0.0 };
+        if i == d.i {
+            return d.dx;
+        }
+        let room = self.boxes.get(d.i).map_or(0.0, |b| b.2) + self.h * 0.12;
+        if i > d.i && i <= d.to {
+            -room
+        } else if i < d.i && i >= d.to {
+            room
+        } else {
+            0.0
+        }
+    }
+
     /// Where a gliding marker's centre is now (to start the next glide from there).
     fn glide_x(&self, now: Instant) -> Option<f32> {
         let gl = self.glide.as_ref()?;

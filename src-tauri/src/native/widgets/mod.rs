@@ -459,6 +459,17 @@ pub trait Widget {
             Reply::None
         }
     }
+    /// The left button pressed on it: true to take the drag (it then gets `drag`
+    /// and `release`, and its click comes from `release`).
+    fn press(&mut self, _at: (f32, f32)) -> bool {
+        false
+    }
+    fn drag(&mut self, _at: (f32, f32)) -> Reply {
+        Reply::None
+    }
+    fn release(&mut self, _at: (f32, f32)) -> Reply {
+        Reply::None
+    }
     /// It wants its panel open now (the tasks widget, hovered a moment over an app
     /// with several windows). Asked after its ticks.
     fn wants_panel(&mut self) -> bool {
