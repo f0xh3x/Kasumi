@@ -109,6 +109,10 @@ pub enum Msg {
 }
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Surfaces drawn off screen (the headless live test in snapshot.rs).
+static OFFSCREEN: AtomicBool = AtomicBool::new(false);
+/// Frames drawn while animating (the live test counts them).
+pub static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SENDER: OnceLock<Mutex<Sender<Msg>>> = OnceLock::new();
 /// The thread's message-only window: posting to it wakes the thread.
 static WAKE: AtomicIsize = AtomicIsize::new(0);
@@ -144,16 +148,25 @@ pub fn create(label: &str, monitor: &Monitor, layout: &Layout) -> isize {
 
 /// Starts the native thread (the renderer is native from here on).
 pub fn start(app: &AppHandle) {
+    spawn(Some(app.clone()));
+}
+
+/// The native thread without the app, its surfaces off screen (snapshot.rs's live test).
+pub fn start_headless() {
+    OFFSCREEN.store(true, Ordering::Relaxed);
+    spawn(None);
+}
+
+fn spawn(app: Option<AppHandle>) {
     let (tx, rx) = mpsc::channel();
     if SENDER.set(Mutex::new(tx)).is_err() {
         return;
     }
     ACTIVE.store(true, Ordering::Relaxed);
-    let app = app.clone();
     let (ready_tx, ready_rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("kasumi-native".into())
-        .spawn(move || run(Some(app), rx, ready_tx))
+        .spawn(move || run(app, rx, ready_tx))
         .expect("spawn native thread");
     // The engine creates surfaces right away: wait for the wake window.
     let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(5));
@@ -240,6 +253,7 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
                 with_native(|n| {
                     for s in n.surfaces.iter_mut().filter(|s| s.animating) {
                         s.frame(&n.gfx, dt);
+                        FRAMES.fetch_add(1, Ordering::Relaxed);
                     }
                     report(n);
                 });
@@ -292,7 +306,7 @@ impl Native {
     fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Create { label, monitor, layout, reply } => {
-                let hwnd = match Surface::new(&self.gfx, &label, monitor, *layout, &self.store, false) {
+                let hwnd = match Surface::new(&self.gfx, &label, monitor, *layout, &self.store, OFFSCREEN.load(Ordering::Relaxed)) {
                     Ok(s) => {
                         let h = s.hwnd.0 as isize;
                         self.surfaces.push(s);

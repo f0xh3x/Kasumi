@@ -19,6 +19,10 @@ use crate::engine::{layout_for, monitor_matches};
 pub fn run(args: &[String]) {
     let value = |f: &str| args.iter().position(|a| a == f).and_then(|i| args.get(i + 1)).cloned();
     let Some(dir) = value("--native-snapshot") else { return };
+    if let Some(secs) = value("--live").and_then(|s| s.parse::<u64>().ok()) {
+        live(Path::new(&dir), secs);
+        return;
+    }
     let dir = Path::new(&dir).to_path_buf();
     let _ = std::fs::create_dir_all(&dir);
     let mut log = std::fs::File::create(dir.join("snapshot.txt")).ok();
@@ -100,6 +104,84 @@ pub fn run(args: &[String]) {
             }
         }
     }
+}
+
+/// `--live <seconds>`: the real native thread with every surface off screen,
+/// opened and closed once a second for the first half, then left alone; reports
+/// the frames drawn and what the process costs (private memory, CPU while idle).
+fn live(dir: &Path, secs: u64) {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    use windows::Win32::System::WindowsProgramming::QueryProcessCycleTime;
+
+    let _ = std::fs::create_dir_all(dir);
+    let mut out = String::new();
+    let private_mb = || {
+        let mut pmc = PROCESS_MEMORY_COUNTERS_EX::default();
+        unsafe {
+            let _ = GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc as *mut _ as *mut PROCESS_MEMORY_COUNTERS, std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32);
+        }
+        pmc.PrivateUsage as f64 / (1024.0 * 1024.0)
+    };
+    let cycles = || {
+        let mut c = 0u64;
+        unsafe {
+            let _ = QueryProcessCycleTime(GetCurrentProcess(), &mut c);
+        }
+        c
+    };
+    out += &format!("before start: {:.1} MB\n", private_mb());
+    let cfg = match crate::config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::write(dir.join("live.txt"), format!("config error: {e}"));
+            return;
+        }
+    };
+    super::start_headless();
+    let mut labels = Vec::new();
+    for (i, m) in crate::win::monitors().iter().enumerate() {
+        let rule = cfg.monitors.iter().find(|r| monitor_matches(&r.matcher, m, i));
+        if rule.is_some_and(|r| !r.enabled) {
+            continue;
+        }
+        for (id, s) in cfg.surface_list() {
+            if !cfg.surface_on(rule, &id, &s) {
+                continue;
+            }
+            let label = format!("overlay-{}-{id}", m.device.trim_start_matches(['\\', '.']));
+            let layout = layout_for(&cfg, &label, m, rule, &id, &[], &HashMap::new());
+            let hwnd = super::create(&label, m, &layout);
+            out += &format!("{label}: hwnd {hwnd:#x}\n");
+            labels.push(label);
+        }
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    out += &format!("surfaces up: {:.1} MB\n", private_mb());
+    let half = Duration::from_secs(secs / 2);
+    let start = Instant::now();
+    let mut open = false;
+    while start.elapsed() < half {
+        open = !open;
+        for l in &labels {
+            super::post(super::Msg::State(l.clone(), open));
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    for l in &labels {
+        super::post(super::Msg::State(l.clone(), false));
+    }
+    std::thread::sleep(Duration::from_secs(1));
+    let frames = super::FRAMES.load(Ordering::Relaxed);
+    out += &format!("animated: {frames} surface frames in {:.1} s ({} opens and closes)\n", half.as_secs_f64(), half.as_secs());
+    out += &format!("after animating: {:.1} MB\n", private_mb());
+    let (c0, t0) = (cycles(), Instant::now());
+    std::thread::sleep(Duration::from_secs(secs - secs / 2));
+    let rate = (cycles() - c0) as f64 / t0.elapsed().as_secs_f64();
+    out += &format!("idle: {:.1} M cycles/s, {} frames, {:.1} MB\n", rate / 1e6, super::FRAMES.load(Ordering::Relaxed) - frames, private_mb());
+    let _ = std::fs::write(dir.join("live.txt"), out);
 }
 
 /// Premultiplied BGRA over mid grey, as an uncompressed PNG.
