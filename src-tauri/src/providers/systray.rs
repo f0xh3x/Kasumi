@@ -292,6 +292,20 @@ struct SyncState {
     rect: (i32, i32, i32, i32),
     raises: Vec<Instant>,
     backed_off_until: Option<Instant>,
+    /// Explorer's taskbar was found first since we last asked apps to re-add icons.
+    displaced: bool,
+    announced: Option<Instant>,
+}
+
+/// Asks running apps to re-add their icons (they reach whichever `Shell_TrayWnd` is first).
+fn announce(ours: HWND, st: &mut SyncState) {
+    unsafe {
+        let created = RegisterWindowMessageW(w!("TaskbarCreated"));
+        let _ = SendNotifyMessageW(HWND_BROADCAST, created, WPARAM(0), LPARAM(0));
+        // If the taskbar is still above us, the icons went to Explorer: announce again once we're first.
+        st.displaced = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).ok() != Some(ours);
+    }
+    st.announced = Some(Instant::now());
 }
 
 /// Keeps our window the one apps find (first `Shell_TrayWnd`) and the same size
@@ -311,8 +325,17 @@ fn sync_with_explorer(ours: HWND, st: &mut SyncState) {
         }
 
         let first = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).ok();
-        if first.is_some_and(|h| h != ours) {
-            let now = Instant::now();
+        let now = Instant::now();
+        if first == Some(ours) {
+            // Icons added while the taskbar was above us only reached Explorer, and
+            // their later updates are ignored here: have the apps add them again
+            // (at most every 30 s, so a z-order tug of war doesn't spam apps).
+            if st.displaced && st.announced.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(30)) {
+                eprintln!("[kasumi] tray: back above the taskbar; asking apps to re-add icons");
+                announce(ours, st);
+            }
+        } else if first.is_some() {
+            st.displaced = true;
             if st.backed_off_until.is_some_and(|t| now < t) {
                 return;
             }
@@ -370,15 +393,14 @@ fn run() {
         };
         let _ = OUR_HWND.set(hwnd.0 as isize);
 
-        // Ask running apps to re-add their icons (they now reach us first).
-        let created = RegisterWindowMessageW(w!("TaskbarCreated"));
-        let _ = SendNotifyMessageW(HWND_BROADCAST, created, WPARAM(0), LPARAM(0));
+        // Get above the taskbar, then ask running apps to re-add their icons (they now reach us first).
+        let mut sync = SyncState::default();
+        sync_with_explorer(hwnd, &mut sync);
+        announce(hwnd, &mut sync);
         eprintln!("[kasumi] tray: hosting started");
 
         // Block on the queue so apps' (synchronous) tray calls are answered at once;
         // housekeeping runs on a timer.
-        let mut sync = SyncState::default();
-        sync_with_explorer(hwnd, &mut sync);
         SetTimer(Some(hwnd), TIMER_SYNC, 1000, None);
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
