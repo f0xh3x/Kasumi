@@ -436,4 +436,8 @@ impl Panel for MediaPanel {
         self.hover_seek = false;
         self.hovered_key = None;
     }
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        let h = self.rows.4;
+        vec![(0.0, 0.0, ART, h), (INFO_X, 0.0, INFO_W, h)]
+    }
 }

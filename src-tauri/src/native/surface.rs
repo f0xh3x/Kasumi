@@ -34,6 +34,13 @@ use crate::win::Monitor;
 /// Space between a notch's content and the start of its curves, each side (main.ts).
 const NOTCH_PAD: f64 = 10.0;
 
+/// How long a panel's cascade of `n` pieces takes (main.ts cascade).
+fn cascade_length(n: usize) -> std::time::Duration {
+    let n = n.max(1) as f32;
+    let step = (240.0 / n).min(25.0);
+    std::time::Duration::from_secs_f32(((n - 1.0) * step + 160.0) / 1000.0)
+}
+
 fn clamp01(v: f64) -> f64 {
     v.clamp(0.0, 1.0)
 }
@@ -72,6 +79,8 @@ struct PanelBox {
     align: Align,
     /// Its content's top-left as last drawn (window px, logical).
     drawn: Option<(f32, f32)>,
+    /// When its cascade began (it began opening), until it's shut again.
+    cascade: Option<Instant>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -399,7 +408,7 @@ impl Surface {
                     let opts = self.opts_for(&panel);
                     if let Some(p) = widgets::create_panel(&panel, &opts) {
                         let pi = self.panels.len();
-                        self.panels.push(PanelBox { p, opts, content: (0.0, 0.0), w: 0.0, h: 0.0, shift: 0.0, align: Align::Center, drawn: None });
+                        self.panels.push(PanelBox { p, opts, content: (0.0, 0.0), w: 0.0, h: 0.0, shift: 0.0, align: Align::Center, drawn: None, cascade: None });
                         self.drops[di].panels.push((wi, pi));
                     }
                 }
@@ -440,7 +449,7 @@ impl Surface {
         let opts = self.opts_for(&panel);
         let Some(p) = widgets::create_panel(&panel, &opts) else { return };
         let pi = self.panels.len();
-        self.panels.push(PanelBox { p, opts, content: (0.0, 0.0), w: 0.0, h: 0.0, shift: 0.0, align: Align::Center, drawn: None });
+        self.panels.push(PanelBox { p, opts, content: (0.0, 0.0), w: 0.0, h: 0.0, shift: 0.0, align: Align::Center, drawn: None, cascade: None });
         let key = format!("bar:{name}");
         let mut d = Drop::new(key.clone(), self.panel_spring(prev, &key));
         d.has_panel = true;
@@ -1050,6 +1059,19 @@ impl Surface {
         (bumps, frame)
     }
 
+    /// Panels' cascades: one starts as its panel begins to open, and resets once it's shut.
+    fn update_cascades(&mut self) {
+        for d in &self.drops {
+            let Some(pi) = d.active else { continue };
+            let pb = &mut self.panels[pi];
+            if d.spring.value <= 0.01 && d.spring.target < 0.5 {
+                pb.cascade = None;
+            } else if pb.cascade.is_none() && pb.opts.cascade {
+                pb.cascade = Some(Instant::now());
+            }
+        }
+    }
+
     /// One animation step (once per display refresh while something moves).
     pub fn frame(&mut self, gfx: &Gfx, dt: f64) {
         let now = Instant::now();
@@ -1074,7 +1096,9 @@ impl Surface {
         for s in springs.iter_mut() {
             s.step(dt);
         }
-        let busy = self.widgets.iter().any(|w| w.w.animating(now)) || panels_moving;
+        // Cascades run on time (a spring is nearly open within ~100 ms): frames until they're done.
+        let cascading = self.panels.iter().any(|p| p.cascade.is_some_and(|t0| now < t0 + cascade_length(p.p.pieces().len())));
+        let busy = self.widgets.iter().any(|w| w.w.animating(now)) || panels_moving || cascading;
         if springs.iter().all(|s| s.settled()) && !busy {
             for s in springs.iter_mut() {
                 s.snap();
@@ -1094,6 +1118,7 @@ impl Surface {
 
     /// Draws the surface into its window, only as tall as what shows.
     pub fn render(&mut self, gfx: &Gfx) -> Result<()> {
+        self.update_cascades();
         let order = self.ordered();
         let (bumps, frame) = self.frame_of(&order, false);
         // Docks: widgets size with the row as it grows (the pages' --h / --t).
@@ -1253,7 +1278,29 @@ impl Surface {
             let top = if bottom { y(near + pb.h) + pad_far } else { y(near) + pad_near };
             let (left, top) = ((left * scale).round() / scale, (top * scale).round() / scale);
             let cx = Ctx { gfx, look: &self.look, opts: &pb.opts, t: 1.0, h: h_bar as f32, open: 1.0 };
-            pb.p.draw(&cx, left, top, alpha);
+            match pb.cascade.filter(|_| pb.opts.cascade) {
+                // Cascade: each piece fades in and slides 8 px into place (from the bar's side)
+                // a little after the one before.
+                Some(t0) if Instant::now() < t0 + cascade_length(pb.p.pieces().len()) => {
+                    let pieces = pb.p.pieces();
+                    let pieces = if pieces.is_empty() { vec![(0.0, 0.0, pb.content.0, pb.content.1)] } else { pieces };
+                    let step = (240.0 / pieces.len().max(1) as f32).min(25.0);
+                    let t = Instant::now().saturating_duration_since(t0).as_secs_f32() * 1000.0;
+                    let away = if bottom { -1.0 } else { 1.0 };
+                    for (i, (px, py, pw, ph)) in pieces.iter().enumerate() {
+                        let k = ((t - i as f32 * step) / 160.0).clamp(0.0, 1.0);
+                        let e = 1.0 - (1.0 - k).powi(3);
+                        if e <= 0.0 {
+                            continue;
+                        }
+                        let dy = (1.0 - e) * -8.0 * away;
+                        gfx.clip(super::gfx::rect(left + px - 2.0, top + py - 2.0 + dy, pw + 4.0, ph + 4.0));
+                        pb.p.draw(&cx, left, top + dy, alpha * e);
+                        gfx.unclip();
+                    }
+                }
+                _ => pb.p.draw(&cx, left, top, alpha),
+            }
             panel_drawn.push((pi, Some((left, top))));
         }
         unsafe {
@@ -1581,6 +1628,10 @@ impl Surface {
             for s in [d.xs.as_mut(), d.ws.as_mut(), d.shown.as_mut()].into_iter().flatten() {
                 s.snap();
             }
+        }
+        // Posed open: any cascade has long finished.
+        for pb in &mut self.panels {
+            pb.cascade = Some(Instant::now() - std::time::Duration::from_secs(10));
         }
         self.animating = false;
     }

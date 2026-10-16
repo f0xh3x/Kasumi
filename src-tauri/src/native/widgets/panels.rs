@@ -503,4 +503,7 @@ impl Panel for TrayPanel {
     fn closed(&mut self) {
         self.hovered = None;
     }
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        (0..self.icons.len()).map(|i| ((i % self.per_row()) as f32 * (CELL + CELL_GAP), (i / self.per_row()) as f32 * (CELL + CELL_GAP), CELL, CELL)).collect()
+    }
 }

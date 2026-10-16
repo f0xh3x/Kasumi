@@ -246,6 +246,9 @@ impl Panel for ClipboardPanel {
         (self.hovered, self.hover_x, self.hover_clear) = (None, false, false);
         self.scroll.offset = 0.0;
     }
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        self.rows.iter().map(|(top, h)| (0.0, top - self.scroll.offset, CLIP_W, *h)).filter(|r| r.1 + r.3 > 0.0 && r.1 < self.scroll.shown()).collect()
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -523,6 +526,11 @@ impl Panel for NotificationsPanel {
         self.hovered_action = None;
         self.scroll.offset = 0.0;
     }
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        let mut out: Vec<(f32, f32, f32, f32)> = self.rows.iter().map(|(top, h)| (0.0, top - self.scroll.offset, NOTE_W, *h)).filter(|r| r.1 + r.3 > 0.0 && r.1 < self.scroll.shown()).collect();
+        out.push((0.0, self.scroll.shown() + 4.0, NOTE_W, 30.0));
+        out
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -786,5 +794,8 @@ impl Panel for TasksPanel {
     }
     fn closed(&mut self) {
         self.hovered = None;
+    }
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        self.rows.iter().map(|(_, top, h)| (0.0, *top, self.width, *h)).collect()
     }
 }

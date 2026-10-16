@@ -535,6 +535,11 @@ pub trait Panel {
     }
     /// The panel has shut (forget armed buttons and hover).
     fn closed(&mut self) {}
+    /// The pieces its content shows one after another with [animation] cascade
+    /// (content px: x, y, w, h); none: all at once.
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        Vec::new()
+    }
 }
 
 /// `buttons#2` → `buttons`.
@@ -577,7 +582,7 @@ pub fn create(name: &str, opts: Opts) -> Box<dyn Widget> {
 
 pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
     Some(match widget_type(name) {
-        "calendar" => Box::new(clock::Calendar),
+        "calendar" => Box::new(clock::Calendar::default()),
         "menu" => Box::new(menu::Menu::new(opts)),
         "weather" => Box::new(panels::WeatherPanel::new(opts)),
         "temps" => Box::new(panels::TempsPanel::new(opts)),

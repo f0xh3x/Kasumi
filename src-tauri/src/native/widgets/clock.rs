@@ -128,7 +128,11 @@ fn iso_week(days: i64) -> i64 {
 }
 
 /// Month view, Monday first, with ISO week numbers; today in the accent.
-pub struct Calendar;
+#[derive(Default)]
+pub struct Calendar {
+    /// The title's and the weekday row's heights as last measured.
+    heights: (f32, f32),
+}
 
 // styles.css .panel-calendar: 228 px wide, a 22 px week column, 24 px rows 2 px apart.
 const CAL_W: f32 = 228.0;
@@ -154,7 +158,26 @@ impl Panel for Calendar {
     }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         let (title, dow) = Self::heights(cx);
+        self.heights = (title, dow);
         (CAL_W, title + 8.0 + dow + 6.0 * (ROW + GAP))
+    }
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        let (title, dow) = self.heights;
+        let col = (CAL_W - WK_W) / 7.0;
+        let grid = title + 8.0;
+        let mut out = vec![(0.0, 0.0, CAL_W, title)];
+        out.push((0.0, grid, WK_W, dow));
+        for i in 0..7 {
+            out.push((WK_W + col * i as f32, grid, col, dow));
+        }
+        for week in 0..6 {
+            let top = grid + dow + GAP + week as f32 * (ROW + GAP);
+            out.push((0.0, top, WK_W, ROW));
+            for i in 0..7 {
+                out.push((WK_W + col * i as f32, top, col, ROW));
+            }
+        }
+        out
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;

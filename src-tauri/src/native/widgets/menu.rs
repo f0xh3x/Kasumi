@@ -178,4 +178,7 @@ impl Panel for Menu {
         self.hovered = None;
         self.armed = None;
     }
+    fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        self.rows().into_iter().map(|(top, h)| (0.0, top, self.width, h)).collect()
+    }
 }
