@@ -8,6 +8,8 @@ mod clock;
 mod extras;
 pub mod icon;
 mod menu;
+mod panels;
+mod panels2;
 mod shell;
 mod tasks;
 mod weather;
@@ -492,6 +494,23 @@ pub trait Panel {
     fn click(&mut self, _button: Button, _at: (f32, f32)) -> Reply {
         Reply::None
     }
+    /// The left button pressed at a point: true to take the drag (a slider, the seek
+    /// bar), which then gets `drag` and `release` instead of a click.
+    fn press(&mut self, _at: (f32, f32)) -> bool {
+        false
+    }
+    fn drag(&mut self, _at: (f32, f32)) {}
+    fn release(&mut self, _at: (f32, f32)) -> Reply {
+        Reply::None
+    }
+    /// The wheel turned over it (notches: + up / away, − down).
+    fn wheel(&mut self, _at: (f32, f32), _notches: f32) -> Reply {
+        Reply::None
+    }
+    /// Whether what `tick` changes can change its size (false: only redraw).
+    fn tick_resizes(&self) -> bool {
+        true
+    }
     /// Panels whose icon column lines up under the widget's icon (the menu): its
     /// centre's x in the content.
     fn icon_x(&self) -> Option<f32> {
@@ -543,6 +562,12 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
     Some(match widget_type(name) {
         "calendar" => Box::new(clock::Calendar),
         "menu" => Box::new(menu::Menu::new(opts)),
+        "weather" => Box::new(panels::WeatherPanel::new(opts)),
+        "temps" => Box::new(panels::TempsPanel::new(opts)),
+        "privacy" => Box::new(panels::PrivacyPanel::new()),
+        "tray" => Box::new(panels::TrayPanel::new(opts)),
+        "claude" => Box::new(panels2::ClaudePanel::new(opts)),
+        "media" => Box::new(panels2::MediaPanel::new()),
         _ => return None,
     })
 }

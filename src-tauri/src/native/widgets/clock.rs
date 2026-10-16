@@ -91,7 +91,7 @@ impl Widget for Clock {
 }
 
 /// Days since 1970-01-01 (proleptic Gregorian).
-fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+pub(super) fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y } as i64;
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
@@ -116,7 +116,7 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 }
 
 /// Monday = 0.
-fn weekday(days: i64) -> i64 {
+pub(super) fn weekday(days: i64) -> i64 {
     (days + 3).rem_euclid(7)
 }
 

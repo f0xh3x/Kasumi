@@ -19,7 +19,7 @@ use windows::Win32::Graphics::Gdi::{
     BLENDFUNCTION, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows_numerics::Matrix3x2;
 
@@ -207,6 +207,8 @@ pub struct Surface {
     pending_regions: Option<Vec<Rect>>,
     /// Needs measuring (content changed size).
     remeasure: bool,
+    /// The panel dragging with the mouse captured (a slider).
+    captured: Option<usize>,
 }
 
 impl std::ops::Drop for Surface {
@@ -273,6 +275,7 @@ impl Surface {
             pending_widths: None,
             pending_regions: None,
             remeasure: true,
+            captured: None,
         };
         s.apply(gfx, layout, store);
         let _ = s.render(gfx);
@@ -573,16 +576,21 @@ impl Surface {
                 }
             }
         }
-        if redraw && !changed {
-            self.redraw(gfx);
-        }
+
         for p in &mut self.panels {
             if p.p.wake().is_some_and(|t| t <= now) {
-                changed |= p.p.tick(now);
+                let looks = p.p.tick(now);
+                if p.p.tick_resizes() {
+                    changed |= looks;
+                } else {
+                    redraw |= looks;
+                }
             }
         }
         if changed {
             self.changed(gfx);
+        } else if redraw {
+            self.redraw(gfx);
         }
     }
 
@@ -1377,7 +1385,14 @@ impl Surface {
     pub fn click(&mut self, gfx: &Gfx, button: Button, at: (i32, i32)) -> Option<Act> {
         let (x, y) = self.logical(at);
         let reply = if let Some((_, pi, local)) = self.panel_at(x, y) {
-            self.panels[pi].p.click(button, local)
+            // A tray click's point, local to the panel's content: on screen, in device px.
+            let origin = self.panels[pi].drawn.unwrap_or((0.0, 0.0));
+            let (pos, scale) = (self.pos, self.scale());
+            let to_screen = move |at: (f32, f32)| (pos.x as f32 + (origin.0 + at.0) * scale, pos.y as f32 + (origin.1 + at.1) * scale);
+            match self.panels[pi].p.click(button, local) {
+                Reply::CloseAnd(Act::Tray { id, button, at }) => Reply::CloseAnd(Act::Tray { id, button, at: to_screen(at) }),
+                other => other,
+            }
         } else if let Some((wi, local)) = self.widget_at(gfx, x, y) {
             // A tray click's point, local to the widget: on screen, in device px.
             let origin = self.widgets[wi].drawn.map_or((0.0, 0.0), |(wx, cy, _)| (wx, cy));
@@ -1402,6 +1417,11 @@ impl Surface {
         } else {
             Reply::None
         };
+        self.answer(gfx, reply)
+    }
+
+    /// What a reply asks of the surface; the action to run, if any.
+    fn answer(&mut self, gfx: &Gfx, reply: Reply) -> Option<Act> {
         match reply {
             Reply::None | Reply::TogglePanel => None,
             Reply::Redraw => {
@@ -1416,6 +1436,62 @@ impl Surface {
                 Some(act)
             }
         }
+    }
+
+    /// The left button down: a panel part that drags (a slider) takes the mouse.
+    pub fn press(&mut self, gfx: &Gfx, at: (i32, i32)) -> bool {
+        let (x, y) = self.logical(at);
+        let Some((_, pi, local)) = self.panel_at(x, y) else { return false };
+        if !self.panels[pi].p.press(local) {
+            return false;
+        }
+        self.captured = Some(pi);
+        unsafe {
+            SetCapture(self.hwnd);
+        }
+        self.redraw(gfx);
+        true
+    }
+
+    /// The panel part being dragged (local to its content), if any.
+    fn captured_local(&self, at: (i32, i32)) -> Option<(usize, (f32, f32))> {
+        let pi = self.captured?;
+        let (x, y) = self.logical(at);
+        let (cx, cy) = self.panels[pi].drawn?;
+        Some((pi, (x - cx, y - cy)))
+    }
+
+    pub fn dragging(&self) -> bool {
+        self.captured.is_some()
+    }
+
+    pub fn drag(&mut self, gfx: &Gfx, at: (i32, i32)) {
+        if let Some((pi, local)) = self.captured_local(at) {
+            self.panels[pi].p.drag(local);
+            self.redraw(gfx);
+        }
+    }
+
+    pub fn release(&mut self, gfx: &Gfx, at: (i32, i32)) -> Option<Act> {
+        let (pi, local) = self.captured_local(at)?;
+        self.captured = None;
+        unsafe {
+            let _ = ReleaseCapture();
+        }
+        let reply = self.panels[pi].p.release(local);
+        let act = self.answer(gfx, reply);
+        self.redraw(gfx);
+        act
+    }
+
+    /// The wheel over a panel (sliders step with it).
+    pub fn wheel(&mut self, gfx: &Gfx, at: (i32, i32), notches: f32) -> Option<Act> {
+        let (x, y) = self.logical(at);
+        let (_, pi, local) = self.panel_at(x, y)?;
+        let reply = self.panels[pi].p.wheel(local, notches);
+        let act = self.answer(gfx, reply);
+        self.redraw(gfx);
+        act
     }
 
     /// A widget's panel: its bar dropdown, or (docks) its notch's panel.

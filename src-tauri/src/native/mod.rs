@@ -442,9 +442,38 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             let (x, y) = point();
             with_native(|n| {
                 if let Some(s) = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd) {
-                    s.mouse_move(&n.gfx, Some((x, y)));
+                    if s.dragging() {
+                        s.drag(&n.gfx, (x, y));
+                    } else {
+                        s.mouse_move(&n.gfx, Some((x, y)));
+                    }
                 }
             });
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let (x, y) = point();
+            with_native(|n| {
+                if let Some(s) = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd) {
+                    s.press(&n.gfx, (x, y));
+                }
+            });
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            // Screen coordinates, in notches of 120.
+            let mut pt = windows::Win32::Foundation::POINT { x: (lp.0 & 0xffff) as i16 as i32, y: ((lp.0 >> 16) & 0xffff) as i16 as i32 };
+            let _ = windows::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut pt);
+            let notches = ((wp.0 >> 16) & 0xffff) as i16 as f32 / 120.0;
+            let act = with_native(|n| {
+                let gfx = &n.gfx;
+                let act = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| s.wheel(gfx, (pt.x, pt.y), notches));
+                act.map(|a| (a, n.app.clone()))
+            })
+            .flatten();
+            if let Some((act, app)) = act {
+                run_act(act, app);
+            }
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
@@ -465,7 +494,14 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             // What the click asks for runs once the state is released (it may pump messages).
             let act = with_native(|n| {
                 let gfx = &n.gfx;
-                let act = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| s.click(gfx, button, (x, y)));
+                let act = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| {
+                    // A drag ends where the button comes up (not a click).
+                    if button == Button::Left && s.dragging() {
+                        s.release(gfx, (x, y))
+                    } else {
+                        s.click(gfx, button, (x, y))
+                    }
+                });
                 report(n);
                 act.map(|a| (a, n.app.clone()))
             })
@@ -476,7 +512,7 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             LRESULT(0)
         }
         // Clicks are handled on release; nothing should take the focus.
-        WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => LRESULT(0),
+        WM_RBUTTONDOWN | WM_MBUTTONDOWN => LRESULT(0),
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
 }

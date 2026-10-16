@@ -361,6 +361,38 @@ impl Gfx {
         }
     }
 
+    /// An encoded picture (PNG, JPEG...: album art) as a bitmap, through Windows Imaging Component.
+    pub fn picture(&self, bytes: &[u8]) -> Result<ID2D1Bitmap> {
+        use windows::Win32::Graphics::Imaging::*;
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        unsafe {
+            let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+            let stream = wic.CreateStream()?;
+            stream.InitializeFromMemory(bytes)?;
+            let decoder = wic.CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnDemand)?;
+            let frame = decoder.GetFrame(0)?;
+            let conv = wic.CreateFormatConverter()?;
+            conv.Initialize(&frame, &GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeMedianCut)?;
+            self.rt.CreateBitmapFromWicBitmap(&conv, None)
+        }
+    }
+
+    /// Fills a rounded rectangle with a bitmap scaled to cover it (CSS background-size: cover).
+    pub fn fill_picture(&self, bmp: &ID2D1Bitmap, r: D2D_RECT_F, radius: f32, opacity: f32) {
+        use windows::Win32::Graphics::Direct2D::*;
+        unsafe {
+            let size = bmp.GetSize();
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            let k = (w / size.width).max(h / size.height);
+            let (dx, dy) = (r.left + (w - size.width * k) / 2.0, r.top + (h - size.height * k) / 2.0);
+            let props = D2D1_BITMAP_BRUSH_PROPERTIES { extendModeX: D2D1_EXTEND_MODE_CLAMP, extendModeY: D2D1_EXTEND_MODE_CLAMP, interpolationMode: D2D1_BITMAP_INTERPOLATION_MODE_LINEAR };
+            let Ok(brush) = self.rt.CreateBitmapBrush(bmp, Some(&props), None) else { return };
+            brush.SetTransform(&Matrix3x2 { M11: k, M12: 0.0, M21: 0.0, M22: k, M31: dx, M32: dy });
+            brush.SetOpacity(opacity);
+            self.rt.FillRoundedRectangle(&D2D1_ROUNDED_RECT { rect: r, radiusX: radius, radiusY: radius }, &brush);
+        }
+    }
+
     /// An icon's straight RGBA pixels as a bitmap for the render target.
     pub fn bitmap(&self, w: u32, h: u32, rgba: &[u8]) -> Result<ID2D1Bitmap> {
         let mut px = Vec::with_capacity(rgba.len());
@@ -461,6 +493,25 @@ impl Gfx {
 
     pub fn pop_fade(&self) {
         unsafe { self.rt.PopLayer() }
+    }
+
+    /// A line through points (a sparkline).
+    pub fn polyline(&self, pts: &[(f32, f32)], width: f32, c: Color) {
+        if pts.len() < 2 {
+            return;
+        }
+        unsafe {
+            let Ok(geom) = self.d2d.CreatePathGeometry() else { return };
+            let Ok(sink) = geom.Open() else { return };
+            sink.BeginFigure(Vector2 { X: pts[0].0, Y: pts[0].1 }, D2D1_FIGURE_BEGIN_HOLLOW);
+            for p in &pts[1..] {
+                sink.AddLine(Vector2 { X: p.0, Y: p.1 });
+            }
+            sink.EndFigure(D2D1_FIGURE_END_OPEN);
+            let _ = sink.Close();
+            self.brush.SetColor(&c);
+            self.rt.DrawGeometry(&geom, &self.brush, width, &self.round_caps);
+        }
     }
 
     /// Clips what's drawn next to a rectangle (until `unclip`).
