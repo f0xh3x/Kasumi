@@ -62,7 +62,8 @@ const APPEARANCE_WIDGETS: [string, string, number, boolean][] = [
 ];
 
 export type Field =
-  | (Base & { kind: "toggle" })
+  /** `values`: what off and on write, when the setting isn't a true / false one. */
+  | (Base & { kind: "toggle"; values?: [unknown, unknown] })
   | (Base & { kind: "slider"; min: number; max: number; step: number; unit?: string })
   | (Base & { kind: "number"; min?: number; max?: number; step?: number; unit?: string })
   | (Base & { kind: "text"; placeholder?: string })
@@ -142,17 +143,6 @@ export const pages: Page[] = [
             help: "Hidden while Kasumi runs and restored when it quits. The Win key and Start menu keep working. Turn off Windhawk mods that show the taskbar (e.g. “Taskbar auto-hide when maximized”).",
             path: ["shell", "hide_taskbar"],
             default: false,
-          },
-          {
-            kind: "select",
-            label: "Drawing",
-            help: "What draws the bars and docks. Native is much lighter (a few MB instead of a browser engine). Takes effect when Kasumi restarts.",
-            path: ["general", "renderer"],
-            default: "web",
-            options: [
-              { value: "web", label: "Web (WebView2)" },
-              { value: "native", label: "Native (Direct2D)" },
-            ],
           },
         ],
       },
@@ -1265,6 +1255,20 @@ export const pages: Page[] = [
             default: true,
           },
           { kind: "action", label: "What's new", help: "This version's notes.", button: "Show", run: "notes" },
+        ],
+      },
+      {
+        title: "Native Kasumi (experimental)",
+        help: "Draws the bars and docks with Windows' own graphics instead of a browser engine: the same look, a fraction of the memory and CPU. It's new: some things may not work yet or behave differently, and more bugs could occur. Turn it off to go back.",
+        fields: [
+          {
+            kind: "toggle",
+            label: "Start Kasumi native",
+            help: "Takes effect the next time Kasumi starts (quit it from the tray and start it again).",
+            path: ["general", "renderer"],
+            default: "web",
+            values: ["web", "native"],
+          },
         ],
       },
       {

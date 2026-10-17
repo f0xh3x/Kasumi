@@ -169,7 +169,8 @@ function control(f: Field): HTMLElement | null {
 
   switch (f.kind) {
     case "toggle": {
-      const sw = toggleSwitch(Boolean(value), (on) => save(path, on));
+      const values = f.values;
+      const sw = values ? toggleSwitch(value === values[1], (on) => save(path, values[on ? 1 : 0])) : toggleSwitch(Boolean(value), (on) => save(path, on));
       return fieldRow(f, sw.el);
     }
     case "slider": {
