@@ -667,6 +667,8 @@ body.view-setup #toast, body.view-notes #toast { bottom: 76px; }
 .notes-body { line-height: 1.55; color: rgba(255, 255, 255, 0.86); user-select: text; }
 .notes-body h2, .notes-body h3, .notes-body h4 { font-size: 13px; font-weight: 600; color: var(--fg); margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
 .notes-body > :first-child { margin-top: 0; }
+/* A top-level heading (# in the notes): the release's headline, big. */
+.notes-body h2 { font-size: 20px; text-transform: none; letter-spacing: 0; margin: 22px 0 8px; }
 .notes-body p { margin: 6px 0; }
 .notes-body ul { margin: 6px 0; padding-left: 20px; }
 .notes-body li { margin: 4px 0; }
