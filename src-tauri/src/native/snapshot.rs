@@ -102,6 +102,28 @@ pub fn run(args: &[String]) {
                 let file = dir.join(format!("{label}-{state}.png").replace('#', "_"));
                 save_png(&file, px, w, h);
             }
+            // The launcher searching (sample apps, a query), measured again as the engine would.
+            if surface.widget_names().iter().any(|n| n == "launcher") {
+                let apps = ["Code", "Discord", "Spotify", "Steam", "Calculator", "Firefox", "Notepad", "Terminal"];
+                let list: Vec<Value> = apps.iter().map(|a| serde_json::json!({ "id": format!("app:{a}"), "name": a })).collect();
+                surface.data(&gfx, "launcher:apps", &Value::Array(list));
+                super::widgets::launcher::set_open(true);
+                for c in "o".chars() {
+                    super::widgets::launcher::type_char(c);
+                }
+                for _ in 0..3 {
+                    let Some(w) = surface.take_widths() else { break };
+                    measured.extend(w);
+                    layout = layout_for(&cfg, &label, m, rule, &id, &[], &measured);
+                    surface.update_positions(&gfx, layout.notches.clone());
+                }
+                surface.pose(&gfx, true, Some("launcher"), 1.0);
+                if surface.render(&gfx).is_ok() {
+                    let (px, w, h) = surface.pixels();
+                    save_png(&dir.join(format!("{label}-launcher-search.png")), px, w, h);
+                }
+                super::widgets::launcher::set_open(false);
+            }
             // Pop-ups out of the notch: a level, a word, a notification.
             let pops = [
                 ("osd-volume", "notch://osd", serde_json::json!({ "kind": "volume", "level": 0.42, "muted": false })),

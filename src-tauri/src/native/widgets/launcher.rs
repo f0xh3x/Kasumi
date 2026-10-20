@@ -292,6 +292,50 @@ impl LauncherPanel {
     }
 }
 
+/// A piece of the launcher panel.
+#[derive(Clone, Copy, PartialEq)]
+enum Part {
+    Field,
+    Line,
+    Row(usize),
+    Hint,
+    Power,
+}
+
+impl LauncherPanel {
+    /// Its parts top to bottom (what, top, height) and the total height. A bottom dock
+    /// mirrors them (the page's column-reverse): the field by the dock, the best match
+    /// next to it, the power buttons furthest away.
+    fn parts(&self, results: usize, no_match: bool, lh: f32, bottom: bool) -> (Vec<(Part, f32, f32)>, f32) {
+        let mut v = Vec::new();
+        let mut y = 0.0;
+        if self.own_field {
+            v.push((Part::Field, 4.0, 26.0));
+            v.push((Part::Line, 4.0 + 26.0 + 8.0, 1.0));
+            y += 4.0 + 26.0 + 8.0 + 1.0 + 4.0;
+        }
+        for i in 0..results {
+            v.push((Part::Row(i), y, ROW_H));
+            y += ROW_H + 2.0;
+        }
+        if no_match {
+            v.push((Part::Hint, y, 12.0 + lh));
+            y += 12.0 + lh;
+        }
+        if !self.power.is_empty() {
+            v.push((Part::Line, y + 4.0, 1.0));
+            v.push((Part::Power, y + 4.0 + 1.0 + 6.0, 28.0));
+            y += 4.0 + 1.0 + 6.0 + 28.0;
+        }
+        if bottom {
+            for p in &mut v {
+                p.1 = y - p.1 - p.2;
+            }
+        }
+        (v, y)
+    }
+}
+
 impl Panel for LauncherPanel {
     fn keys(&self) -> &'static [&'static str] {
         &["appIcons"]
@@ -353,27 +397,17 @@ impl Panel for LauncherPanel {
             }));
         }
         let lh = g.text("Ag", &cx.body()).map_or(16.0, |t| t.height);
-        let mut y = 0.0;
+        let (parts, h) = self.parts(results, !query.trim().is_empty() && results == 0, lh, cx.look.bottom);
         let mut rows = Vec::new();
-        if self.own_field {
-            y += 4.0 + 26.0 + 8.0 + 1.0 + 4.0;
-        }
-        for i in 0..results {
-            rows.push((Hit::Row(i), y, ROW_H));
-            y += ROW_H + 2.0;
-        }
-        if !query.trim().is_empty() && results == 0 {
-            y += 12.0 + lh;
-        }
-        if !self.power.is_empty() {
-            y += 4.0 + 1.0 + 6.0;
-            for k in 0..self.power.len() {
-                rows.push((Hit::Power(k), y, 28.0));
+        for &(part, top, ht) in &parts {
+            match part {
+                Part::Row(i) => rows.push((Hit::Row(i), top, ht)),
+                Part::Power => rows.extend((0..self.power.len()).map(|k| (Hit::Power(k), top, ht))),
+                _ => {}
             }
-            y += 28.0;
         }
         self.rows = rows;
-        (self.width, y.max(1.0))
+        (self.width, h.max(1.0))
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
@@ -381,51 +415,51 @@ impl Panel for LauncherPanel {
         let dim = with_alpha(cx.look.dimmed(), alpha);
         let body = cx.body();
         let lh = g.text("Ag", &body).map_or(16.0, |t| t.height);
-        let mut top = y;
-        if self.own_field {
-            let cy = top + 4.0 + 13.0;
-            let iw = g.text_at("\u{E721}", &Font::icons(14.0), x + 8.0, cy + 1.0, fg);
-            draw_field(g, cx, x + 8.0 + iw + 10.0, cy, self.width - 16.0 - iw - 10.0, alpha);
-            g.fill_rect(rect(x, top + 4.0 + 26.0 + 8.0, self.width, 1.0), white(0.08 * alpha));
-            top += 4.0 + 26.0 + 8.0 + 1.0 + 4.0;
-        }
-        let (results, selected) = S.with(|s| {
+        let (results, selected, query) = S.with(|s| {
             let s = s.borrow();
-            (s.results.iter().map(|&i| s.apps[i].clone()).collect::<Vec<_>>(), s.selected)
+            (s.results.iter().map(|&i| s.apps[i].clone()).collect::<Vec<_>>(), s.selected, s.query.clone())
         });
-        for (i, (id, name)) in results.iter().enumerate() {
-            let ry = top + i as f32 * (ROW_H + 2.0);
-            if i == selected {
-                g.fill_round(rect(x, ry, self.width, ROW_H), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
-            }
-            if let Some(icon) = self.icons.get(id) {
-                icon.draw(g, x + 8.0, ry + 6.0, 22.0, alpha);
-            }
-            g.text_at(&fit_text(g, name, &body, self.width - 48.0), &body, x + 40.0, ry + ROW_H / 2.0, fg);
-        }
-        let mut bottom = top + results.len() as f32 * (ROW_H + 2.0);
-        let query = S.with(|s| s.borrow().query.clone());
-        if !query.trim().is_empty() && results.is_empty() {
-            g.text_at("No apps found", &cx.secondary(cx.look.font_size), x + 8.0, top + 6.0 + lh / 2.0, dim);
-            bottom = top + 12.0 + lh;
-        }
-        if !self.power.is_empty() {
-            g.fill_rect(rect(x, bottom + 4.0, self.width, 1.0), white(0.08 * alpha));
-            let cy = bottom + 4.0 + 1.0 + 6.0 + 14.0;
-            let n = self.power.len();
-            if let Some((k, _)) = self.armed {
-                let label = POWER[self.power[k]].1.to_lowercase();
-                g.text_at(&format!("Click again to {label}"), &cx.secondary(12.0), x + 6.0, cy, dim);
-            }
-            for (k, &p) in self.power.iter().enumerate() {
-                let bx = x + self.width - 4.0 - (n - k) as f32 * 32.0;
-                let on = self.hovered == Some(Hit::Power(k));
-                if on {
-                    g.fill_round(rect(bx, cy - 14.0, 30.0, 28.0), 8.0, white(0.1 * alpha));
+        let (parts, _) = self.parts(results.len(), !query.trim().is_empty() && results.is_empty(), lh, cx.look.bottom);
+        for &(part, top, _) in &parts {
+            let top = y + top;
+            match part {
+                Part::Field => {
+                    let cy = top + 13.0;
+                    let iw = g.text_at("\u{E721}", &Font::icons(14.0), x + 8.0, cy + 1.0, fg);
+                    draw_field(g, cx, x + 8.0 + iw + 10.0, cy, self.width - 16.0 - iw - 10.0, alpha);
                 }
-                let f = Font::icons(14.0);
-                let w = g.measure(POWER[p].2, &f);
-                g.text_at(POWER[p].2, &f, bx + (30.0 - w) / 2.0, cy, if on { fg } else { dim });
+                Part::Line => g.fill_rect(rect(x, top, self.width, 1.0), white(0.08 * alpha)),
+                Part::Row(i) => {
+                    let (id, name) = &results[i];
+                    if i == selected {
+                        g.fill_round(rect(x, top, self.width, ROW_H), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+                    }
+                    if let Some(icon) = self.icons.get(id) {
+                        icon.draw(g, x + 8.0, top + 6.0, 22.0, alpha);
+                    }
+                    g.text_at(&fit_text(g, name, &body, self.width - 48.0), &body, x + 40.0, top + ROW_H / 2.0, fg);
+                }
+                Part::Hint => {
+                    g.text_at("No apps found", &cx.secondary(cx.look.font_size), x + 8.0, top + 6.0 + lh / 2.0, dim);
+                }
+                Part::Power => {
+                    let cy = top + 14.0;
+                    let n = self.power.len();
+                    if let Some((k, _)) = self.armed {
+                        let label = POWER[self.power[k]].1.to_lowercase();
+                        g.text_at(&format!("Click again to {label}"), &cx.secondary(12.0), x + 6.0, cy, dim);
+                    }
+                    for (k, &p) in self.power.iter().enumerate() {
+                        let bx = x + self.width - 4.0 - (n - k) as f32 * 32.0;
+                        let on = self.hovered == Some(Hit::Power(k));
+                        if on {
+                            g.fill_round(rect(bx, cy - 14.0, 30.0, 28.0), 8.0, white(0.1 * alpha));
+                        }
+                        let f = Font::icons(14.0);
+                        let w = g.measure(POWER[p].2, &f);
+                        g.text_at(POWER[p].2, &f, bx + (30.0 - w) / 2.0, cy, if on { fg } else { dim });
+                    }
+                }
             }
         }
     }

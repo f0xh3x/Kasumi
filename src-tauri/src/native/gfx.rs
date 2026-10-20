@@ -540,6 +540,49 @@ impl Gfx {
         }
     }
 
+    /// Clips what's drawn next to `keep` minus the `cut` rectangles, until `pop_fade`
+    /// (a closing panel's content stays out from under the panel opening over it).
+    pub fn push_clip_minus(&self, keep: D2D_RECT_F, cut: &[D2D_RECT_F]) {
+        use windows::Win32::Graphics::Direct2D::*;
+        unsafe {
+            let Ok(first) = self.d2d.CreateRectangleGeometry(&keep) else { return self.push_clip_rect_layer(keep) };
+            let mut geom: ID2D1Geometry = first.into();
+            for c in cut {
+                let (Ok(r), Ok(path)) = (self.d2d.CreateRectangleGeometry(c), self.d2d.CreatePathGeometry()) else { continue };
+                let Ok(sink) = path.Open() else { continue };
+                if geom.CombineWithGeometry(&r, D2D1_COMBINE_MODE_EXCLUDE, None, 0.25, &sink).is_ok() && sink.Close().is_ok() {
+                    geom = path.into();
+                }
+            }
+            let params = D2D1_LAYER_PARAMETERS {
+                contentBounds: keep,
+                geometricMask: std::mem::ManuallyDrop::new(Some(geom)),
+                maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                maskTransform: Matrix3x2::identity(),
+                opacity: 1.0,
+                opacityBrush: std::mem::ManuallyDrop::new(None),
+                layerOptions: D2D1_LAYER_OPTIONS_NONE,
+            };
+            self.rt.PushLayer(&params, None);
+            std::mem::ManuallyDrop::into_inner(params.geometricMask);
+        }
+    }
+
+    /// A plain rectangular layer (so `pop_fade` always has one to pop).
+    fn push_clip_rect_layer(&self, r: D2D_RECT_F) {
+        use windows::Win32::Graphics::Direct2D::*;
+        let params = D2D1_LAYER_PARAMETERS {
+            contentBounds: r,
+            geometricMask: std::mem::ManuallyDrop::new(None),
+            maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            maskTransform: Matrix3x2::identity(),
+            opacity: 1.0,
+            opacityBrush: std::mem::ManuallyDrop::new(None),
+            layerOptions: D2D1_LAYER_OPTIONS_NONE,
+        };
+        unsafe { self.rt.PushLayer(&params, None) }
+    }
+
     /// Clips what's drawn next to a rectangle (until `unclip`).
     pub fn clip(&self, r: D2D_RECT_F) {
         unsafe { self.rt.PushAxisAlignedClip(&r, windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED) }

@@ -926,7 +926,9 @@ impl Surface {
             let full = span(&widths, &kids, base(l.rest_height));
             let compact_list: Vec<usize> = kids.iter().copied().filter(|&wi| !self.hides(&self.widgets[wi].name)).collect();
             let compact = span(&widths, &compact_list, base(l.rest_height));
-            let open = if dock { span(&open_widths, &d.slot.iter().copied().filter(|&wi| open_widths[wi] > 0.0).collect::<Vec<_>>(), base(l.open_height)) } else { full };
+            // Widgets aside for the launcher's field don't count open either (the page hides them).
+            let open_kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| open_widths[wi] > 0.0 && !self.aside_in(d, wi)).collect();
+            let open = if dock { span(&open_widths, &open_kids, base(l.open_height)) } else { full };
             if full > 0.0 || open > 0.0 {
                 report.insert(n.id.clone(), NotchWidth { full, compact, open });
             }
@@ -943,7 +945,8 @@ impl Surface {
         self.measure_panels(gfx);
     }
 
-    /// Notch widgets' places in their slot (closed): centred, past the edge padding.
+    /// Notch widgets' places in their slot (closed): centred (corner notches: against
+    /// their corner), past the edge padding.
     fn layout_slots(&mut self) {
         let gap = self.layout.bar.gap as f32;
         for di in 0..self.drops.len() {
@@ -952,7 +955,12 @@ impl Surface {
             let cw: f32 = kids.iter().map(|&wi| self.widgets[wi].width).sum::<f32>() + gap * (kids.len().max(1) as f32 - 1.0);
             let (pl, pr) = self.slot_pads(&n, 1.0);
             let avail = n.width as f32 - pl - pr;
-            let mut x = pl + (avail - cw) / 2.0;
+            // A corner notch's content keeps to its corner.
+            let mut x = match n.edge.as_deref() {
+                Some("left") => pl,
+                Some("right") => pl + avail - cw,
+                _ => pl + (avail - cw) / 2.0,
+            };
             for wi in kids {
                 self.widgets[wi].slot_x = x;
                 x += self.widgets[wi].width + gap;
@@ -1458,7 +1466,13 @@ impl Surface {
                 // A dock corner notch's curves grow with it: so does its content's inset.
                 let (pl, pr) = self.slot_pads(n, bumps[i].scale);
                 let cw: f32 = kids.iter().map(|&wi| dock_widths[wi]).sum::<f32>() + gap * (kids.len().max(1) as f32 - 1.0);
-                pl + (w as f32 - pl - pr - cw) / 2.0
+                // A corner notch's content keeps to its corner (the page's .slot.edge-left /
+                // edge-right); the others' is centered.
+                match n.edge.as_deref() {
+                    Some("left") => pl,
+                    Some("right") => w as f32 - pr - cw,
+                    _ => pl + (w as f32 - pl - pr - cw) / 2.0,
+                }
             } else {
                 0.0
             };
@@ -1539,6 +1553,20 @@ impl Surface {
 
         // Panels: their content waits in its open spot and the growing shape uncovers it.
         let mut panel_drawn: Vec<(usize, Option<(f32, f32)>)> = Vec::new();
+        // A drop's own box (its side of the shape). Switching panels, the one closing keeps
+        // to its box and out from under the one opening, so their contents never mix.
+        let drop_box = |i: usize| {
+            let bf = &frame.bumps[i];
+            let (l, r) = bf.panel.map_or((bf.left, bf.right), |(pl, pr)| (pl.min(bf.left), pr.max(bf.right)));
+            let (a, b) = (y(0.0), y(bf.depth));
+            D2D_RECT_F { left: l as f32, right: r as f32, top: a.min(b), bottom: a.max(b) }
+        };
+        let opening: Vec<(usize, D2D_RECT_F)> = order
+            .iter()
+            .enumerate()
+            .filter(|&(_, &di)| self.drops[di].active.is_some() && self.drops[di].spring.target > 0.5 && self.drops[di].spring.value > 0.01)
+            .map(|(i, _)| (i, drop_box(i)))
+            .collect();
         for (i, &di) in order.iter().enumerate() {
             let d = &self.drops[di];
             let Some(pi) = d.active else { continue };
@@ -1564,6 +1592,11 @@ impl Surface {
             let top = if bottom { y(near + pb.h) + pad_far } else { y(near) + pad_near };
             let (left, top) = ((left * scale).round() / scale, (top * scale).round() / scale);
             let cx = Ctx { gfx, look: &self.look, opts: &pb.opts, h: h_bar as f32, open: 1.0 };
+            let closing = d.spring.target < 0.5 && opening.iter().any(|&(j, _)| j != i);
+            if closing {
+                let cut: Vec<D2D_RECT_F> = opening.iter().filter(|&&(j, _)| j != i).map(|&(_, r)| r).collect();
+                gfx.push_clip_minus(drop_box(i), &cut);
+            }
             match pb.cascade.filter(|_| pb.opts.cascade) {
                 // Cascade: each piece fades in and slides 8 px into place (from the bar's side)
                 // a little after the one before.
@@ -1586,6 +1619,9 @@ impl Surface {
                     }
                 }
                 _ => pb.p.draw(&cx, left, top, alpha),
+            }
+            if closing {
+                gfx.pop_fade();
             }
             panel_drawn.push((pi, Some((left, top))));
         }
