@@ -42,6 +42,40 @@ static ATTENTION: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new(
 /// Each window's app (its key), as last scanned: where a minimizing window goes.
 static WINDOW_APPS: std::sync::Mutex<Vec<(isize, String)>> = std::sync::Mutex::new(Vec::new());
 
+/// The windows "Show desktop" minimized (front first), to bring back the next time.
+static DESKTOP_SHOWN: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+
+/// Shows the desktop (minimizes the listed windows), or brings back the ones it
+/// minimized if they're all still down, as Win + D does. (Explorer's hidden taskbar
+/// doesn't take its own command for it.)
+pub fn toggle_desktop() {
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, ShowWindowAsync, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE};
+    let mut shown = DESKTOP_SHOWN.lock().unwrap();
+    unsafe {
+        let back: Vec<HWND> = shown.iter().map(|&h| HWND(h as *mut _)).filter(|&h| IsWindow(Some(h)).as_bool()).collect();
+        if !back.is_empty() && back.iter().all(|&h| IsIconic(h).as_bool()) {
+            for &h in back.iter().rev() {
+                let _ = ShowWindowAsync(h, SW_SHOWNOACTIVATE);
+            }
+            activate(back[0]);
+            shown.clear();
+            return;
+        }
+        let up: Vec<isize> = WINDOW_APPS.lock().unwrap().iter().map(|e| e.0).collect();
+        let mut up: Vec<HWND> = up.into_iter().map(|h| HWND(h as *mut _)).filter(|&h| !IsIconic(h).as_bool()).collect();
+        // Front first: the window in front leads (it comes back on top).
+        let front = GetForegroundWindow();
+        if let Some(i) = up.iter().position(|&h| h == front) {
+            let f = up.remove(i);
+            up.insert(0, f);
+        }
+        for &h in &up {
+            let _ = ShowWindowAsync(h, SW_SHOWMINNOACTIVE);
+        }
+        *shown = up.into_iter().map(|h| h.0 as isize).collect();
+    }
+}
+
 /// HSHELL_GETMINRECT's lParam: the window, and where its minimize animation should go.
 /// Documented as a RECT, but Windows reads it as 16-bit left, top, right, bottom (as
 /// it fills it in; 32-bit values sent the animation to the top of the screen).
