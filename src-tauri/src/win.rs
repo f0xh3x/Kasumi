@@ -954,3 +954,47 @@ pub fn bitmap_bgra(bmp: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<(u32, 
 pub fn toggle_desktop() {
     crate::providers::tasks::toggle_desktop();
 }
+
+/// Puts text on the clipboard.
+pub fn set_clipboard_text(text: &str) {
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    const CF_UNICODETEXT: u32 = 13;
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return;
+        }
+        let _ = EmptyClipboard();
+        if let Ok(g) = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) {
+            let p = GlobalLock(g) as *mut u16;
+            if !p.is_null() {
+                std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+                let _ = GlobalUnlock(g);
+                if SetClipboardData(CF_UNICODETEXT, Some(HANDLE(g.0))).is_err() {
+                    let _ = GlobalFree(Some(g));
+                }
+            }
+        }
+        let _ = CloseClipboard();
+    }
+}
+
+/// Writes a DWORD under HKEY_CURRENT_USER.
+pub fn reg_set_dword(path: &str, name: &str, value: u32) {
+    use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_DWORD};
+    let (path, name) = (wide(path), wide(name));
+    unsafe {
+        let _ = RegSetKeyValueW(HKEY_CURRENT_USER, PCWSTR(path.as_ptr()), PCWSTR(name.as_ptr()), REG_DWORD.0, Some(&value as *const u32 as *const _), 4);
+    }
+}
+
+/// Tells windows a setting changed (WM_SETTINGCHANGE with its name, e.g. "ShellState").
+pub fn broadcast_setting(name: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE};
+    let name = wide(name);
+    unsafe {
+        let _ = SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, WPARAM(0), LPARAM(name.as_ptr() as isize), SMTO_ABORTIFHUNG, 200, None);
+    }
+}

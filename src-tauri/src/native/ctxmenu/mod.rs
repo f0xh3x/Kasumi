@@ -5,6 +5,7 @@
 //! look (menu.rs). Nothing is loaded into Explorer. If the helper fails, right-clicks
 //! go back to Explorer's own menu; Kasumi starts it again.
 
+mod layout;
 mod menu;
 mod shell;
 
@@ -301,20 +302,18 @@ fn close() {
 }
 
 /// The theme's look (with Windows' accent, if it follows it).
-fn look() -> (Look, bool) {
-    let cfg = crate::config::load().ok();
-    let mut theme = cfg.as_ref().map(|c| c.theme.clone()).unwrap_or_default();
+fn look(cfg: Option<&crate::config::Config>) -> Look {
+    let mut theme = cfg.map(|c| c.theme.clone()).unwrap_or_default();
     if theme.accent_sync {
         if let Some(a) = crate::win::system_accent() {
             theme.accent = a;
         }
     }
-    (Look::from_theme(&theme, false), cfg.is_some_and(|c| c.context_menu.icons))
+    Look::from_theme(&theme, false)
 }
 
 fn request(defview: HWND, pt: POINT) {
     close();
-    let t0 = std::time::Instant::now();
     let Some(target) = shell::find_view(defview) else {
         eprintln!("[kasumi] context menu: view not found; Explorer's menu instead");
         hand_back();
@@ -331,9 +330,10 @@ fn request(defview: HWND, pt: POINT) {
         hand_back();
         return;
     };
-    // TEMP (first tries): what it found, and how long it took.
-    eprintln!("[kasumi] context menu: {} entries in {} ms", built.entries.len(), t0.elapsed().as_millis());
-    let (look, icons) = look();
+    let cfg = crate::config::load().ok();
+    let menu_cfg = cfg.as_ref().map(|c| c.context_menu.clone()).unwrap_or_default();
+    let (look, icons) = (look(cfg.as_ref()), menu_cfg.icons);
+    let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, &target);
     let mon = crate::win::monitors()
         .into_iter()
         .find(|m| pt.x >= m.left && pt.x < m.right && pt.y >= m.top && pt.y < m.bottom)
@@ -341,7 +341,7 @@ fn request(defview: HWND, pt: POINT) {
     let Some(mon) = mon else { return };
     let shown = with_ui(|u| {
         let style = Style::new(&u.gfx, look, icons);
-        let mut root = Level::new(&u.gfx, &style, built.entries.clone(), None, mon.scale as f32).ok()?;
+        let mut root = Level::new(&u.gfx, &style, entries, None, mon.scale as f32).ok()?;
         root.place_root(pt, &mon);
         root.draw(&u.gfx, &style).ok()?;
         u.open = Some(Open { target, built, levels: vec![root], style, pt, mon, switch: None });
@@ -398,6 +398,7 @@ fn open_sub(u: &mut Ui, li: usize, row: usize, first: bool) {
 enum Run {
     Shell(u32, String),
     View(shell::ViewCmd),
+    Kasumi(layout::Cmd),
 }
 
 /// Row `row` of level `li` chosen: its submenu opens, or the menu closes and its
@@ -415,6 +416,7 @@ fn choose(u: &mut Ui, li: usize, row: usize) -> Option<(Open, Run)> {
     let run = match &e.action {
         Action::Shell(off) => Run::Shell(*off, e.verb.clone()),
         Action::View(cmd) => Run::View(*cmd),
+        Action::Kasumi(cmd) => Run::Kasumi(cmd.clone()),
         Action::None => return None,
     };
     OPEN.store(false, Ordering::Relaxed);
@@ -428,6 +430,7 @@ fn run(chosen: Option<(Open, Run)>) {
     match run {
         Run::Shell(off, verb) => open.built.invoke(&open.target, off, &verb, open.pt),
         Run::View(cmd) => shell::run_view(&open.target, cmd),
+        Run::Kasumi(cmd) => layout::run(&cmd, &open.built.ctx, &open.target),
     }
 }
 

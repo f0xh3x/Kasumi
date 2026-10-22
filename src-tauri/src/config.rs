@@ -244,6 +244,43 @@ pub struct ContextMenuCfg {
     pub enabled: bool,
     /// Icons beside the entries.
     pub icons: bool,
+    /// How the menu is arranged (empty: Kasumi's default, native/ctxmenu/layout.rs).
+    pub layout: Vec<MenuNode>,
+    /// Your own entries and folders, where the layout says `custom = true`.
+    pub custom: Vec<MenuNode>,
+}
+
+/// A place in a context menu's layout: one of Windows' entries (`match`), Kasumi's
+/// own (`kasumi`), a command (`cmd`), a folder of more (`folder` + `items`), a
+/// separator, or the rest of Windows' entries (`rest`).
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+#[serde(default)]
+pub struct MenuNode {
+    /// Windows' entries it stands for: `verb:copyaspath`, `text:Pin to*` (a trailing
+    /// `*` matches the start).
+    #[serde(rename = "match")]
+    pub r#match: Vec<String>,
+    /// Kasumi's own entries: "view", "terminal", "file_manage", "go_to".
+    pub kasumi: String,
+    pub folder: String,
+    pub items: Vec<MenuNode>,
+    /// Its name (renames a Windows entry; a command's text).
+    pub name: String,
+    /// A Segoe Fluent Icons code point, in hex ("E756").
+    pub icon: String,
+    /// A command: the program, and its arguments ({path}, {paths}, {dir}).
+    pub cmd: String,
+    pub args: String,
+    /// Not shown (Windows' entries it matches are left out).
+    pub hide: bool,
+    pub separator: bool,
+    pub rest: bool,
+    pub custom: bool,
+    /// Only with Shift held.
+    pub shift: bool,
+    /// Only for these: "file|folder|drive|multiple|background|desktop" (empty: all).
+    #[serde(rename = "where")]
+    pub r#where: String,
 }
 
 /// `[lang_switch]`: Kasumi's keyboard language picker (Win + Space held; native bars).

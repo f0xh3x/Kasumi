@@ -14,6 +14,9 @@ use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use super::layout::{Ctx, Kind};
+use windows::Win32::System::SystemServices::{SFGAO_FOLDER, SFGAO_STREAM};
+
 /// Straight RGBA pixels: width, height, data.
 pub type Pixels = (u32, u32, Vec<u8>);
 
@@ -42,6 +45,8 @@ pub enum Action {
     /// A command of Windows' menu (its offset from FIRST).
     Shell(u32),
     View(ViewCmd),
+    /// One of Kasumi's own (layout.rs).
+    Kasumi(super::layout::Cmd),
 }
 
 #[derive(Clone)]
@@ -72,6 +77,12 @@ pub struct Entry {
 impl Entry {
     pub fn separator() -> Entry {
         Entry::item("", Action::None, None)
+    }
+
+    pub fn named(text: &str, action: Action, icon: Option<Icon>) -> Entry {
+        let mut e = Entry::item(text, action, None);
+        e.icon = icon;
+        e
     }
 
     fn item(text: &str, action: Action, glyph: Option<char>) -> Entry {
@@ -233,13 +244,15 @@ pub fn select_under(t: &Target, pt: POINT) -> Hit {
     }
 }
 
-/// Windows' menu for the selection (or the folder's empty space), read into entries.
+/// Windows' menu for the selection (or the folder's empty space), read into entries,
+/// and what was clicked.
 pub struct Built {
     pub cm: IContextMenu,
     hmenu: HMENU,
     pub entries: Vec<Entry>,
     /// The folder shown (for commands that start something there).
     dir: Vec<u16>,
+    pub ctx: Ctx,
 }
 
 impl Drop for Built {
@@ -262,6 +275,8 @@ pub fn build(t: &Target, hit: &Hit, shift: bool) -> Option<Built> {
         let _ = SHGetPathFromIDListEx(folder, &mut dir, GPFIDL_DEFAULT);
         let selected = t.view.ItemCount(SVGIO_SELECTION).unwrap_or(0);
         let background = matches!(hit, Hit::Empty) || selected == 0;
+        let dir_s = String::from_utf16_lossy(&dir[..dir.iter().position(|&c| c == 0).unwrap_or(0)]);
+        let mut ctx = Ctx { kind: if t.desktop { Kind::Desktop } else { Kind::Background }, paths: Vec::new(), dir: dir_s.clone(), here: dir_s, shift };
         let cm: Option<IContextMenu> = if background {
             (|| {
                 let desk = SHGetDesktopFolder().ok()?;
@@ -271,6 +286,10 @@ pub fn build(t: &Target, hit: &Hit, shift: bool) -> Option<Built> {
         } else {
             (|| {
                 let sel: IShellItemArray = t.view.GetSelection(false).ok()?;
+                ctx.kind = selection_kind(&sel, &mut ctx.paths);
+                if ctx.kind == Kind::Folder || ctx.kind == Kind::Drive {
+                    ctx.here = ctx.paths[0].clone();
+                }
                 let n = sel.GetCount().ok()?;
                 let mut pidls: Vec<*mut ITEMIDLIST> = Vec::new();
                 for i in 0..n {
@@ -301,14 +320,57 @@ pub fn build(t: &Target, hit: &Hit, shift: bool) -> Option<Built> {
             return None;
         }
         let mut entries = read_menu(&cm, hmenu);
-        if background {
-            let mut ours = view_entries(t);
-            ours.push(Entry::separator());
-            ours.append(&mut entries);
-            entries = ours;
-        }
         tidy(&mut entries);
-        Some(Built { cm, hmenu, entries, dir })
+        Some(Built { cm, hmenu, entries, dir, ctx })
+    }
+}
+
+/// What the selection is (and its paths): one file, folder or drive, or several.
+unsafe fn selection_kind(sel: &IShellItemArray, paths: &mut Vec<String>) -> Kind {
+    let n = sel.GetCount().unwrap_or(0);
+    let mut kind = Kind::File;
+    for i in 0..n {
+        let Ok(item) = sel.GetItemAt(i) else { continue };
+        if let Ok(p) = item.GetDisplayName(SIGDN_FILESYSPATH) {
+            paths.push(p.to_string().unwrap_or_default());
+            CoTaskMemFree(Some(p.0 as *const _));
+        }
+        if n == 1 {
+            let a = item.GetAttributes(SFGAO_FOLDER | SFGAO_STREAM).unwrap_or_default();
+            let path = paths.last().cloned().unwrap_or_default();
+            kind = if path.len() == 3 && path.ends_with(":\\") {
+                Kind::Drive
+            } else if a.0 & SFGAO_FOLDER.0 != 0 && a.0 & SFGAO_STREAM.0 == 0 {
+                Kind::Folder
+            } else {
+                Kind::File
+            };
+        }
+    }
+    if n > 1 {
+        Kind::Multiple
+    } else {
+        kind
+    }
+}
+
+/// Select all (0), invert the selection (1) or select none (2).
+pub fn select(t: &Target, how: u8) {
+    unsafe {
+        if how == 2 {
+            let _ = t.shell_view.SelectItem(std::ptr::null(), SVSI_DESELECTOTHERS.0 as u32);
+            return;
+        }
+        let n = t.view.ItemCount(SVGIO_ALLVIEW).unwrap_or(0);
+        for i in 0..n {
+            let on = how == 0
+                || t.view.Item(i).is_ok_and(|pidl| {
+                    let state = t.view.GetSelectionState(pidl).unwrap_or(0);
+                    CoTaskMemFree(Some(pidl as *const _));
+                    state & SVSI_SELECT.0 as u32 == 0
+                });
+            let _ = t.view.SelectItem(i, if on { SVSI_SELECT.0 as u32 } else { SVSI_DESELECT.0 as u32 });
+        }
     }
 }
 
@@ -550,7 +612,7 @@ pub fn tidy(entries: &mut Vec<Entry>) {
 const PROPS: GUID = GUID::from_u128(0xB725F130_47EF_101A_A5F1_02608C9EEBAC);
 const SORT_KEYS: [(&str, u32); 4] = [("Name", 10), ("Date modified", 14), ("Type", 4), ("Size", 12)];
 
-fn view_entries(t: &Target) -> Vec<Entry> {
+pub fn view_entries(t: &Target) -> Vec<Entry> {
     let (mut mode, mut size) = (FOLDERVIEWMODE(0), 0i32);
     unsafe {
         let _ = t.view.GetViewModeAndIconSize(&mut mode, &mut size);
