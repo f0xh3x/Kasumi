@@ -251,13 +251,6 @@ export const pages: Page[] = [
           },
           {
             kind: "toggle",
-            label: "Shrink when a window covers it",
-            help: "Shrinks to the tiny handle while a maximized window is under it.",
-            path: surfacePath("shrink_when_covered", "dock"),
-            default: true,
-          },
-          {
-            kind: "toggle",
             label: "Reserve space",
             help: "Keep the bar's strip of the screen like the taskbar does: maximized windows stop at it instead of going under it.",
             path: surfacePath("reserve_space"),

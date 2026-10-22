@@ -734,7 +734,7 @@ pub fn layout_for(
     // hide under windows leave; a notch left empty retracts.
     let mut hidden: HashSet<String> = HashSet::new();
     let mut hidden_widgets: HashMap<String, Vec<String>> = HashMap::new();
-    for n in defs.iter_mut().filter(|n| undocked.contains(&n.id)) {
+    for n in defs.iter_mut().filter(|n| !dock && undocked.contains(&n.id)) {
         let shown: Vec<&String> = n.widgets.iter().filter(|w| cfg.widget_enabled(w)).collect();
         let hide: Vec<String> = shown.iter().filter(|w| cfg.widget_hides_when_maximized(w)).map(|w| (*w).clone()).collect();
         if hide.is_empty() {
@@ -749,9 +749,9 @@ pub fn layout_for(
             hidden_widgets.insert(n.id.clone(), hide);
         }
     }
-    // Docks: covered notches shrink to the tiny handle instead of moving aside.
-    let shrunk: HashSet<String> =
-        if dock && s.shrink_when_covered { undocked.iter().cloned().collect() } else { HashSet::new() };
+    // Docks: covered notches shrink to the tiny handle (always: a dock's islands stay, at
+    // most as a strip, and the one hovered opens over the window).
+    let shrunk: HashSet<String> = if dock { undocked.iter().cloned().collect() } else { HashSet::new() };
     let open_width = |n: &config::Notch| measured.get(&n.id).map_or(n.width, |w| if w.open > 0.0 { w.open } else { w.full });
     let rest_height = |n: &config::Notch| if shrunk.contains(&n.id) { sizes.tiny } else { rest_h };
     if dock {
@@ -824,10 +824,7 @@ pub fn layout_for(
                     None
                 },
                 hidden_widgets: hidden_widgets.remove(&n.id).unwrap_or_default(),
-                closed_hidden: dock && {
-                    let on: Vec<&String> = n.widgets.iter().filter(|w| cfg.widget_enabled(w)).collect();
-                    !on.is_empty() && on.iter().all(|w| !cfg.widget_pinned_in_dock(w))
-                },
+                closed_hidden: false,
                 open_x,
                 open_width: open_w,
                 open_height: if dock { open_h } else { n.height.unwrap_or(g.notch_height) },
@@ -999,10 +996,6 @@ impl Engine {
                 std::thread::sleep(rest);
             }
         }
-    }
-
-    fn shrink_when_covered(&self, surface: &str) -> bool {
-        self.cfg.surface_list().iter().any(|(id, s)| id == surface && s.shrink_when_covered)
     }
 
     fn rule_for(&self, m: &Monitor, index: usize) -> Option<&MonitorRule> {
@@ -1405,7 +1398,7 @@ impl Engine {
             (n.dock && n.avoid_windows && n.anchor != Anchor::Center)
                 || n.widgets.iter().any(|w| cfg.widget_enabled(w) && cfg.widget_hides_when_maximized(w))
         };
-        let shrinks = |o: &Overlay| o.layout.mode == SurfaceMode::Dock && self.shrink_when_covered(&o.surface);
+        let shrinks = |o: &Overlay| o.layout.mode == SurfaceMode::Dock;
         let any_dockable = {
             let sh = self.shared.lock().unwrap();
             sh.overlays.values().any(|o| shrinks(o) || o.defs.iter().any(&watched))

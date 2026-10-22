@@ -145,6 +145,8 @@ struct Drop {
     /// Bar dropdowns: the widget it hangs from.
     anchor: Option<usize>,
     step: Option<Step>,
+    /// Docks: how open this island is (each opens on its own, the one hovered).
+    isle: Spring,
 }
 
 impl Drop {
@@ -158,6 +160,13 @@ impl Drop {
             panel_w: 0.0,
             panel_h: 0.0,
             has_panel: false,
+            isle: {
+                let mut s = spring.clone();
+                s.value = 0.0;
+                s.velocity = 0.0;
+                s.target = 0.0;
+                s
+            },
             spring,
             xs: None,
             ws: None,
@@ -229,6 +238,8 @@ pub struct Surface {
     spread: Spring,
     nudge: Spring,
     nudge_key: Option<String>,
+    /// Docks: the island open (its drop's key), while the dock is.
+    isle: Option<String>,
     drops: Vec<Drop>,
     /// Pop-ups out of a notch (OSD, notifications) and the keyboard peek.
     pop: super::popup::Popups,
@@ -326,6 +337,7 @@ impl Surface {
             pop: super::popup::Popups::new(a),
             nudge,
             nudge_key: None,
+            isle: None,
             drops: Vec::new(),
             widgets: Vec::new(),
             panels: Vec::new(),
@@ -411,6 +423,7 @@ impl Surface {
         let first = self.drops.is_empty() && self.widgets.is_empty();
         let prev: HashMap<String, Spring> = self.drops.iter().map(|d| (d.key.clone(), d.spring.clone())).collect();
         let prev_x: HashMap<String, (Spring, Spring)> = self.drops.iter().filter_map(|d| Some((d.key.clone(), (d.xs.clone()?, d.ws.clone()?)))).collect();
+        let prev_isle: HashMap<String, Spring> = self.drops.iter().map(|d| (d.key.clone(), d.isle.clone())).collect();
         self.layout = layout;
         self.look = Look::from_layout(&self.layout);
         let a = self.layout.animation.clone();
@@ -453,6 +466,14 @@ impl Surface {
             d.x = n.x;
             d.width = n.width;
             d.height = n.height;
+            d.isle = prev_isle.get(&d.key).cloned().unwrap_or_else(|| {
+                let mut s = self.expand.clone();
+                s.value = 0.0;
+                s.velocity = 0.0;
+                s.target = 0.0;
+                s
+            });
+            d.isle.configure(a.expand_stiffness, a.expand_damping, &a);
             d.in_hull = true;
             d.panel_w = n.width;
             let (xs, ws) = prev_x.get(&d.key).cloned().unwrap_or_else(|| (Spring::new(n.x, a.spread_stiffness, a.spread_damping), Spring::new(n.width, a.spread_stiffness, a.spread_damping)));
@@ -602,9 +623,64 @@ impl Surface {
                 d.spring.target = 0.0;
             }
         }
+        if self.dock() {
+            let key = if expanded { self.launcher_isle().or_else(|| self.isle_under_cursor()) } else { None };
+            self.open_isle(key);
+        }
         self.layout_bar(gfx);
         self.kick();
         self.update_regions();
+    }
+
+    /// Docks: open this island (its drop's key), the others back to rest.
+    fn open_isle(&mut self, key: Option<String>) {
+        for d in &mut self.drops {
+            if d.notch.is_some() {
+                d.isle.target = if key.as_deref() == Some(d.key.as_str()) { 1.0 } else { 0.0 };
+            }
+        }
+        self.isle = key;
+    }
+
+    /// Docks: the island at `x` (window px), as it's drawn now (its flare included).
+    fn isle_at(&self, x: f32) -> Option<String> {
+        let order = self.ordered();
+        let (bumps, frame) = self.frame_of(&order, false);
+        let x = x as f64;
+        order
+            .iter()
+            .enumerate()
+            .filter(|(_, &di)| self.drops[di].notch.is_some())
+            .find(|(i, _)| {
+                let bf = &frame.bumps[*i];
+                let r = self.layout.geometry.concave_radius * bumps[*i].scale;
+                x >= bf.left - r && x <= bf.right + r
+            })
+            .map(|(_, &di)| self.drops[di].key.clone())
+    }
+
+    /// Docks: the island the cursor is on (else the one it's nearest to).
+    fn isle_under_cursor(&self) -> Option<String> {
+        let (cx, _) = crate::win::cursor_pos()?;
+        let x = (cx - self.pos.x) as f32 / self.scale();
+        self.isle_at(x).or_else(|| {
+            self.drops
+                .iter()
+                .filter(|d| d.notch.is_some())
+                .min_by(|a, b| ((a.x + a.width / 2.0) - x as f64).abs().total_cmp(&((b.x + b.width / 2.0) - x as f64).abs()))
+                .map(|d| d.key.clone())
+        })
+    }
+
+    /// Docks: the island with the launcher's field, while it searches.
+    fn launcher_isle(&self) -> Option<String> {
+        if !widgets::launcher::searching() {
+            return None;
+        }
+        self.drops
+            .iter()
+            .find(|d| d.notch.is_some() && d.slot.iter().any(|&wi| widgets::widget_type(&self.widgets[wi].name) == "launcher"))
+            .map(|d| d.key.clone())
     }
 
     /// Rust moved notches (a docking notch left its corner): slide them over.
@@ -689,6 +765,11 @@ impl Surface {
     /// Rust opened (focused this surface) or closed the launcher.
     fn set_launcher(&mut self, gfx: &Gfx, open: bool) {
         widgets::launcher::set_open(open);
+        if open && self.dock() && self.expanded {
+            if let Some(k) = self.launcher_isle() {
+                self.open_isle(Some(k));
+            }
+        }
         if !open {
             self.close_all();
         } else {
@@ -1384,7 +1465,7 @@ impl Surface {
                 let mut panel_top = None;
                 if let (true, Some(n)) = (dock, &d.notch) {
                     // Grow from the rest size to the open size in place.
-                    let e = val(&self.expand).max(0.15 * nudged).clamp(0.0, 1.0);
+                    let e = val(&d.isle).max(0.15 * nudged).clamp(0.0, 1.0);
                     x = lerp(x, n.open_x, e);
                     width = lerp(width, n.open_width, e);
                     height = lerp(n.height, n.open_height, e);
@@ -1492,6 +1573,7 @@ impl Surface {
         let bouncing = self.pop.bouncing(now);
         let mut springs: Vec<&mut Spring> = vec![&mut self.expand, &mut self.spread, &mut self.nudge, &mut self.pop.osd, &mut self.pop.peek];
         for d in &mut self.drops {
+            springs.push(&mut d.isle);
             springs.push(&mut d.spring);
             if let Some(s) = d.xs.as_mut() {
                 springs.push(s);
@@ -1534,10 +1616,19 @@ impl Surface {
         let (bumps, frame) = self.frame_of(&order, false);
         // Docks: widgets size with the row as it grows (the pages' --h / --t).
         let ex = clamp01(self.expand.value) as f32;
-        let row_h_dock = lerp(self.layout.rest_height, self.layout.open_height, ex as f64) as f32;
+        // Docks: each island as open as it is (only the one hovered opens).
+        let isles: Vec<f32> = self.drops.iter().map(|d| clamp01(d.isle.value) as f32).collect();
+        let (rest_h, open_h) = (self.layout.rest_height, self.layout.open_height);
+        let row_h_of = |e: f32| lerp(rest_h, open_h, e as f64) as f32;
         let dock_widths: Vec<f32> = if self.dock() {
             let look = &self.look;
-            self.widgets.iter_mut().map(|p| p.w.width(&Ctx { gfx, look, opts: &p.opts, h: row_h_dock, open: ex })).collect()
+            self.widgets
+                .iter_mut()
+                .map(|p| {
+                    let e = p.notch.map_or(ex, |di| isles[di]);
+                    p.w.width(&Ctx { gfx, look, opts: &p.opts, h: row_h_of(e), open: e })
+                })
+                .collect()
         } else {
             Vec::new()
         };
@@ -1596,6 +1687,7 @@ impl Surface {
             let Some(n) = &d.notch else { continue };
             let bf = &frame.bumps[i];
             let row = bf.row_depth.round();
+            let (row_h_dock, bar_open) = if dock { (row_h_of(isles[di]), isles[di]) } else { (0.0, bar_open) };
             let w = if dock { bumps[i].width } else { d.ws.as_ref().map_or(d.width, |s| s.value) };
             let slot_x = (bf.anchor_cx - w / 2.0) as f32;
             let shown = d.shown.as_ref().map_or(1.0, |s| clamp01(s.value * 1.5 - 0.5)) as f32;
@@ -1995,6 +2087,15 @@ impl Surface {
             self.tracking = false;
         }
         let pt = at.map(|p| self.logical(p));
+        if let (true, true, Some((x, _))) = (self.dock(), self.expanded, pt) {
+            if let Some(k) = self.isle_at(x) {
+                if self.isle.as_ref() != Some(&k) && !self.drops.iter().any(|d| d.spring.target > 0.5) {
+                    self.open_isle(Some(k));
+                    self.kick();
+                    self.update_regions();
+                }
+            }
+        }
         let mut changed = false;
         let over_panel = pt.and_then(|(x, y)| self.panel_at(x, y));
         for pi in 0..self.panels.len() {
@@ -2410,6 +2511,11 @@ impl Surface {
     pub fn pose(&mut self, gfx: &Gfx, expanded: bool, panel: Option<&str>, p: f64) {
         self.set_expanded(gfx, expanded);
         for d in &mut self.drops {
+            if d.notch.is_some() {
+                d.isle.target = if expanded { 1.0 } else { 0.0 };
+            }
+        }
+        for d in &mut self.drops {
             d.spring.target = 0.0;
         }
         if let Some(name) = panel {
@@ -2423,6 +2529,7 @@ impl Surface {
         }
         for d in &mut self.drops {
             d.spring.snap();
+            d.isle.snap();
             if d.spring.target > 0.5 {
                 d.spring.value = p;
             }
@@ -2446,6 +2553,7 @@ impl Surface {
         }
         for d in &mut self.drops {
             d.spring.snap();
+            d.isle.snap();
             for s in [d.xs.as_mut(), d.ws.as_mut(), d.shown.as_mut()].into_iter().flatten() {
                 s.snap();
             }

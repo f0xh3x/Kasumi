@@ -514,6 +514,9 @@ const placement: Editor = (ctx) => {
    */
   const chipButtons = (id: string, where: string, elsewhere: boolean) => {
     const mode = ctx.cfg.surfaces?.[where]?.mode ?? "bar";
+    // Docks: every island always shows (a tiny strip under a maximized window, opening
+    // when hovered), so their widgets have no pin or hide buttons.
+    if (mode === "dock") return $("div", "chip-buttons");
     // Docks: every widget is a notch; the pin says whether it shows while the dock is closed.
     const dockPinned = ctx.cfg.widgets?.[id]?.pin_in_dock !== false;
     const notch = mode === "dock" ? dockPinned : mode === "bar" && layouts[where].notch.includes(id);
