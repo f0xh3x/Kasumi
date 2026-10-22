@@ -1959,7 +1959,7 @@ impl Surface {
         }
         if rects != self.sent_icons {
             self.sent_icons = rects.clone();
-            super::set_icon_rects(&self.monitor.device, rects);
+            super::set_icon_rects(&self.label, &self.monitor.device, rects);
         }
     }
 

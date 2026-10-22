@@ -121,20 +121,20 @@ pub fn alt_tab(key: crate::keyhook::AltTabKey) {
     post(Msg::AltTab(key));
 }
 
-/// Where each app's icon is in the native bars and docks (screen px): its monitor, app
-/// key and box. A window minimizing animates there (providers/tasks.rs answers the
-/// shell's HSHELL_GETMINRECT with it).
-static ICONS: Mutex<Vec<(String, String, [i32; 4])>> = Mutex::new(Vec::new());
+/// Where each app's icon is in the native bars and docks (screen px): the surface, its
+/// monitor, the app key and box. A window minimizing animates there (providers/tasks.rs
+/// answers the shell's HSHELL_GETMINRECT with it).
+static ICONS: Mutex<Vec<(String, String, String, [i32; 4])>> = Mutex::new(Vec::new());
 
 pub fn icon_rect(device: &str, app: &str) -> Option<[i32; 4]> {
-    ICONS.lock().unwrap().iter().find(|(d, a, _)| d == device && a == app).map(|e| e.2)
+    ICONS.lock().unwrap().iter().find(|(_, d, a, _)| d == device && a == app).map(|e| e.3)
 }
 
-/// A surface's icons (all of its monitor's are replaced by these).
-pub(crate) fn set_icon_rects(device: &str, rects: Vec<(String, [i32; 4])>) {
+/// A surface's icons (its earlier ones replaced; another surface's on the monitor kept).
+pub(crate) fn set_icon_rects(surface: &str, device: &str, rects: Vec<(String, [i32; 4])>) {
     let mut icons = ICONS.lock().unwrap();
-    icons.retain(|(d, _, _)| d != device);
-    icons.extend(rects.into_iter().map(|(a, r)| (device.to_string(), a, r)));
+    icons.retain(|(s, _, _, _)| s != surface);
+    icons.extend(rects.into_iter().map(|(a, r)| (surface.to_string(), device.to_string(), a, r)));
 }
 
 /// Win + n from the keyboard helper.
