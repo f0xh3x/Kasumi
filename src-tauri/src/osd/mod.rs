@@ -2,6 +2,7 @@
 //! OSD notch into a pill for a moment; the overlay stays click-through.
 
 mod brightness;
+mod fileops;
 mod volume;
 
 use crate::providers::SharedConfig;
@@ -31,6 +32,14 @@ pub fn emit(app: &AppHandle, kind: &str, event: &str, payload: Value) -> usize {
 /// Shows the level OSD ("volume", "brightness") where it appears. `level` is 0..=1.
 pub fn show(app: &AppHandle, kind: &str, level: f32, muted: bool) {
     show_for(app, kind, level, muted, None);
+}
+
+/// File copies' progress (osd/fileops.rs): a level pop-up kept up for `ms`.
+pub fn show_progress(app: &AppHandle, level: f32, ms: u64) {
+    if !app.state::<SharedConfig>().read().unwrap().osd.enabled {
+        return;
+    }
+    emit(app, "progress", "notch://osd", json!({ "kind": "progress", "level": level.clamp(0.0, 1.0), "muted": false, "ms": ms }));
 }
 
 /// The level OSD for one app (`app_key`: the tasks widget's key; its icon shows instead
@@ -122,4 +131,5 @@ pub fn volume_key(key: crate::keyhook::VolumeKey) {
 pub fn start(app: &AppHandle) {
     volume::start(app);
     brightness::start(app);
+    fileops::start(app);
 }

@@ -99,6 +99,7 @@ hide_windows_brightness = true  # hide the Windows brightness flyout while Kasum
 keyboard = true              # pop a small notch at the language widget when the keyboard layout changes
 keyboard_width = 120
 caps_lock = false            # pop the OSD when Caps Lock is switched on / off
+file_progress = false        # Explorer's file copies and moves: their progress as a pop-up
 
 # Bar spacing (widgets in the open bar).
 [bar]

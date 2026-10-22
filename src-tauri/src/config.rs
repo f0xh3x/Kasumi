@@ -387,6 +387,8 @@ pub struct Osd {
     pub keyboard_width: f64,
     /// Pop the OSD when Caps Lock is switched on or off.
     pub caps_lock: bool,
+    /// Explorer's file copies and moves: their progress as a level pop-up (osd/fileops.rs).
+    pub file_progress: bool,
     /// Pop new notifications out of the notch (Windows' own store, see
     /// providers/notifications.rs).
     pub notifications: bool,
@@ -427,6 +429,7 @@ impl Default for Osd {
             keyboard: true,
             keyboard_width: 120.0,
             caps_lock: false,
+            file_progress: false,
             notifications: false,
             notification_style: "line".into(),
             notification_ms: 5000,

@@ -1088,7 +1088,7 @@ class Overlay {
   }
 
   /** Shows a level on the OSD notch, then shrinks back after the configured duration. */
-  showOsd(e: { kind: "volume" | "brightness" | "keyboard" | "caps" | "update"; level: number; muted: boolean; text?: string; ms?: number; notch?: string | null }): void {
+  showOsd(e: { kind: "volume" | "brightness" | "keyboard" | "caps" | "update" | "progress"; level: number; muted: boolean; text?: string; ms?: number; notch?: string | null }): void {
     const L = this.layout;
     this.osdNotch = e.notch ?? null;
     if (!L || !this.osdDrop()) return;
@@ -1102,6 +1102,7 @@ class Overlay {
     let glyph = 0xe706; // Brightness
     if (e.kind === "keyboard" || e.kind === "caps") glyph = 0xe765;
     if (e.kind === "update") glyph = 0xe896; // Download
+    if (e.kind === "progress") glyph = 0xe8c8; // Copy (file copies, osd/fileops.rs)
     if (e.kind === "volume") {
       glyph = e.muted ? 0xe74f : pct === 0 ? 0xe992 : pct < 34 ? 0xe993 : pct < 67 ? 0xe994 : 0xe995;
     }
@@ -1555,7 +1556,7 @@ async function main(): Promise<void> {
   await win.listen<NotchLayout[]>("notch://positions", (e) => overlay.updatePositions(e.payload));
   await win.listen<{ open: boolean }>("notch://launcher", (e) => overlay.setLauncher(e.payload.open));
   await win.listen<{ code: string; code2?: string; name: string; notch?: string | null }>("notch://keyboard", (e) => overlay.showKeyboard(e.payload));
-  await win.listen<{ kind: "volume" | "brightness" | "caps" | "update"; level: number; muted: boolean; text?: string; ms?: number; notch?: string | null }>("notch://osd", (e) =>
+  await win.listen<{ kind: "volume" | "brightness" | "caps" | "update" | "progress"; level: number; muted: boolean; text?: string; ms?: number; notch?: string | null }>("notch://osd", (e) =>
     overlay.showOsd(e.payload),
   );
   await win.listen<{ notch: string | null }>("notch://nudge", (e) => overlay.setNudge(e.payload.notch));

@@ -78,6 +78,7 @@ impl Popups {
         let glyph = match kind {
             "keyboard" | "caps" => "\u{E765}",
             "update" => "\u{E896}",
+            "progress" => "\u{E8C8}",
             "volume" => volume_glyph(pct, muted),
             _ => "\u{E706}",
         };

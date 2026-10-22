@@ -1202,6 +1202,21 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "File copies",
+        collapsible: true,
+        group: "Pop-ups",
+        icon: 0xe8c8,
+        fields: [
+          {
+            kind: "toggle",
+            label: "Show file copy progress",
+            help: "While File Explorer copies or moves files, their progress shows as a pop-up. (Downloads and installers keep theirs in their own windows.)",
+            path: ["osd", "file_progress"],
+            default: false,
+          },
+        ],
+      },
+      {
         title: "Keyboard layout",
         collapsible: true,
         group: "Pop-ups",
