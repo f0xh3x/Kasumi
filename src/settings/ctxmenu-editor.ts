@@ -1,14 +1,16 @@
 // The context menu editor ([context_menu] layout): the menu as it shows for one kind
-// of click (file, folder, drive, several items, empty space, desktop), and for each
-// entry: move it, hide it, rename it, give it an icon, put it in a folder, show it
-// only for some kinds of click. Plus your own folders, commands and separators.
+// of click (file, folder, drive, several items, empty space, desktop). Drag an entry
+// by its handle to reorder it, or onto a folder to put it inside; folders and
+// Windows' submenus (Send to, Open with...) show their entries under them. Each
+// entry can be hidden, renamed and given an icon; the options button limits where
+// it shows. Plus your own folders, commands and separators.
 //
 // The layout is one list for every kind of click (each entry can say where it shows).
 // Windows' entries Kasumi hasn't placed come where the layout says "rest"; editing
 // one of those places them all, in the order they show.
 import { invoke } from "@tauri-apps/api/core";
-import { $, iconButton, input, toggleSwitch } from "./dom";
-import { iconPicker, type EditorCtx } from "./editors";
+import { $, glyph, iconButton, input, select, toggleSwitch } from "./dom";
+import { ICONS, type EditorCtx } from "./editors";
 
 interface MenuNode {
   match?: string[];
@@ -31,6 +33,13 @@ interface Seen {
   text: string;
   verb: string;
   sub?: boolean;
+  glyph?: string;
+  bitmap?: { w: number; h: number; rgba: string };
+}
+
+interface Info {
+  seen: Record<string, Seen[]>;
+  default: MenuNode[];
 }
 
 const KINDS: [string, string][] = [
@@ -41,13 +50,32 @@ const KINDS: [string, string][] = [
   ["background", "Folder background"],
   ["desktop", "Desktop"],
 ];
+const SELECTION = ["file", "folder", "drive", "multiple"];
+const SPACE = ["background", "desktop"];
 
-const BUILTIN: Record<string, string> = {
-  view: "View, Sort by, Refresh",
-  terminal: "Command Prompt, PowerShell, Windows Terminal",
-  file_manage: "Copy path, Select, Show / Hide, Attributes, New, Folder options",
-  go_to: "Folders, Control Panel, Run, Settings pages",
+/** Kasumi's own entries: their names, icons, and the clicks they show for. */
+const KASUMI: Record<string, { label: string; glyph: string; kinds?: string[] }> = {
+  "view.view": { label: "View", glyph: "E8A9", kinds: SPACE },
+  "view.sort": { label: "Sort by", glyph: "E8CB", kinds: SPACE },
+  "view.refresh": { label: "Refresh", glyph: "E72C", kinds: SPACE },
+  "terminal.cmd": { label: "Command Prompt", glyph: "E756" },
+  "terminal.powershell": { label: "PowerShell", glyph: "E756" },
+  "terminal.wt": { label: "Windows Terminal", glyph: "E756" },
+  "file_manage.copy_path": { label: "Copy path", glyph: "E8C8", kinds: SELECTION },
+  "file_manage.select": { label: "Select", glyph: "E8B3" },
+  "file_manage.show_hide": { label: "Show / Hide", glyph: "E7B3" },
+  "file_manage.attributes": { label: "Attributes", glyph: "E946", kinds: ["file", "folder"] },
+  "file_manage.new_folder": { label: "New folder (date and time)", glyph: "E8F4", kinds: SPACE },
+  "file_manage.new_file": { label: "New file", glyph: "E8A5", kinds: SPACE },
+  "file_manage.folder_options": { label: "Folder options", glyph: "E713", kinds: ["file", "folder", "drive", "multiple", "background"] },
+  "go_to.folders": { label: "Folders", glyph: "E8B7" },
+  "go_to.control_panel": { label: "Control Panel", glyph: "E713" },
+  "go_to.all_control_panel": { label: "All Control Panel items", glyph: "E713" },
+  "go_to.run": { label: "Run", glyph: "E768" },
+  "go_to.settings": { label: "Settings", glyph: "E713" },
 };
+const GROUPS: Record<string, string[]> = {};
+for (const id of Object.keys(KASUMI)) (GROUPS[id.split(".")[0]] ??= []).push(id);
 
 /** `text:Pin to*` / `verb:copyaspath` against a Windows entry (as layout.rs does). */
 function matches(m: string, e: Seen): boolean {
@@ -62,207 +90,331 @@ function matches(m: string, e: Seen): boolean {
 const keyOf = (e: Seen) => (e.verb ? `verb:${e.verb}` : `text:${e.text}`);
 const applies = (n: MenuNode, kind: string) => !n.where || n.where.split("|").some((w) => w.trim() === kind);
 const hexOf = (ch: string) => ch.codePointAt(0)!.toString(16).toUpperCase();
-const charOf = (hex?: string) => (hex ? String.fromCodePoint(parseInt(hex, 16) || 0xe8b7) : "");
 
-/** A node as saved: no empty or default fields. */
+/** A node as saved: no empty or default fields (a folder keeps its list). */
 function clean(n: MenuNode): MenuNode {
   const out: any = {};
   for (const [k, v] of Object.entries(n)) {
-    if (v === "" || v === false || v == null || (Array.isArray(v) && v.length === 0 && k !== "items")) continue;
+    if (v === "" || v === false || v == null || (Array.isArray(v) && v.length === 0)) continue;
     out[k] = k === "items" ? (v as MenuNode[]).map(clean) : v;
   }
   if (n.folder) out.items = (n.items ?? []).map(clean);
   return out;
 }
 
+/** Kasumi's groups ("file_manage") as their entries, so each can be edited. */
+function expandGroups(list: MenuNode[]) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const n = list[i];
+    if (n.kasumi && GROUPS[n.kasumi]) list.splice(i, 1, ...GROUPS[n.kasumi].map((k) => ({ kasumi: k })));
+    else if (n.folder) expandGroups((n.items ??= []));
+  }
+}
+
+/** The editor's place across redraws: the kind of click shown, folders opened. */
+const state: { info?: Info; kind: string; open: Set<string> } = { kind: "file", open: new Set() };
+
+type Owner = () => [MenuNode, MenuNode[]] | null;
+
 interface Row {
   node: MenuNode;
+  /** The list it's in (for one of the rest's entries: the rest's). */
   list: MenuNode[];
   /** A Windows entry still in "rest" (not placed by the layout yet). */
   entry?: Seen;
+  /** The Windows entries it stands for, here. */
+  hits?: Seen[];
   depth: number;
+  /** What its matches are against: this click's entries, or a submenu's. */
+  seen: Seen[];
+  /** In a Windows submenu: that submenu's own node (placed first if needed), its key. */
+  owner?: Owner;
+  ownerKey?: string;
+  /** Has entries under it (a folder, or a Windows submenu Kasumi has seen). */
+  parent?: string;
 }
 
 export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
   const box = $("div", "cm-editor", $("p", "card-help", "Loading…"));
   let layout: MenuNode[] = [];
   let seenAll: Record<string, Seen[]> = {};
-  let kind = "file";
+  let drag: Row | null = null;
 
-  const save = () =>
-    ctx
-      .saveMany([
-        { path: ["context_menu", "layout"], value: layout.map(clean) },
-        { path: ["context_menu", "custom"], value: null },
-      ])
-      .catch((e) => ctx.toast(String(e), true));
+  const save = () => {
+    const hasCustom = ((ctx.cfg as any).context_menu?.custom ?? []).length > 0;
+    const value = layout.map(clean);
+    const done = hasCustom
+      ? ctx.saveMany([
+          { path: ["context_menu", "layout"], value },
+          { path: ["context_menu", "custom"], value: null },
+        ])
+      : ctx.save(["context_menu", "layout"], value);
+    return done.catch((e) => ctx.toast(String(e), true));
+  };
 
-  /** Every Windows entry the layout names (placed or hidden) — "rest" has the others. */
-  const claimed = (seen: Seen[]) => {
+  /** The Windows entries a list names (placed or hidden), folders' included. */
+  const claimedIn = (list: MenuNode[], seen: Seen[]) => {
     const used = new Set<number>();
-    const walk = (list: MenuNode[]) => {
-      for (const n of list) {
+    const walk = (l: MenuNode[]) => {
+      for (const n of l) {
         n.match?.forEach((m) => seen.forEach((e, i) => matches(m, e) && used.add(i)));
-        if (n.items) walk(n.items);
+        if (n.folder && n.items) walk(n.items);
       }
     };
-    walk(layout);
+    walk(list);
     return used;
   };
 
-  /** Places the rest's entries for this kind of click, so they can be edited. */
-  const materialize = (seen: Seen[]) => {
-    const used = claimed(seen);
-    const find = (list: MenuNode[]): [MenuNode[], number] | null => {
-      for (let i = 0; i < list.length; i++) {
-        if (list[i].rest) return [list, i];
-        const inner = list[i].items && find(list[i].items!);
+  const findList = (root: MenuNode[], node: MenuNode): MenuNode[] | null => {
+    if (root.includes(node)) return root;
+    for (const n of root) {
+      const inner = n.folder && n.items ? findList(n.items, node) : null;
+      if (inner) return inner;
+    }
+    return null;
+  };
+
+  const findKey = (root: MenuNode[], key: string): [MenuNode, MenuNode[]] | null => {
+    for (const n of root) {
+      if (n.match?.length === 1 && n.match[0] === key) return [n, root];
+      const inner = n.folder && n.items ? findKey(n.items, key) : null;
+      if (inner) return inner;
+    }
+    return null;
+  };
+
+  /** Places the rest's entries (in `root`) as their own, in the order they show. */
+  const materialize = (root: MenuNode[], seen: Seen[]) => {
+    const rest = (l: MenuNode[]): [MenuNode[], number] | null => {
+      for (let i = 0; i < l.length; i++) {
+        if (l[i].rest) return [l, i];
+        const inner = l[i].folder && l[i].items ? rest(l[i].items!) : null;
         if (inner) return inner;
       }
       return null;
     };
-    const at = find(layout);
+    const at = rest(root);
     if (!at) return;
-    const [list, i] = at;
-    const add = seen.filter((_, j) => !used.has(j)).map((e) => ({ match: [keyOf(e)] }));
-    list.splice(i, 0, ...add);
+    const used = claimedIn(root, seen);
+    at[0].splice(at[1], 0, ...seen.filter((_, j) => !used.has(j)).map((e) => ({ match: [keyOf(e)] })));
   };
 
-  /** The rows for this kind of click: what the menu shows, hidden ones too. */
-  const rows = (list: MenuNode[], seen: Seen[], used: Set<number>, depth: number, out: Row[]) => {
+  /** A row's node and its list, placing what it needs first (the rest's entries; a
+   *  Windows submenu's own node). */
+  const resolve = (row: Row): [MenuNode, MenuNode[]] | null => {
+    let root = layout;
+    if (row.owner) {
+      const o = row.owner();
+      if (!o) return null;
+      const items = (o[0].items ??= []);
+      if (!items.some((n) => n.rest)) items.push({ rest: true });
+      root = items;
+    }
+    if (row.entry) {
+      materialize(root, row.seen);
+      return findKey(root, keyOf(row.entry));
+    }
+    const list = findList(root, row.node);
+    return list ? [row.node, list] : null;
+  };
+
+  const contains = (outer: MenuNode, inner: MenuNode): boolean => outer === inner || (outer.items ?? []).some((c) => contains(c, inner));
+
+  // --- The rows ---------------------------------------------------------------------
+
+  const rows = (list: MenuNode[], seen: Seen[], used: Set<number>, depth: number, out: Row[], owner?: Owner, ownerKey?: string) => {
+    const kind = state.kind;
     for (const n of list) {
-      if (!applies(n, kind)) continue;
+      if (!owner && !applies(n, kind)) continue;
       if (n.rest) {
-        seen.forEach((e, i) => !used.has(i) && out.push({ node: n, list, entry: e, depth }));
+        seen.forEach((e, i) => {
+          if (used.has(i)) return;
+          const row: Row = { node: n, list, entry: e, depth, seen, owner, ownerKey };
+          out.push(row);
+          if (!owner) subRows(e, row, depth + 1, out);
+        });
       } else if (n.folder) {
-        out.push({ node: n, list, depth });
-        rows(n.items ?? [], seen, used, depth + 1, out);
+        const row: Row = { node: n, list, depth, seen, owner, ownerKey, parent: `folder:${n.folder}` };
+        out.push(row);
+        if (state.open.has(row.parent!)) rows(n.items ?? [], seen, used, depth + 1, out, owner, ownerKey);
       } else if (n.kasumi) {
-        if (n.kasumi !== "view" || kind === "background" || kind === "desktop") out.push({ node: n, list, depth });
+        const k = KASUMI[n.kasumi];
+        if (!k?.kinds || k.kinds.includes(kind)) out.push({ node: n, list, depth, seen, owner, ownerKey });
       } else if (n.match?.length) {
-        if (seen.some((e) => n.match!.some((m) => matches(m, e)))) out.push({ node: n, list, depth });
+        const hits = seen.filter((e) => n.match!.some((m) => matches(m, e)));
+        if (!hits.length) continue;
+        const row: Row = { node: n, list, hits, depth, seen, owner, ownerKey };
+        out.push(row);
+        if (!owner) subRows(hits[0], row, depth + 1, out, n);
       } else {
-        out.push({ node: n, list, depth });
+        out.push({ node: n, list, depth, seen, owner, ownerKey });
       }
     }
   };
 
-  /** Does a node show a row for this kind of click (for moving past it)? */
-  const shows = (n: MenuNode, seen: Seen[], used: Set<number>) => {
-    const r: Row[] = [];
-    rows([n], seen, used, 0, r);
-    return r.length > 0;
+  /** A Windows submenu's entries (as Kasumi has seen them), under its row. */
+  const subRows = (e: Seen, parentRow: Row, depth: number, out: Row[], node?: MenuNode) => {
+    const subSeen = seenAll[`sub:${keyOf(e)}`];
+    if (!subSeen?.length) return;
+    parentRow.parent = `sub:${keyOf(e)}`;
+    if (!state.open.has(parentRow.parent)) return;
+    const items = node?.items ?? [];
+    const list = items.some((r) => r.rest) ? items : [...items, { rest: true }];
+    rows(list, subSeen, claimedIn(list, subSeen), depth, out, () => resolve(parentRow), keyOf(e));
   };
 
-  /** A row's node, placing the rest first if it's one of the rest's entries. */
-  const resolve = (row: Row, seen: Seen[]): [MenuNode, MenuNode[]] | null => {
-    if (!row.entry) return [row.node, row.list];
-    materialize(seen);
-    const key = keyOf(row.entry);
-    let hit: [MenuNode, MenuNode[]] | null = null;
-    const walk = (list: MenuNode[]) => {
-      for (const n of list) {
-        if (!hit && n.match?.length === 1 && n.match[0] === key) hit = [n, list];
-        if (n.items) walk(n.items);
-      }
+  // --- Editing ----------------------------------------------------------------------
+
+  const commit = () => {
+    render();
+    save();
+  };
+
+  const edit = (row: Row, f: (node: MenuNode, list: MenuNode[]) => void) => () => {
+    const r = resolve(row);
+    if (!r) return;
+    f(r[0], r[1]);
+    commit();
+  };
+
+  type Zone = "before" | "after" | "into";
+  const zoneOf = (e: DragEvent, el: HTMLElement, row: Row): Zone => {
+    const r = el.getBoundingClientRect();
+    const y = (e.clientY - r.top) / r.height;
+    if (row.node.folder && !row.entry && y > 0.25 && y < 0.75) return "into";
+    return y < 0.5 ? "before" : "after";
+  };
+  const canDrop = (src: Row | null, dst: Row, zone: Zone) => {
+    if (!src || src === dst) return false;
+    // A Windows submenu's entries stay in it; nothing else goes in one.
+    if (src.ownerKey !== dst.ownerKey) return false;
+    if (zone === "into" && (!dst.node.folder || dst.entry)) return false;
+    if (!src.entry && !dst.entry && contains(src.node, dst.node)) return false;
+    return true;
+  };
+  const drop = (src: Row, dst: Row, zone: Zone) => {
+    const s = resolve(src);
+    const d = resolve(dst);
+    if (!s || !d) return;
+    const [sn, sl] = s;
+    const [dn, dl] = d;
+    if (sn === dn || contains(sn, dn)) return;
+    sl.splice(sl.indexOf(sn), 1);
+    if (zone === "into") {
+      (dn.items ??= []).push(sn);
+      if (dn.folder) state.open.add(`folder:${dn.folder}`);
+    } else {
+      dl.splice(dl.indexOf(dn) + (zone === "after" ? 1 : 0), 0, sn);
+    }
+    commit();
+  };
+
+  /** The icon button: the entry's icon now (or empty), a grid to choose another, its
+   *  own (Default) or none. */
+  const iconControl = (row: Row): [HTMLElement, HTMLElement] => {
+    const n = row.node;
+    const own = row.entry ?? row.hits?.[0];
+    const btn = $("button", "icon-picker cm-icon") as HTMLButtonElement;
+    btn.title = "Its icon";
+    const set = row.entry ? undefined : n.icon;
+    if (set === "0") {
+      // No icon.
+    } else if (set) {
+      btn.append($("span", "icon", String.fromCodePoint(parseInt(set, 16))));
+    } else if (n.kasumi && KASUMI[n.kasumi]) {
+      btn.append($("span", "icon", String.fromCodePoint(parseInt(KASUMI[n.kasumi].glyph, 16))));
+    } else if (own?.bitmap) {
+      const c = document.createElement("canvas");
+      c.width = own.bitmap.w;
+      c.height = own.bitmap.h;
+      const px = Uint8ClampedArray.from(atob(own.bitmap.rgba), (ch) => ch.charCodeAt(0));
+      c.getContext("2d")!.putImageData(new ImageData(px, own.bitmap.w, own.bitmap.h), 0, 0);
+      c.className = "cm-bitmap";
+      btn.append(c);
+    } else if (own?.glyph) {
+      btn.append($("span", "icon", String.fromCodePoint(parseInt(own.glyph, 16))));
+    }
+    const grid = $("div", "icon-grid");
+    grid.hidden = true;
+    const pick = (value: string | null) => () => {
+      grid.hidden = true;
+      edit(row, (node) => {
+        if (value === null) delete node.icon;
+        else node.icon = value;
+      })();
     };
-    walk(layout);
-    return hit;
-  };
-
-  const folders = () => {
-    const out: [MenuNode, string][] = [];
-    const walk = (list: MenuNode[], prefix: string) => {
-      for (const n of list)
-        if (n.folder) {
-          out.push([n, prefix + n.folder]);
-          walk(n.items ?? [], `${prefix}${n.folder} › `);
-        }
+    const word = (text: string, value: string | null) => {
+      const b = $("button", "icon-cell cm-word", text);
+      b.addEventListener("click", pick(value));
+      return b;
     };
-    walk(layout, "");
-    return out;
+    grid.append(word("Default", null), word("None", "0"));
+    for (const [code, name] of ICONS) {
+      const cell = $("button", "icon-cell", glyph(code));
+      cell.title = name;
+      cell.addEventListener("click", pick(hexOf(String.fromCharCode(code))));
+      grid.append(cell);
+    }
+    btn.addEventListener("click", () => {
+      const open = grid.hidden;
+      document.querySelectorAll<HTMLElement>(".icon-grid").forEach((g) => (g.hidden = true));
+      grid.hidden = !open;
+    });
+    return [btn, grid];
   };
 
-  const contains = (outer: MenuNode, inner: MenuNode): boolean =>
-    outer === inner || (outer.items ?? []).some((c) => contains(c, inner));
+  const rowEl = (row: Row): HTMLElement => {
+    const n = row.node;
+    const isSep = !!n.separator && !row.entry;
+    const el = $("div", `cm-row${n.hide && !row.entry ? " hidden-row" : ""}${n.folder ? " folder-row" : ""}`);
+    el.style.paddingLeft = `${row.depth * 24}px`;
 
-  const restIndex = () => layout.findIndex((n) => n.rest);
+    const handle = $("span", "cm-handle", glyph(0xe76f));
+    handle.title = "Drag to move (onto a folder to put it inside)";
+    handle.draggable = true;
+    handle.addEventListener("dragstart", (e) => {
+      drag = row;
+      e.dataTransfer!.effectAllowed = "move";
+      e.dataTransfer!.setData("text/plain", "");
+      e.dataTransfer!.setDragImage(el, 12, 12);
+      el.classList.add("dragging");
+    });
+    handle.addEventListener("dragend", () => {
+      drag = null;
+      el.classList.remove("dragging");
+    });
+    const clear = () => el.classList.remove("drop-before", "drop-after", "drop-into");
+    el.addEventListener("dragover", (e) => {
+      const zone = zoneOf(e, el, row);
+      clear();
+      if (!canDrop(drag, row, zone)) return;
+      e.preventDefault();
+      el.classList.add(`drop-${zone}`);
+    });
+    el.addEventListener("dragleave", clear);
+    el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      clear();
+      const zone = zoneOf(e, el, row);
+      if (drag && canDrop(drag, row, zone)) drop(drag, row, zone);
+    });
+    el.append(handle);
 
-  const render = () => {
-    const seen = seenAll[kind] ?? [];
-    const used = claimed(seen);
-    const list: Row[] = [];
-    rows(layout, seen, used, 0, list);
-
-    const tabs = $("div", "cm-tabs");
-    for (const [k, label] of KINDS) {
-      const b = $("button", `cm-tab${k === kind ? " on" : ""}`, label) as HTMLButtonElement;
-      b.addEventListener("click", () => {
-        kind = k;
+    // Folders and submenus open and close.
+    if (row.parent) {
+      const open = state.open.has(row.parent);
+      const chev = iconButton(open ? 0xe70d : 0xe76c, open ? "Close" : "Open", () => {
+        open ? state.open.delete(row.parent!) : state.open.add(row.parent!);
         render();
       });
-      tabs.append(b);
+      chev.classList.add("cm-chevron");
+      el.append(chev);
+    } else {
+      el.append($("span", "cm-chevron-space"));
     }
 
-    const table = $("div", "cm-rows");
-    if (!seen.length) {
-      table.append($("p", "card-help", "Kasumi hasn't seen this kind of menu yet: right-click one once (with Kasumi's menu on), then come back."));
-    }
-    for (const row of list) table.append(rowEl(row, seen));
-
-    const add = (n: MenuNode) => () => {
-      const i = restIndex();
-      layout.splice(i < 0 ? layout.length : i + 1, 0, n);
-      render();
-      save();
-    };
-    const buttons = $(
-      "div",
-      "button-row",
-      $("button", "button", "New folder"),
-      $("button", "button", "New command"),
-      $("button", "button", "Separator"),
-      $("button", "button", "Reset to Kasumi's default"),
-    );
-    const [bFolder, bCmd, bSep, bReset] = [...buttons.children] as HTMLButtonElement[];
-    bFolder.addEventListener("click", add({ folder: "New folder", icon: "E8B7", items: [] }));
-    bCmd.addEventListener("click", add({ name: "New command", cmd: "notepad.exe", args: '"{path}"', icon: "E756" }));
-    bSep.addEventListener("click", add({ separator: true }));
-    bReset.addEventListener("click", async () => {
-      if (!confirm("Go back to Kasumi's default menu? Your changes and your own entries go.")) return;
-      await ctx.saveMany([
-        { path: ["context_menu", "layout"], value: null },
-        { path: ["context_menu", "custom"], value: null },
-      ]);
-      await load(true);
-    });
-
-    box.replaceChildren(
-      tabs,
-      table,
-      buttons,
-      $(
-        "p",
-        "card-help",
-        "Changes apply to the next menu you open. The folder button on a row puts it in a folder (or takes it out) and limits which kinds of click show it. Kasumi learns Windows' entries as you use the menu: right-click a .zip or an image once to see the entries only they have.",
-      ),
-    );
-  };
-
-  const rowEl = (row: Row, seen: Seen[]): HTMLElement => {
-    const n = row.node;
-    const el = $("div", `cm-row${n.hide ? " hidden-row" : ""}${n.folder ? " folder-row" : ""}`);
-    el.style.paddingLeft = `${row.depth * 22}px`;
-    const edit = (f: (node: MenuNode, list: MenuNode[]) => void) => () => {
-      const r = resolve(row, seen);
-      if (!r) return;
-      f(r[0], r[1]);
-      render();
-      save();
-    };
-
-    let iconGrid: HTMLElement | null = null;
-    if (n.separator && !row.entry) {
+    let grid: HTMLElement | null = null;
+    if (isSep) {
       el.append($("div", "sep-line"));
     } else {
       const label = row.entry
@@ -270,98 +422,48 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
         : n.folder
           ? n.folder
           : n.kasumi
-            ? `Kasumi: ${BUILTIN[n.kasumi] ?? n.kasumi}`
+            ? (KASUMI[n.kasumi]?.label ?? n.kasumi)
             : n.cmd
               ? n.name || n.cmd
-              : n.name ||
-                seen
-                  .filter((e) => n.match!.some((m) => matches(m, e)))
-                  .map((e) => e.text)
-                  .join(", ");
-      const [iconBtn, grid] = iconPicker(charOf(n.icon), (ch) => edit((node) => (node.icon = hexOf(ch)))());
-      iconGrid = grid;
-      const text = input(n.folder || n.name || "", label);
-      text.title = row.entry || n.match ? `Its own name: ${label} (type to rename it)` : "";
+              : (row.hits ?? []).map((e) => e.text).join(", ");
+      const [iconBtn, iconGrid] = iconControl(row);
+      grid = iconGrid;
+      const text = input(row.entry ? "" : n.folder || n.name || "", label);
+      text.title = n.folder || n.cmd ? "" : `Its own name: ${label} (type to rename it)`;
       text.addEventListener("change", () =>
-        edit((node) => {
-          if (node.folder !== undefined && node.folder !== "") node.folder = text.value || "Folder";
+        edit(row, (node) => {
+          if (node.folder) node.folder = text.value || "Folder";
           else node.name = text.value;
         })(),
       );
-      if (n.kasumi) text.disabled = true;
       el.append(iconBtn, text);
-      const sub = !n.folder && !n.kasumi && !n.cmd && (row.entry ?? seen.find((e) => n.match!.some((m) => matches(m, e))))?.sub;
-      const tag = n.folder ? "Folder" : n.kasumi ? "Kasumi" : n.cmd ? "Command" : sub ? "Submenu" : "";
+      const tag = n.folder ? "Folder" : n.kasumi ? "Kasumi" : n.cmd ? "Command" : (row.entry ?? row.hits?.[0])?.sub ? "Submenu" : "";
       if (tag) el.append($("span", "cm-tag", tag));
       if (n.shift) el.append($("span", "cm-tag", "Shift"));
     }
 
-    // Move up / down among what this kind of click shows.
-    const move = (dir: -1 | 1) =>
-      edit((node, list) => {
-        const vis = list.filter((x) => shows(x, seen, claimed(seen)));
-        const i = vis.indexOf(node);
-        const next = vis[i + dir];
-        if (!next) return;
-        list.splice(list.indexOf(node), 1);
-        list.splice(list.indexOf(next) + (dir > 0 ? 1 : 0), 0, node);
-      });
-
     const details = $("div", "cm-details");
     details.hidden = true;
-    const actions = $(
-      "div",
-      "menu-row-actions",
-      iconButton(0xe70e, "Move up", move(-1)),
-      iconButton(0xe70d, "Move down", move(1)),
-      iconButton(n.hide ? 0xed1a : 0xe7b3, n.hide ? "Show" : "Hide", edit((node) => (node.hide = !node.hide))),
-      iconButton(0xe8de, "Folder, and where it shows", () => (details.hidden = !details.hidden)),
-      iconButton(0xe74d, n.match && !n.folder ? "Back to where Windows puts it" : "Remove", edit((node, list) => {
-        const i = list.indexOf(node);
-        list.splice(i, 1, ...(node.folder ? (node.items ?? []) : []));
-      })),
-    );
-    el.append(actions);
-
-    // The folder it's in: click another to move it there.
-    const all = folders();
-    const parent = all.find(([f]) => f.items === row.list)?.[0] ?? null;
-    const inFolder = $("div", "cm-where", $("span", "row-help", "In folder:"));
-    const choices: [MenuNode | null, string][] = [[null, "None"], ...all.filter(([f]) => !contains(n, f))];
-    for (const [f, label] of choices) {
-      const b = $("button", `cm-tab small${f === parent ? " on" : ""}`, label) as HTMLButtonElement;
-      b.addEventListener("click", () => {
-        if (f === parent) return;
-        edit((node, list) => {
-          list.splice(list.indexOf(node), 1);
-          if (f) {
-            (f.items ??= []).push(node);
-            return;
-          }
-          // Out of its folder: just after that folder.
-          const home = (l: MenuNode[]): MenuNode[] | null => {
-            for (const x of l) {
-              if (x === parent) return l;
-              const inner = x.items && home(x.items);
-              if (inner) return inner;
-            }
-            return null;
-          };
-          const where = (parent && home(layout)) || layout;
-          where.splice(parent ? where.indexOf(parent) + 1 : where.length, 0, node);
-        })();
-      });
-      inFolder.append(b);
+    const hidden = !!n.hide && !row.entry;
+    const actions = $("div", "menu-row-actions", iconButton(hidden ? 0xed1a : 0xe7b3, hidden ? "Show" : "Hide", edit(row, (node) => (node.hide = !node.hide))));
+    if (!row.owner) actions.append(iconButton(0xe712, "Where it shows, and more", () => (details.hidden = !details.hidden)));
+    if (!row.entry) {
+      const title = n.match && !n.folder ? "Back to where Windows puts it" : "Remove";
+      actions.append(
+        iconButton(0xe74d, title, edit(row, (node, list) => {
+          list.splice(list.indexOf(node), 1, ...(node.folder ? (node.items ?? []) : []));
+        })),
+      );
     }
-    details.append(inFolder);
+    el.append(actions);
 
     // Where it shows; Shift; a command's program and arguments.
     const where = $("div", "cm-where", $("span", "row-help", "Shows for:"));
     const on = new Set((n.where || KINDS.map(([k]) => k).join("|")).split("|"));
     for (const [k, label] of KINDS) {
-      const b = $("button", `cm-tab small${on.has(k) ? " on" : ""}`, label) as HTMLButtonElement;
+      const b = $("button", `cm-tab small${row.entry || on.has(k) ? " on" : ""}`, label) as HTMLButtonElement;
       b.addEventListener("click", () =>
-        edit((node) => {
+        edit(row, (node) => {
           const set = new Set((node.where || KINDS.map(([x]) => x).join("|")).split("|"));
           set.has(k) ? set.delete(k) : set.add(k);
           node.where = set.size === KINDS.length ? "" : [...set].join("|");
@@ -371,35 +473,104 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     }
     details.append(where);
     if (n.folder || n.cmd) {
-      const shift = toggleSwitch(!!n.shift, (v) => edit((node) => (node.shift = v))());
+      const shift = toggleSwitch(!!n.shift, (v) => edit(row, (node) => (node.shift = v))());
       details.append($("div", "cm-where", $("span", "row-help", "Only with Shift held"), shift.el));
     }
     if (n.cmd) {
-      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\...)");
-      cmd.addEventListener("change", () => edit((node) => (node.cmd = cmd.value))());
+      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\\...)");
+      cmd.addEventListener("change", () => edit(row, (node) => (node.cmd = cmd.value))());
       const args = input(n.args ?? "", 'Arguments: {path}, {paths}, {dir} ("{path}")');
-      args.addEventListener("change", () => edit((node) => (node.args = args.value))());
+      args.addEventListener("change", () => edit(row, (node) => (node.args = args.value))());
       details.append($("div", "cm-where", cmd, args));
     }
-    return $("div", "cm-item", el, ...(iconGrid ? [iconGrid] : []), details);
+    return $("div", "cm-item", el, ...(grid ? [grid] : []), details);
   };
 
-  const load = async (fresh = false) => {
-    try {
-      const info = await invoke<{ seen: Record<string, Seen[]>; default: MenuNode[] }>("context_menu_info");
-      seenAll = info.seen ?? {};
-      const cm = fresh ? {} : (ctx.cfg as any).context_menu ?? {};
-      layout = structuredClone(cm.layout?.length ? cm.layout : info.default);
-      // Your own entries (`custom`) become part of the layout where it said `custom`.
-      const custom: MenuNode[] = structuredClone(cm.custom ?? []);
-      const at = layout.findIndex((n) => n.custom);
-      if (at >= 0) layout.splice(at, 1, ...custom);
-      else layout.push(...custom);
-      render();
-    } catch (e) {
-      box.replaceChildren($("p", "card-help", `Couldn't load the menu: ${e}`));
+  const render = () => {
+    const seen = seenAll[state.kind] ?? [];
+    const list: Row[] = [];
+    rows(layout, seen, claimedIn(layout, seen), 0, list);
+
+    const tabs = $("div", "cm-tabs");
+    for (const [k, label] of KINDS) {
+      const b = $("button", `cm-tab${k === state.kind ? " on" : ""}`, label) as HTMLButtonElement;
+      b.addEventListener("click", () => {
+        state.kind = k;
+        render();
+      });
+      tabs.append(b);
     }
+
+    const table = $("div", "cm-rows");
+    if (!seen.length) {
+      table.append($("p", "card-help", "Kasumi hasn't seen this kind of menu yet: right-click one once (with Kasumi's menu on), then come back."));
+    }
+    for (const row of list) table.append(rowEl(row));
+
+    const add = (n: MenuNode) => {
+      layout.push(n);
+      commit();
+    };
+    const missing = Object.keys(KASUMI).filter((id) => {
+      const has = (l: MenuNode[]): boolean => l.some((n) => n.kasumi === id || (!!n.folder && has(n.items ?? [])));
+      return !has(layout);
+    });
+    const addKasumi = select([["", "Add Kasumi's entry…"], ...missing.map((id) => [id, KASUMI[id].label] as [string, string])], "");
+    addKasumi.hidden = !missing.length;
+    addKasumi.addEventListener("change", () => addKasumi.value && add({ kasumi: addKasumi.value }));
+    const bFolder = $("button", "button", "New folder");
+    const bCmd = $("button", "button", "New command");
+    const bSep = $("button", "button", "Separator");
+    const bReset = $("button", "button", "Reset to Kasumi's default");
+    bFolder.addEventListener("click", () => {
+      const name = "New folder";
+      state.open.add(`folder:${name}`);
+      add({ folder: name, icon: "E8B7", items: [] });
+    });
+    bCmd.addEventListener("click", () => add({ name: "New command", cmd: "notepad.exe", args: '"{path}"', icon: "E756" }));
+    bSep.addEventListener("click", () => add({ separator: true }));
+    bReset.addEventListener("click", async () => {
+      if (!confirm("Go back to Kasumi's default menu? Your changes and your own entries go.")) return;
+      await ctx.saveMany([
+        { path: ["context_menu", "layout"], value: null },
+        { path: ["context_menu", "custom"], value: null },
+      ]);
+    });
+
+    box.replaceChildren(
+      tabs,
+      table,
+      $("div", "button-row", bFolder, bCmd, bSep, addKasumi, bReset),
+      $(
+        "p",
+        "card-help",
+        "Drag an entry by its handle to move it, or onto a folder to put it inside. New entries come at the end: drag them where you want them. Changes apply to the next menu you open. Kasumi learns Windows' entries (and their submenus') as you use the menu: right-click a .zip or an image, or open a submenu, once to see its entries here.",
+      ),
+    );
   };
-  load();
+
+  /** From what's saved (Kasumi's default without a layout of your own). */
+  const setup = (info: Info) => {
+    seenAll = info.seen ?? {};
+    const cm = (ctx.cfg as any).context_menu ?? {};
+    layout = structuredClone(cm.layout?.length ? cm.layout : info.default);
+    // Your own entries (`custom`) become part of the layout where it said `custom`.
+    const custom: MenuNode[] = structuredClone(cm.custom ?? []);
+    const at = layout.findIndex((n) => n.custom);
+    if (at >= 0) layout.splice(at, 1, ...custom);
+    else layout.push(...custom);
+    expandGroups(layout);
+    if (!state.open.size) for (const n of layout) if (n.folder) state.open.add(`folder:${n.folder}`);
+    render();
+  };
+
+  if (state.info) setup(state.info);
+  invoke<Info>("context_menu_info")
+    .then((info) => {
+      const changed = JSON.stringify(info) !== JSON.stringify(state.info);
+      state.info = info;
+      if (changed) setup(info);
+    })
+    .catch((e) => box.replaceChildren($("p", "card-help", `Couldn't load the menu: ${e}`)));
   return box;
 };

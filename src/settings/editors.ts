@@ -973,7 +973,7 @@ const ACTIONS: [string, string][] = [
   ["shutdown", "Shut down"],
   ["open_config", "Open config file"],
 ];
-const ICONS: [number, string][] = [
+export const ICONS: [number, string][] = [
   [0xe8b7, "Folder"], [0xe838, "Folder open"], [0xe7f4, "This PC"], [0xe896, "Downloads"],
   [0xe898, "Upload"], [0xe8a5, "Document"], [0xe7c3, "Page"], [0xeb9f, "Picture"],
   [0xe8f1, "Library"], [0xe74d, "Trash"], [0xe80f, "Home"], [0xe71d, "Apps"],

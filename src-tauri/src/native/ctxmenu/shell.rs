@@ -72,6 +72,11 @@ pub struct Entry {
     pub radio: bool,
     pub icon: Option<Icon>,
     pub sub: Option<Sub>,
+    /// Windows' entries: `verb:<verb>`, else `text:<its text>` (as layouts match them,
+    /// kept when the layout renames it).
+    pub key: String,
+    /// A Windows submenu's layout (its entries arranged when it opens).
+    pub rules: Vec<crate::config::MenuNode>,
 }
 
 impl Entry {
@@ -98,6 +103,8 @@ impl Entry {
             radio: false,
             icon: glyph.map(Icon::Glyph),
             sub: None,
+            key: String::new(),
+            rules: Vec::new(),
         }
     }
 
@@ -456,8 +463,11 @@ unsafe fn read_menu(cm: &IContextMenu, hmenu: HMENU) -> Vec<Entry> {
         let sub = (!mii.hSubMenu.is_invalid()).then(|| Sub::Pending(mii.hSubMenu.0 as isize, i));
         let verb = if sub.is_none() && ours { verb_of(cm, mii.wID - FIRST) } else { String::new() };
         let icon = glyph_for(&verb).map(Icon::Glyph).or_else(|| pixels(mii.hbmpItem).map(Icon::Bitmap));
+        let key = if verb.is_empty() { format!("text:{text}") } else { format!("verb:{verb}") };
         out.push(Entry {
             separator: false,
+            key,
+            rules: Vec::new(),
             text,
             keys,
             accel,

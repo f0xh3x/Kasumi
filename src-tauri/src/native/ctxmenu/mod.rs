@@ -71,7 +71,7 @@ fn seen_path() -> std::path::PathBuf {
 
 /// Remembers a menu's entries for its kind of click: this time's first, in Windows'
 /// order, then ones seen before but not now (another file type's, say).
-fn remember(kind: layout::Kind, entries: &[shell::Entry]) {
+fn remember(name: &str, entries: &[shell::Entry]) {
     use serde_json::{json, Map, Value};
     let path = seen_path();
     let mut all: Map<String, Value> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
@@ -83,8 +83,24 @@ fn remember(kind: layout::Kind, entries: &[shell::Entry]) {
             format!("verb:{verb}")
         }
     };
-    let mut merged: Vec<Value> = entries.iter().filter(|e| !e.separator).map(|e| json!({ "text": e.text, "verb": e.verb, "sub": e.sub.is_some() })).collect();
-    if let Some(Value::Array(old)) = all.get(kind.name()) {
+    let mut merged: Vec<Value> = entries
+        .iter()
+        .filter(|e| !e.separator)
+        .map(|e| {
+            let mut v = json!({ "text": e.text, "verb": e.verb, "sub": e.sub.is_some() });
+            // Its icon, for the editor to show: Kasumi's glyph, or the app's own (small) bitmap.
+            match &e.icon {
+                Some(shell::Icon::Glyph(g)) => v["glyph"] = json!(format!("{:X}", *g as u32)),
+                Some(shell::Icon::Bitmap((w, h, px))) if *w <= 32 && *h <= 32 => {
+                    use base64::Engine;
+                    v["bitmap"] = json!({ "w": w, "h": h, "rgba": base64::engine::general_purpose::STANDARD.encode(px) });
+                }
+                _ => {}
+            }
+            v
+        })
+        .collect();
+    if let Some(Value::Array(old)) = all.get(name) {
         for o in old {
             if !merged.iter().any(|m| key(m) == key(o)) {
                 merged.push(o.clone());
@@ -92,9 +108,9 @@ fn remember(kind: layout::Kind, entries: &[shell::Entry]) {
         }
     }
     merged.truncate(300);
-    let changed = all.get(kind.name()) != Some(&Value::Array(merged.clone()));
+    let changed = all.get(name) != Some(&Value::Array(merged.clone()));
     if changed {
-        all.insert(kind.name().into(), Value::Array(merged));
+        all.insert(name.into(), Value::Array(merged));
         let _ = std::fs::write(&path, Value::Object(all).to_string());
     }
 }
@@ -378,7 +394,7 @@ fn request(defview: HWND, pt: POINT) {
     let cfg = crate::config::load().ok();
     let menu_cfg = cfg.as_ref().map(|c| c.context_menu.clone()).unwrap_or_default();
     let (look, icons) = (look(cfg.as_ref()), menu_cfg.icons);
-    remember(built.ctx.kind, &built.entries);
+    remember(built.ctx.kind.name(), &built.entries);
     let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, &target);
     let mon = crate::win::monitors()
         .into_iter()
@@ -411,6 +427,11 @@ fn open_sub(u: &mut Ui, li: usize, row: usize, first: bool) {
     let items = match entry.sub.clone() {
         Some(Sub::Pending(h, pos)) => {
             let items = o.built.populate(h, pos);
+            // Remembered for the editor (by the submenu's own key), then arranged by its rules.
+            if !entry.key.is_empty() {
+                remember(&format!("sub:{}", entry.key), &items);
+            }
+            let items = if entry.rules.is_empty() { items } else { layout::arrange_sub(&entry.rules, items, &o.built.ctx, &o.target) };
             entry.sub = Some(Sub::Ready(items.clone()));
             items
         }

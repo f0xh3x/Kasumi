@@ -78,7 +78,11 @@ const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x20;
 /// Kasumi's default layout ([context_menu] layout's format).
 const DEFAULT: &str = r#"
 [[layout]]
-kasumi = "view"
+kasumi = "view.view"
+[[layout]]
+kasumi = "view.sort"
+[[layout]]
+kasumi = "view.refresh"
 [[layout]]
 separator = true
 [[layout]]
@@ -116,7 +120,9 @@ separator = true
 folder = "Terminal"
 icon = "E756"
 items = [
-  { kasumi = "terminal" },
+  { kasumi = "terminal.cmd" },
+  { kasumi = "terminal.powershell" },
+  { kasumi = "terminal.wt" },
   { separator = true },
   { match = ["text:Open in Terminal", "text:Open Linux shell here", "text:Open PowerShell window here"] },
 ]
@@ -124,9 +130,18 @@ items = [
 folder = "File manage"
 icon = "E8B7"
 items = [
-  { kasumi = "file_manage" },
+  { kasumi = "file_manage.copy_path" },
   { match = ["verb:copyaspath", "text:Copy as path"] },
+  { kasumi = "file_manage.select" },
+  { separator = true },
+  { kasumi = "file_manage.show_hide" },
+  { kasumi = "file_manage.attributes" },
+  { separator = true },
+  { kasumi = "file_manage.new_folder" },
+  { kasumi = "file_manage.new_file" },
   { match = ["text:Customize this folder*"] },
+  { separator = true },
+  { kasumi = "file_manage.folder_options" },
 ]
 [[layout]]
 custom = true
@@ -134,7 +149,14 @@ custom = true
 folder = "Go to"
 icon = "E8AD"
 where = "file|folder|drive|multiple"
-items = [{ kasumi = "go_to" }]
+items = [
+  { kasumi = "go_to.folders" },
+  { kasumi = "go_to.control_panel" },
+  { kasumi = "go_to.all_control_panel" },
+  { kasumi = "go_to.run" },
+  { separator = true },
+  { kasumi = "go_to.settings" },
+]
 [[layout]]
 separator = true
 [[layout]]
@@ -181,12 +203,29 @@ fn claimed(nodes: &[MenuNode], windows: &[Entry], used: &mut [bool]) {
                 }
             }
         }
-        claimed(&n.items, windows, used);
+        if !n.folder.is_empty() {
+            claimed(&n.items, windows, used);
+        }
     }
 }
 
+/// A Windows submenu's entries, arranged by its rules (the ones they don't name stay,
+/// in Windows' order, where the rules say "rest", else at the end).
+pub fn arrange_sub(rules: &[MenuNode], items: Vec<Entry>, ctx: &Ctx, t: &Target) -> Vec<Entry> {
+    let mut rules = rules.to_vec();
+    if !rules.iter().any(|n| n.rest) {
+        rules.push(MenuNode { rest: true, ..Default::default() });
+    }
+    let mut used = vec![false; items.len()];
+    claimed(&rules, &items, &mut used);
+    let mut out = place(&rules, &items, &used, ctx, t, &[]);
+    shell::tidy(&mut out);
+    out
+}
+
+/// A configured icon: a glyph's code point in hex ("0": no icon).
 fn glyph(hex: &str) -> Option<Icon> {
-    u32::from_str_radix(hex.trim().trim_start_matches("0x"), 16).ok().and_then(char::from_u32).map(Icon::Glyph)
+    u32::from_str_radix(hex.trim().trim_start_matches("0x"), 16).ok().filter(|&c| c != 0).and_then(char::from_u32).map(Icon::Glyph)
 }
 
 /// The menu: Windows' entries arranged by the layout (Kasumi's default unless the
@@ -222,7 +261,17 @@ fn place(nodes: &[MenuNode], windows: &[Entry], used: &[bool], ctx: &Ctx, t: &Ta
                 out.push(e);
             }
         } else if !n.kasumi.is_empty() {
-            out.extend(builtin(&n.kasumi, ctx, t));
+            for mut e in builtin(&n.kasumi, ctx, t) {
+                if !e.separator {
+                    if !n.name.is_empty() {
+                        e.text = n.name.clone();
+                    }
+                    if !n.icon.is_empty() {
+                        e.icon = glyph(&n.icon);
+                    }
+                }
+                out.push(e);
+            }
         } else if !n.cmd.is_empty() {
             out.push(Entry::named(&n.name, Action::Kasumi(Cmd::Run(n.cmd.clone(), fill(&n.args, ctx))), glyph(&n.icon)));
         } else if !n.r#match.is_empty() {
@@ -231,8 +280,11 @@ fn place(nodes: &[MenuNode], windows: &[Entry], used: &[bool], ctx: &Ctx, t: &Ta
                 if !n.name.is_empty() {
                     e.text = n.name.clone();
                 }
-                if let Some(g) = glyph(&n.icon) {
-                    e.icon = Some(g);
+                if !n.icon.is_empty() {
+                    e.icon = glyph(&n.icon);
+                }
+                if e.sub.is_some() {
+                    e.rules = n.items.clone();
                 }
                 out.push(e);
             }
@@ -263,25 +315,34 @@ fn check(mut e: Entry, on: bool) -> Entry {
     e
 }
 
-/// Kasumi's own entries by name: "view", "terminal", "file_manage", "go_to".
+/// Kasumi's own entries: a group ("view", "terminal", "file_manage", "go_to") or one
+/// of a group's ("file_manage.select").
 fn builtin(id: &str, ctx: &Ctx, t: &Target) -> Vec<Entry> {
-    match id {
-        "view" if !ctx.kind.selection() => shell::view_entries(t),
+    let (group, one) = match id.split_once('.') {
+        Some((g, o)) => (g, Some(o)),
+        None => (id, None),
+    };
+    let all: Vec<(&str, Entry)> = match group {
+        "view" if !ctx.kind.selection() => ["view", "sort", "refresh"].into_iter().zip(shell::view_entries(t)).collect(),
         "terminal" => terminal(),
         "file_manage" => file_manage(ctx),
         "go_to" => go_to(),
         _ => Vec::new(),
+    };
+    match one {
+        None => all.into_iter().map(|(_, e)| e).collect(),
+        Some(one) => all.into_iter().filter(|(k, _)| *k == one).map(|(_, e)| e).collect(),
     }
 }
 
-fn terminal() -> Vec<Entry> {
+fn terminal() -> Vec<(&'static str, Entry)> {
     let mut v = vec![
-        item("Command Prompt", Cmd::Run("cmd.exe".into(), String::new()), Some('\u{E756}')),
-        item("PowerShell", Cmd::Run("powershell.exe".into(), "-NoExit".into()), Some('\u{E756}')),
+        ("cmd", item("Command Prompt", Cmd::Run("cmd.exe".into(), String::new()), Some('\u{E756}'))),
+        ("powershell", item("PowerShell", Cmd::Run("powershell.exe".into(), "-NoExit".into()), Some('\u{E756}'))),
     ];
     let wt = std::env::var("LOCALAPPDATA").map(|d| std::path::Path::new(&d).join(r"Microsoft\WindowsApps\wt.exe"));
     if wt.is_ok_and(|p| p.exists()) {
-        v.push(item("Windows Terminal", Cmd::Run("wt.exe".into(), "-d .".into()), Some('\u{E756}')));
+        v.push(("wt", item("Windows Terminal", Cmd::Run("wt.exe".into(), "-d .".into()), Some('\u{E756}'))));
     }
     v
 }
@@ -300,8 +361,8 @@ fn explorer_flag(name: &str) -> Option<u32> {
     crate::win::reg_dword(windows::Win32::System::Registry::HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", name)
 }
 
-fn file_manage(ctx: &Ctx) -> Vec<Entry> {
-    let mut v = Vec::new();
+fn file_manage(ctx: &Ctx) -> Vec<(&'static str, Entry)> {
+    let mut v: Vec<(&'static str, Entry)> = Vec::new();
     let p = std::path::Path::new;
     if ctx.kind.selection() && !ctx.paths.is_empty() {
         let mut copy = Vec::new();
@@ -329,47 +390,47 @@ fn file_manage(ctx: &Ctx) -> Vec<Entry> {
                 }
             }
         }
-        v.push(folder("Copy path", '\u{E8C8}', copy));
+        v.push(("copy_path", folder("Copy path", '\u{E8C8}', copy)));
     }
-    v.push(folder(
+    v.push(("select", folder(
         "Select",
         '\u{E8B3}',
         vec![item("All", Cmd::Select(0), Some('\u{E8B3}')), item("Invert", Cmd::Select(1), Some('\u{E8AB}')), item("None", Cmd::Select(2), Some('\u{E894}'))],
-    ));
-    v.push(Entry::separator());
+    )));
+    v.push(("", Entry::separator()));
     let hidden_shown = explorer_flag("Hidden") == Some(1);
     let ext_shown = explorer_flag("HideFileExt") == Some(0);
-    v.push(folder(
+    v.push(("show_hide", folder(
         "Show / Hide",
         '\u{E7B3}',
         vec![check(item("Hidden files", Cmd::ShowHidden, None), hidden_shown), check(item("File name extensions", Cmd::ShowExtensions, None), ext_shown)],
-    ));
+    )));
     if matches!(ctx.kind, Kind::File | Kind::Folder) && ctx.paths.len() == 1 {
         let a = attributes(&ctx.paths[0]);
         let attr = |name: &str, bit: u32| check(item(name, Cmd::Attribute(bit), None), a & bit != 0);
-        v.push(folder(
+        v.push(("attributes", folder(
             "Attributes",
             '\u{E946}',
             vec![attr("Hidden", FILE_ATTRIBUTE_HIDDEN), attr("Read-only", FILE_ATTRIBUTE_READONLY), attr("Archive", FILE_ATTRIBUTE_ARCHIVE)],
-        ));
+        )));
     }
     if !ctx.kind.selection() {
-        v.push(Entry::separator());
-        v.push(item("New folder (date and time)", Cmd::NewFolder, Some('\u{E8F4}')));
-        v.push(folder(
+        v.push(("", Entry::separator()));
+        v.push(("new_folder", item("New folder (date and time)", Cmd::NewFolder, Some('\u{E8F4}'))));
+        v.push(("new_file", folder(
             "New file",
             '\u{E8A5}',
             vec![item("Text", Cmd::NewFile("txt"), None), item("Markdown", Cmd::NewFile("md"), None), item("JSON", Cmd::NewFile("json"), None)],
-        ));
+        )));
     }
     if ctx.kind != Kind::Desktop {
-        v.push(Entry::separator());
-        v.push(item("Folder options", Cmd::Run("control.exe".into(), "folders".into()), Some('\u{E713}')));
+        v.push(("", Entry::separator()));
+        v.push(("folder_options", item("Folder options", Cmd::Run("control.exe".into(), "folders".into()), Some('\u{E713}'))));
     }
     v
 }
 
-fn go_to() -> Vec<Entry> {
+fn go_to() -> Vec<(&'static str, Entry)> {
     let env = |k: &str| std::env::var(k).unwrap_or_default();
     let (profile, windir) = (env("USERPROFILE"), env("WINDIR"));
     let open = |name: &str, target: String| item(name, Cmd::Open(target), None);
@@ -393,12 +454,12 @@ fn go_to() -> Vec<Entry> {
     ];
     let settings = |pairs: &[(&str, &str)]| pairs.iter().map(|(n, u)| open(n, (*u).into())).collect::<Vec<_>>();
     vec![
-        folder("Folder", '\u{E8B7}', folders),
-        item("Control Panel", Cmd::Open("shell:::{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}".into()), Some('\u{E713}')),
-        item("All Control Panel items", Cmd::Open("shell:::{ED7BA470-8E54-465E-825C-99712043E01C}".into()), Some('\u{E713}')),
-        item("Run", Cmd::Open("shell:::{2559a1f3-21d7-11d4-bdaf-00c04f60b9f0}".into()), Some('\u{E768}')),
-        Entry::separator(),
-        folder(
+        ("folders", folder("Folders", '\u{E8B7}', folders)),
+        ("control_panel", item("Control Panel", Cmd::Open("shell:::{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}".into()), Some('\u{E713}'))),
+        ("all_control_panel", item("All Control Panel items", Cmd::Open("shell:::{ED7BA470-8E54-465E-825C-99712043E01C}".into()), Some('\u{E713}'))),
+        ("run", item("Run", Cmd::Open("shell:::{2559a1f3-21d7-11d4-bdaf-00c04f60b9f0}".into()), Some('\u{E768}'))),
+        ("", Entry::separator()),
+        ("settings", folder(
             "Settings",
             '\u{E713}',
             vec![
@@ -421,7 +482,7 @@ fn go_to() -> Vec<Entry> {
                 ),
                 folder("Network", '\u{E968}', settings(&[("Status", "ms-settings:network-status"), ("Ethernet", "ms-settings:network-ethernet")])),
             ],
-        ),
+        )),
     ]
 }
 

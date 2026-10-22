@@ -701,3 +701,16 @@ body.view-setup #toast, body.view-notes #toast { bottom: 76px; }
 .cm-details[hidden] { display: none; }
 .cm-where { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .cm-where .input { flex: 1; min-width: 160px; }
+.cm-handle { cursor: grab; color: var(--faint); padding: 4px 2px; user-select: none; }
+.cm-handle:hover { color: var(--fg); }
+.cm-chevron { width: 22px; height: 22px; }
+.cm-chevron .icon { font-size: 10px; }
+.cm-chevron-space { width: 22px; flex: none; }
+.cm-icon { flex: none; }
+.cm-icon .cm-bitmap { width: 16px; height: 16px; image-rendering: auto; }
+.icon-cell.cm-word { width: auto; padding: 0 10px; font-size: 12px; color: var(--dim); }
+.cm-row { border-radius: 8px; position: relative; }
+.cm-row.dragging { opacity: 0.4; }
+.cm-row.drop-before { box-shadow: 0 -2px 0 var(--fg); }
+.cm-row.drop-after { box-shadow: 0 2px 0 var(--fg); }
+.cm-row.drop-into { background: rgba(255, 255, 255, 0.08); outline: 1px solid var(--fg); }
