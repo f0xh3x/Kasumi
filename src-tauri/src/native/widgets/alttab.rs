@@ -60,6 +60,10 @@ pub struct State {
     pub previews: bool,
     pub labels: String,
     pub lang_labels: String,
+    /// Where the cursor was as it opened; following the mouse once it's moved from
+    /// there (a switcher popping up under a resting cursor doesn't pick what's there).
+    pub cursor_at: Option<(i32, i32)>,
+    pub mouse: bool,
 }
 
 impl State {
@@ -275,8 +279,24 @@ impl Panel for AltTabPanel {
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
         let h = at.and_then(|p| self.hit(p));
-        let changed = h != self.hovered;
+        let mut changed = h != self.hovered;
         self.hovered = h;
+        // The card under the mouse is the choice (letting go of Alt switches to it).
+        if let Some(i) = h {
+            with(|s| {
+                if !s.mouse {
+                    let now = crate::win::cursor_pos();
+                    s.mouse = match (s.cursor_at, now) {
+                        (Some(a), Some(b)) => (a.0 - b.0).abs() + (a.1 - b.1).abs() > 4,
+                        _ => true,
+                    };
+                }
+                if s.mouse && s.open && s.sel != i && i < s.len() {
+                    s.sel = i;
+                    changed = true;
+                }
+            });
+        }
         changed
     }
     fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {

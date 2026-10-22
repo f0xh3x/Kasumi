@@ -604,6 +604,8 @@ impl Native {
         let label = if bar.is_some() { self.surfaces[i].label.clone() } else { format!("@center:{}", self.surfaces[i].label) };
         alttab::with(|st| {
             st.open = true;
+            st.cursor_at = crate::win::cursor_pos();
+            st.mouse = false;
             st.kind = alttab::Kind::Windows;
             st.list = list;
             st.sel = sel;
@@ -676,6 +678,8 @@ impl Native {
         let label = if bar.is_some() { self.surfaces[i].label.clone() } else { format!("@center:{}", self.surfaces[i].label) };
         alttab::with(|st| {
             st.open = true;
+            st.cursor_at = crate::win::cursor_pos();
+            st.mouse = false;
             st.kind = Kind::Languages;
             st.langs = langs;
             st.sel = sel;
@@ -784,6 +788,10 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
         WM_MOUSEMOVE => {
             let (x, y) = point();
             with_native(|n| {
+                // Alt + Tab in the middle of the screen: the card under the mouse.
+                if n.alt_float.as_mut().filter(|f| f.hwnd == Some(hwnd)).is_some_and(|f| f.hover((x, y))) {
+                    n.alt_center_draw();
+                }
                 if let Some(s) = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd) {
                     if s.dragging() {
                         if let Some(act) = s.drag(&n.gfx, (x, y)) {
