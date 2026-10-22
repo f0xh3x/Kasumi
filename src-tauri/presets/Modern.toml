@@ -53,6 +53,7 @@ duration_ms = 1500
 volume_step = 2              # percent per volume key press
 replace_volume_keys = true   # take over the volume keys; the Windows volume flyout won't show
 brightness = true            # built-in panel brightness (Fn keys)
+hide_windows_brightness = true  # hide the Windows brightness flyout while Kasumi shows its own
 keyboard = true              # pop a small notch at the language widget when the keyboard layout changes
 keyboard_width = 120
 spot = "top-center"

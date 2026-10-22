@@ -1135,6 +1135,13 @@ export const pages: Page[] = [
         icon: 0xe706,
         fields: [
           { kind: "toggle", label: "Show brightness", help: "The built-in screen's brightness (laptop Fn keys).", path: ["osd", "brightness"], default: true },
+          {
+            kind: "toggle",
+            label: "Hide the Windows brightness flyout",
+            help: "While Kasumi shows brightness, the Windows pop-up at the bottom of the screen doesn't.",
+            path: ["osd", "hide_windows_brightness"],
+            default: true,
+          },
           { kind: "custom", editor: "osdPlace:brightness" },
         ],
       },

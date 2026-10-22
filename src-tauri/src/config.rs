@@ -348,6 +348,8 @@ pub struct Osd {
     pub replace_volume_keys: bool,
     /// Show brightness changes of the built-in panel (Fn keys).
     pub brightness: bool,
+    /// While Kasumi shows brightness changes, hide the Windows brightness flyout.
+    pub hide_windows_brightness: bool,
     /// Pop a small notch at the language widget when the keyboard layout changes.
     pub keyboard: bool,
     /// Width of that keyboard-layout peek notch.
@@ -389,6 +391,7 @@ impl Default for Osd {
             volume_step: 2.0,
             replace_volume_keys: true,
             brightness: true,
+            hide_windows_brightness: true,
             keyboard: true,
             keyboard_width: 120.0,
             caps_lock: false,
