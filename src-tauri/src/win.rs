@@ -436,18 +436,21 @@ pub fn fullscreen_monitor(ours: &[isize]) -> Option<(RECT, String)> {
             return Some((mr, format!("exclusive fullscreen / presentation ({class})")));
         }
 
+        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
+        let mut wr = RECT::default();
+        GetWindowRect(fg, &mut wr).ok()?;
         // A maximized normal window can cover the monitor when the taskbar is hidden;
-        // that is not fullscreen. Unless Windows says a fullscreen app is running
-        // (busy): a browser's fullscreen video stays "maximized" (Firefox / Zen).
-        if IsZoomed(fg).as_bool() && state != Some(QUNS_BUSY) {
+        // that is not fullscreen: it overhangs the monitor by its frame. A browser's
+        // fullscreen (Firefox / Zen, F11 or a video) stays "maximized" but drops its
+        // title bar and fits the monitor exactly; Windows may also say so (busy), though
+        // not while Explorer's taskbar is hidden.
+        let fits = wr.left == mr.left && wr.top == mr.top && wr.right == mr.right && wr.bottom == mr.bottom;
+        if IsZoomed(fg).as_bool() && state != Some(QUNS_BUSY) && !(fits && style & WS_CAPTION.0 != WS_CAPTION.0) {
             return None;
         }
-        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
         if style & WS_CAPTION.0 == WS_CAPTION.0 {
             return None;
         }
-        let mut wr = RECT::default();
-        GetWindowRect(fg, &mut wr).ok()?;
         let covers = wr.left <= mr.left && wr.top <= mr.top && wr.right >= mr.right && wr.bottom >= mr.bottom;
         covers.then(|| (mr, format!("{class} covers monitor ({},{},{},{})", wr.left, wr.top, wr.right, wr.bottom)))
     }
