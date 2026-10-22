@@ -7,7 +7,7 @@
 // Windows' entries Kasumi hasn't placed come where the layout says "rest"; editing
 // one of those places them all, in the order they show.
 import { invoke } from "@tauri-apps/api/core";
-import { $, iconButton, input, select, toggleSwitch } from "./dom";
+import { $, iconButton, input, toggleSwitch } from "./dom";
 import { iconPicker, type EditorCtx } from "./editors";
 
 interface MenuNode {
@@ -244,7 +244,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       $(
         "p",
         "card-help",
-        "Changes apply to the next menu you open. Entries show for every kind of click unless you limit them (⋯). Kasumi learns Windows' entries as you use the menu: right-click a .zip or an image once to see the entries only they have.",
+        "Changes apply to the next menu you open. The folder button on a row puts it in a folder (or takes it out) and limits which kinds of click show it. Kasumi learns Windows' entries as you use the menu: right-click a .zip or an image once to see the entries only they have.",
       ),
     );
   };
@@ -261,6 +261,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       save();
     };
 
+    let iconGrid: HTMLElement | null = null;
     if (n.separator && !row.entry) {
       el.append($("div", "sep-line"));
     } else {
@@ -277,9 +278,10 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
                   .filter((e) => n.match!.some((m) => matches(m, e)))
                   .map((e) => e.text)
                   .join(", ");
-      const [iconBtn, iconGrid] = iconPicker(charOf(n.icon), (ch) => edit((node) => (node.icon = hexOf(ch)))());
+      const [iconBtn, grid] = iconPicker(charOf(n.icon), (ch) => edit((node) => (node.icon = hexOf(ch)))());
+      iconGrid = grid;
       const text = input(n.folder || n.name || "", label);
-      text.title = row.entry || n.match ? `Windows' name: ${label}` : "";
+      text.title = row.entry || n.match ? `Its own name: ${label} (type to rename it)` : "";
       text.addEventListener("change", () =>
         edit((node) => {
           if (node.folder !== undefined && node.folder !== "") node.folder = text.value || "Folder";
@@ -287,14 +289,11 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
         })(),
       );
       if (n.kasumi) text.disabled = true;
-      const tag = $(
-        "span",
-        "cm-tag",
-        n.folder ? "Folder" : n.kasumi ? "Kasumi" : n.cmd ? "Command" : (row.entry ?? seen.find((e) => n.match!.some((m) => matches(m, e))))?.sub ? "Windows ›" : "Windows",
-      );
-      el.append(iconBtn, text, tag);
+      el.append(iconBtn, text);
+      const sub = !n.folder && !n.kasumi && !n.cmd && (row.entry ?? seen.find((e) => n.match!.some((m) => matches(m, e))))?.sub;
+      const tag = n.folder ? "Folder" : n.kasumi ? "Kasumi" : n.cmd ? "Command" : sub ? "Submenu" : "";
+      if (tag) el.append($("span", "cm-tag", tag));
       if (n.shift) el.append($("span", "cm-tag", "Shift"));
-      el.append(iconGrid);
     }
 
     // Move up / down among what this kind of click shows.
@@ -307,32 +306,6 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
         list.splice(list.indexOf(node), 1);
         list.splice(list.indexOf(next) + (dir > 0 ? 1 : 0), 0, node);
       });
-    const into = select(
-      [
-        ["", "Move to…"],
-        ["@top", "The menu itself"],
-        ...folders()
-          .filter(([f]) => !contains(n, f))
-          .map(([, path], i) => [String(i), path] as [string, string]),
-      ],
-      "",
-    );
-    into.title = "Move into a folder";
-    into.addEventListener("change", () => {
-      const all = folders().filter(([f]) => !contains(n, f));
-      const pick = into.value;
-      edit((node, list) => {
-        list.splice(list.indexOf(node), 1);
-        if (pick === "@top") {
-          const i = restIndex();
-          layout.splice(i < 0 ? layout.length : i + 1, 0, node);
-        } else {
-          const f = all[Number(pick)]?.[0];
-          if (f) (f.items ??= []).push(node);
-          else list.push(node);
-        }
-      })();
-    });
 
     const details = $("div", "cm-details");
     details.hidden = true;
@@ -342,14 +315,45 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       iconButton(0xe70e, "Move up", move(-1)),
       iconButton(0xe70d, "Move down", move(1)),
       iconButton(n.hide ? 0xed1a : 0xe7b3, n.hide ? "Show" : "Hide", edit((node) => (node.hide = !node.hide))),
-      into,
-      iconButton(0xe712, "More", () => (details.hidden = !details.hidden)),
-      iconButton(0xe74d, n.match && !n.folder ? "Back to Windows' place" : "Remove", edit((node, list) => {
+      iconButton(0xe8de, "Folder, and where it shows", () => (details.hidden = !details.hidden)),
+      iconButton(0xe74d, n.match && !n.folder ? "Back to where Windows puts it" : "Remove", edit((node, list) => {
         const i = list.indexOf(node);
         list.splice(i, 1, ...(node.folder ? (node.items ?? []) : []));
       })),
     );
     el.append(actions);
+
+    // The folder it's in: click another to move it there.
+    const all = folders();
+    const parent = all.find(([f]) => f.items === row.list)?.[0] ?? null;
+    const inFolder = $("div", "cm-where", $("span", "row-help", "In folder:"));
+    const choices: [MenuNode | null, string][] = [[null, "None"], ...all.filter(([f]) => !contains(n, f))];
+    for (const [f, label] of choices) {
+      const b = $("button", `cm-tab small${f === parent ? " on" : ""}`, label) as HTMLButtonElement;
+      b.addEventListener("click", () => {
+        if (f === parent) return;
+        edit((node, list) => {
+          list.splice(list.indexOf(node), 1);
+          if (f) {
+            (f.items ??= []).push(node);
+            return;
+          }
+          // Out of its folder: just after that folder.
+          const home = (l: MenuNode[]): MenuNode[] | null => {
+            for (const x of l) {
+              if (x === parent) return l;
+              const inner = x.items && home(x.items);
+              if (inner) return inner;
+            }
+            return null;
+          };
+          const where = (parent && home(layout)) || layout;
+          where.splice(parent ? where.indexOf(parent) + 1 : where.length, 0, node);
+        })();
+      });
+      inFolder.append(b);
+    }
+    details.append(inFolder);
 
     // Where it shows; Shift; a command's program and arguments.
     const where = $("div", "cm-where", $("span", "row-help", "Shows for:"));
@@ -371,13 +375,13 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       details.append($("div", "cm-where", $("span", "row-help", "Only with Shift held"), shift.el));
     }
     if (n.cmd) {
-      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\\...)");
+      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\...)");
       cmd.addEventListener("change", () => edit((node) => (node.cmd = cmd.value))());
       const args = input(n.args ?? "", 'Arguments: {path}, {paths}, {dir} ("{path}")');
       args.addEventListener("change", () => edit((node) => (node.args = args.value))());
       details.append($("div", "cm-where", cmd, args));
     }
-    return $("div", "cm-item", el, details);
+    return $("div", "cm-item", el, ...(iconGrid ? [iconGrid] : []), details);
   };
 
   const load = async (fresh = false) => {
