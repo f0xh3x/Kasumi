@@ -492,6 +492,10 @@ pub trait Widget {
     fn wheel(&mut self, _at: (f32, f32), _notches: f32) -> Option<Act> {
         None
     }
+    /// Its apps' icons: app key, x and width (its own px), for the minimize animation.
+    fn icon_boxes(&self) -> Vec<(String, f32, f32)> {
+        Vec::new()
+    }
     /// Win + n (1-based): what to do (the tasks widget's nth app, as a click on it).
     fn win_key(&mut self, _n: usize) -> Option<Act> {
         None

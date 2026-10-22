@@ -121,6 +121,22 @@ pub fn alt_tab(key: crate::keyhook::AltTabKey) {
     post(Msg::AltTab(key));
 }
 
+/// Where each app's icon is in the native bars and docks (screen px): its monitor, app
+/// key and box. A window minimizing animates there (providers/tasks.rs answers the
+/// shell's HSHELL_GETMINRECT with it).
+static ICONS: Mutex<Vec<(String, String, [i32; 4])>> = Mutex::new(Vec::new());
+
+pub fn icon_rect(device: &str, app: &str) -> Option<[i32; 4]> {
+    ICONS.lock().unwrap().iter().find(|(d, a, _)| d == device && a == app).map(|e| e.2)
+}
+
+/// A surface's icons (all of its monitor's are replaced by these).
+pub(crate) fn set_icon_rects(device: &str, rects: Vec<(String, [i32; 4])>) {
+    let mut icons = ICONS.lock().unwrap();
+    icons.retain(|(d, _, _)| d != device);
+    icons.extend(rects.into_iter().map(|(a, r)| (device.to_string(), a, r)));
+}
+
 /// Win + n from the keyboard helper.
 pub fn win_key(n: u8) {
     post(Msg::WinKey(n));

@@ -316,6 +316,9 @@ impl Widget for Tasks {
             _ => None,
         }
     }
+    fn icon_boxes(&self) -> Vec<(String, f32, f32)> {
+        self.boxes.iter().map(|(k, x, w)| (k.clone(), *x, *w)).collect()
+    }
     fn win_key(&mut self, n: usize) -> Option<Act> {
         let (_, bx, bw) = self.boxes.get(n.checked_sub(1)?).cloned()?;
         match self.click(Button::Left, (bx + bw / 2.0, 0.0)) {

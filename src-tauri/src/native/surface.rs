@@ -261,6 +261,8 @@ pub struct Surface {
     tip_want: Option<(String, (i32, i32))>,
     tip_since: Option<Instant>,
     tip_blocked: Option<String>,
+    /// Its apps' icons on screen as last published (native::set_icon_rects).
+    sent_icons: Vec<(String, [i32; 4])>,
     /// A notification pop-up clicked ([osd] notification_click = "panel") while the bar
     /// was closed: its panel opens as the bar does (it's being hovered), until then.
     notes_pending: Option<Instant>,
@@ -355,6 +357,7 @@ impl Surface {
             tip_want: None,
             tip_since: None,
             tip_blocked: None,
+            sent_icons: Vec::new(),
             notes_pending: None,
             alt_panel: None,
             alt: None,
@@ -1932,7 +1935,32 @@ impl Surface {
         self.size = size;
         self.pos = pos;
         self.sync_thumbs();
+        self.publish_icons();
         Ok(())
+    }
+
+    /// Where its apps' icons are on screen (a minimizing window animates there).
+    fn publish_icons(&mut self) {
+        if self.offscreen {
+            return;
+        }
+        let (s, pos) = (self.scale(), self.pos);
+        let half = 16.0;
+        let mut rects: Vec<(String, [i32; 4])> = Vec::new();
+        for p in &self.widgets {
+            let Some((wx, cy, a)) = p.drawn else { continue };
+            if a <= 0.05 {
+                continue;
+            }
+            for (key, bx, bw) in p.w.icon_boxes() {
+                let (l, r) = (wx + bx, wx + bx + bw);
+                rects.push((key, [pos.x + (l * s) as i32, pos.y + ((cy - half) * s) as i32, pos.x + (r * s) as i32, pos.y + ((cy + half) * s) as i32]));
+            }
+        }
+        if rects != self.sent_icons {
+            self.sent_icons = rects.clone();
+            super::set_icon_rects(&self.monitor.device, rects);
+        }
     }
 
     /// Windows' live previews (DWM thumbnails) on a fully open panel's cards. They can't

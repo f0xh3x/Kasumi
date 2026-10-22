@@ -38,12 +38,33 @@ static DIRTY: AtomicBool = AtomicBool::new(true);
 /// Windows that asked for attention (FlashWindow: the taskbar button flashes), until
 /// they come to the front.
 static ATTENTION: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+/// Each window's app (its key), as last scanned: where a minimizing window goes.
+static WINDOW_APPS: std::sync::Mutex<Vec<(isize, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// HSHELL_GETMINRECT's lParam: the window, and where its minimize animation should go.
+#[repr(C)]
+struct ShellHookInfo {
+    hwnd: HWND,
+    rc: windows::Win32::Foundation::RECT,
+}
+
 /// The shell hook's message (RegisterWindowMessage "SHELLHOOK").
 static SHELLHOOK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// The shell hook window's messages: HSHELL_FLASH marks a window as asking for attention.
 unsafe extern "system" fn hook_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> windows::Win32::Foundation::LRESULT {
     const HSHELL_FLASH: usize = 0x8006;
+    const HSHELL_GETMINRECT: usize = 5;
+    // A window minimizing: towards its app's icon in Kasumi's dock on its own monitor
+    // (else Explorer's hidden taskbar answers: its button on the main monitor).
+    if msg != 0 && msg == SHELLHOOK.load(Ordering::Relaxed) && wp.0 == HSHELL_GETMINRECT && lp.0 != 0 {
+        let info = &mut *(lp.0 as *mut ShellHookInfo);
+        let key = WINDOW_APPS.lock().unwrap().iter().find(|(h, _)| *h == info.hwnd.0 as isize).map(|e| e.1.clone());
+        if let Some(r) = key.and_then(|k| crate::native::icon_rect(&monitor_of(info.hwnd), &k)) {
+            info.rc = windows::Win32::Foundation::RECT { left: r[0], top: r[1], right: r[2], bottom: r[3] };
+            return windows::Win32::Foundation::LRESULT(1);
+        }
+    }
     if msg != 0 && msg == SHELLHOOK.load(Ordering::Relaxed) && wp.0 == HSHELL_FLASH {
         let mut list = ATTENTION.lock().unwrap();
         if !list.contains(&lp.0) {
@@ -507,6 +528,7 @@ fn scan(app: &AppHandle) {
             })
         })
         .collect();
+    *WINDOW_APPS.lock().unwrap() = windows.iter().map(|w| (w.0 as isize, w.2.clone())).collect();
     // Asking for attention until it comes to the front (or goes away).
     let attention = {
         let mut a = ATTENTION.lock().unwrap();
