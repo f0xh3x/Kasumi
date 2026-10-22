@@ -772,7 +772,7 @@ impl Surface {
     }
 
     pub fn data(&mut self, gfx: &Gfx, key: &str, v: &Value) {
-        if key == "appIcons" && self.pop.data(v) && self.pop.show.is_some() {
+        if (key == "appIcons" || key == "taskIcons") && self.pop.data(v) && self.pop.show.is_some() {
             self.redraw(gfx);
         }
         let mut changed = false;

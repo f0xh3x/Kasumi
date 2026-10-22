@@ -284,7 +284,7 @@ impl Widget for Tasks {
                 let (key, delta) = (a.key.clone(), notches * 0.04);
                 Some(Act::call(move |app| {
                     if let Some(level) = crate::providers::tasks::task_app_volume(&key, delta) {
-                        crate::osd::show(&app, "volume", level, false);
+                        crate::osd::show_for(&app, "volume", level, false, Some(&key));
                     }
                 }))
             }

@@ -30,13 +30,23 @@ pub fn emit(app: &AppHandle, kind: &str, event: &str, payload: Value) -> usize {
 
 /// Shows the level OSD ("volume", "brightness") where it appears. `level` is 0..=1.
 pub fn show(app: &AppHandle, kind: &str, level: f32, muted: bool) {
+    show_for(app, kind, level, muted, None);
+}
+
+/// The level OSD for one app (`app_key`: the tasks widget's key; its icon shows instead
+/// of the glyph).
+pub fn show_for(app: &AppHandle, kind: &str, level: f32, muted: bool, app_key: Option<&str>) {
     if !app.state::<SharedConfig>().read().unwrap().osd.enabled {
         return;
     }
     if kind == "volume" && QUIET_VOLUME.lock().unwrap().is_some_and(|t| std::time::Instant::now() < t) {
         return;
     }
-    let n = emit(app, kind, "notch://osd", json!({ "kind": kind, "level": level.clamp(0.0, 1.0), "muted": muted }));
+    let mut payload = json!({ "kind": kind, "level": level.clamp(0.0, 1.0), "muted": muted });
+    if let Some(k) = app_key {
+        payload["app"] = json!(k);
+    }
+    let n = emit(app, kind, "notch://osd", payload);
     eprintln!("[kasumi] osd {kind} {:.0}%{} -> {n} overlay(s)", level * 100.0, if muted { " muted" } else { "" });
 }
 

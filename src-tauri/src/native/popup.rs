@@ -17,7 +17,7 @@ use crate::engine::Layout;
 /// What the pill shows.
 pub enum Show {
     /// A level (0..1) with its glyph; or a word instead of the level bar.
-    Level { glyph: &'static str, level: f32, muted: bool, update: bool, text: Option<String> },
+    Level { glyph: &'static str, level: f32, muted: bool, update: bool, text: Option<String>, icon: Option<String> },
     /// A notification: (style, app, aumid, title, body), and when it came (the icon's bounce).
     Note { style: String, app: String, aumid: String, title: String, body: String, at: Instant },
 }
@@ -87,7 +87,9 @@ impl Popups {
             let w = 18.0 + 10.0 + g.measure(t, &Font::new(look.main.clone(), 12.0)) + 8.0;
             ((w as f64 + 2.0 * l.geometry.notch_corner_radius + 8.0).max(100.0).round(), l.osd.height)
         });
-        self.show = Some(Show::Level { glyph, level, muted, update: kind == "update", text });
+        // An app's own level (scrolling over it in the dock): its icon for the glyph.
+        let icon = e.get("app").and_then(|a| a.as_str()).map(String::from);
+        self.show = Some(Show::Level { glyph, level, muted, update: kind == "update", text, icon });
         self.osd.target = 1.0;
         let ms = e.get("ms").and_then(|m| m.as_u64()).unwrap_or(l.osd.duration_ms);
         self.until = Some(Instant::now() + Duration::from_millis(ms));
@@ -191,7 +193,8 @@ impl Popups {
         let fg = if matches!(show, Show::Level { update: true, .. }) { look.accent } else { look.fg };
         let left = cx - inner / 2.0;
         match show {
-            Show::Level { glyph, level, muted, text, .. } => {
+            Show::Level { glyph, level, muted, text, icon, .. } => {
+                let app_icon = icon.as_ref().and_then(|k| self.icons.get(k));
                 let f = Font::icons(15.0);
                 match text {
                     // A word: icon and text centred.
@@ -205,8 +208,13 @@ impl Popups {
                     }
                     None => {
                         let x0 = left + 4.0;
-                        let gw = g.measure(glyph, &f);
-                        g.text_at(glyph, &f, x0 + (18.0 - gw) / 2.0, cy, with_alpha(fg, alpha));
+                        match app_icon {
+                            Some(ic) => ic.draw(g, x0, cy - 9.0, 18.0, alpha),
+                            None => {
+                                let gw = g.measure(glyph, &f);
+                                g.text_at(glyph, &f, x0 + (18.0 - gw) / 2.0, cy, with_alpha(fg, alpha));
+                            }
+                        }
                         let value = format!("{}", (level * 100.0).round());
                         let vf = Font::new(look.main.clone(), 12.0);
                         let vw = g.measure(&value, &vf);
