@@ -1308,7 +1308,17 @@ impl Surface {
     }
 
     /// Whether the pop-up drops below the open bar (it would hide a grown notch) instead.
+    /// The bar is open: the pop-up drops below it ([osd] open_bar = "below") or shows
+    /// inline, in its notch's place in the bar's row (osd_inline).
     fn osd_below(&self, use_target: bool) -> bool {
+        self.bar_open_for_osd(use_target) && self.layout.osd.open_bar == "below"
+    }
+
+    fn osd_inline(&self, use_target: bool) -> bool {
+        self.bar_open_for_osd(use_target) && self.layout.osd.open_bar != "below"
+    }
+
+    fn bar_open_for_osd(&self, use_target: bool) -> bool {
         !self.dock() && (if use_target { self.expand.target } else { self.expand.value }) > 0.5
     }
 
@@ -1333,7 +1343,8 @@ impl Surface {
         let val = |s: &Spring| if use_target { s.target } else { s.value };
         let od = self.osd_drop();
         let o = val(&self.pop.osd).max(0.0);
-        let below = self.osd_below(use_target);
+        // Below the open bar, or inline in it: either way its notch doesn't grow.
+        let below = self.osd_below(use_target) || self.osd_inline(use_target);
         let (ow, oh) = self.osd_size();
         order
             .iter()
@@ -1386,7 +1397,8 @@ impl Surface {
                         _ => (from + d.width / 2.0 - width / 2.0).clamp(0.0, (l.width - width).max(0.0)),
                     };
                 }
-                let osd_panel = is_osd && below;
+                // Below the open bar: a pill hangs under it (inline: nothing, it's in the row).
+                let osd_panel = is_osd && below && !self.osd_inline(use_target);
                 Bump {
                     x,
                     width,
@@ -1610,7 +1622,9 @@ impl Surface {
             }
         }
 
-        // The pop-up's content: in the grown notch, or in its pill below the open bar.
+        // The pop-up's content: in the grown notch, in its pill below the open bar, or
+        // inline in the open bar (then the bar's widgets under it fade: osd_span).
+        let mut osd_span: Option<(f32, f32, f32)> = None;
         let o = clamp01(self.pop.osd.value) as f32;
         if let (Some(od), true) = (self.osd_drop(), o > 0.01) {
             if let Some(i) = order.iter().position(|&di| di == od) {
@@ -1619,9 +1633,17 @@ impl Surface {
                 let inner = (ow - 2.0 * l.geometry.notch_corner_radius - 8.0) as f32;
                 let (cx, cy) = if self.osd_below(false) {
                     ((bf.panel_x + ow / 2.0) as f32, y(h_bar + (bf.depth - h_bar) / 2.0))
+                } else if self.osd_inline(false) {
+                    // In the open bar's row, centred where its notch is (kept on screen).
+                    let half = (ow / 2.0) as f32;
+                    ((bf.anchor_cx as f32).clamp(half, l.width as f32 - half), y(h_bar / 2.0))
                 } else {
                     (bf.cx as f32, y(bf.row_depth.round() / 2.0))
                 };
+                if self.osd_inline(false) {
+                    let half = (ow / 2.0) as f32;
+                    osd_span = Some((cx - half, cx + half, (o * 1.8).clamp(0.0, 1.0)));
+                }
                 let side = self.side_of(od);
                 let nudge = l.widgets.get("notifications").and_then(|w| w.get("anim_nudge")).and_then(|v| v.as_bool()).unwrap_or(l.animation.notification_nudge);
                 let accent = l.theme.accent_details;
@@ -1653,6 +1675,11 @@ impl Surface {
                 let Some(x) = p.bar_x else { continue };
                 let x = x + p.slide_dx(now).unwrap_or(0.0);
                 let a = alpha as f32 * if p.fades { fade } else { 1.0 };
+                // Under an inline pop-up: out of its way while it shows.
+                let a = match osd_span {
+                    Some((l0, r0, k)) if x < r0 && x + p.open_width > l0 => a * (1.0 - k),
+                    _ => a,
+                };
                 if a > 0.0 {
                     let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: h_bar as f32, open: 1.0 };
                     p.w.draw(&cx, x, cy, a);

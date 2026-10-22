@@ -342,6 +342,9 @@ pub struct Osd {
     pub width: f64,
     pub height: f64,
     pub duration_ms: u64,
+    /// With the bar open: "inline" (the pop-up takes its notch's place in the bar's
+    /// row; native bars) or "below" (a pill under the bar, like a panel).
+    pub open_bar: String,
     /// Volume change per key press, in percent.
     pub volume_step: f64,
     /// Take over the volume keys (suppresses the Windows volume flyout).
@@ -388,6 +391,7 @@ impl Default for Osd {
             width: 230.0,
             height: 34.0,
             duration_ms: 1500,
+            open_bar: "inline".into(),
             volume_step: 2.0,
             replace_volume_keys: true,
             brightness: true,

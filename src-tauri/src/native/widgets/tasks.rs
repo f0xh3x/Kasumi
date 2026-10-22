@@ -127,6 +127,9 @@ pub struct Tasks {
     drag_hover: Option<(usize, Instant, bool)>,
     /// What a tick decided to do (bring up the app files are held over).
     pending: Option<Act>,
+    /// Scrolling through an app's windows: which app, the window it went to, when (the
+    /// backend's "in front" lags a switch, so quick scrolls go on from here).
+    cycle: Option<(String, i64, Instant)>,
     drag: Option<Drag>,
     /// The order the user dragged apps into, until the backend's catches up; every app's key.
     local_order: Option<Vec<String>>,
@@ -159,6 +162,7 @@ impl Tasks {
             open_request: false,
             drag_hover: None,
             pending: None,
+            cycle: None,
             drag: None,
             local_order: None,
             all_keys: Vec::new(),
@@ -270,7 +274,7 @@ impl Widget for Tasks {
     }
     fn wheel(&mut self, at: (f32, f32), notches: f32) -> Option<Act> {
         let i = self.boxes.iter().position(|(_, bx, bw)| at.0 >= *bx && at.0 < bx + bw)?;
-        let a = self.apps.get(i)?;
+        let a = self.apps.get(i)?.clone();
         match self.opts.str("scroll").unwrap_or("windows") {
             // Up: louder, 4% a notch; Kasumi's volume pop-up shows the app's level.
             "volume" => {
@@ -286,10 +290,15 @@ impl Widget for Tasks {
                 let mut wins: Vec<&Win> = a.wins.iter().collect();
                 wins.sort_by_key(|w| w.hwnd);
                 let n = wins.len() as i64;
-                let at = wins.iter().position(|w| w.active).map_or(-1, |k| k as i64);
+                let recent = self.cycle.as_ref().filter(|(k, _, t)| *k == a.key && t.elapsed().as_secs_f32() < 2.0).map(|c| c.1);
+                let at = match recent {
+                    Some(h) => wins.iter().position(|w| w.hwnd == h).map_or(-1, |k| k as i64),
+                    None => wins.iter().position(|w| w.active).map_or(-1, |k| k as i64),
+                };
                 let step = if notches < 0.0 { 1 } else { -1 };
-                let next = if at < 0 { 0 } else { (at + step).rem_euclid(n) };
+                let next = if at < 0 { if step > 0 { 0 } else { n - 1 } } else { (at + step).rem_euclid(n) };
                 let hwnd = wins[next as usize].hwnd as isize;
+                self.cycle = Some((a.key.clone(), hwnd as i64, Instant::now()));
                 Some(Act::call(move |_| {
                     let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(hwnd, false));
                 }))
@@ -309,6 +318,7 @@ impl Widget for Tasks {
         let a = self.apps.get(self.hovered?).filter(|_| self.drag.is_none())?;
         match a.wins.len() {
             0 => Some(if a.name.is_empty() { a.key.clone() } else { a.name.clone() }),
+            1 if self.opts.str("hover") == Some("previews") => None,
             1 => Some(a.wins[0].title.clone()).filter(|t| !t.is_empty()),
             _ => None,
         }
@@ -505,7 +515,9 @@ impl Widget for Tasks {
         let cursor = at.map(|(x, _)| x);
         let changed = i != self.hovered || (self.opts.magnify && cursor != self.cursor);
         if i != self.hovered {
-            self.hover_since = i.filter(|&k| self.apps.get(k).is_some_and(|a| a.wins.len() >= 2)).map(|k| (k, Instant::now()));
+            // Its windows pop up for two or more (previews: for one too).
+            let least = if self.opts.str("hover") == Some("previews") { 1 } else { 2 };
+            self.hover_since = i.filter(|&k| self.apps.get(k).is_some_and(|a| a.wins.len() >= least)).map(|k| (k, Instant::now()));
         }
         self.hovered = i;
         self.cursor = cursor;

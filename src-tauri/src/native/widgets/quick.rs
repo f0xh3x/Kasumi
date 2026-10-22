@@ -2,8 +2,8 @@
 //! output devices and per-app volume behind buttons at its start) and brightness
 //! side by side, battery and network, a row of shortcut tiles. The lists open in
 //! a box that slides open between the controls and the tiles (above the controls
-//! on a bottom dock), so the controls stay put. The Power tile opens a row of power
-//! tiles there (lock, sign out, hibernate, restart, shut down).
+//! on a bottom dock), so the controls stay put. The Power tile swaps the tiles for
+//! power ones (back, lock, sign out, hibernate, restart, shut down).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -73,7 +73,6 @@ enum Slider {
 enum List {
     Outputs,
     Apps,
-    Power,
 }
 
 /// What can be clicked, by where it was drawn (content px).
@@ -87,6 +86,7 @@ enum Hit {
     Output(usize),
     Tile(usize),
     Power(usize),
+    PowerBack,
 }
 
 pub struct QuickPanel {
@@ -111,6 +111,8 @@ pub struct QuickPanel {
     /// Clickable boxes as last drawn (content px from the panel's content corner).
     boxes: std::cell::RefCell<Vec<(Hit, f32, f32, f32, f32)>>,
     width: f32,
+    /// The tiles row shows the power tiles (the Power tile was clicked).
+    power_row: bool,
     /// A power tile clicked once (restart, shut down, sign out): it asks to confirm.
     armed: Option<usize>,
 }
@@ -140,6 +142,7 @@ impl QuickPanel {
             hovered: None,
             boxes: std::cell::RefCell::new(Vec::new()),
             width: W,
+            power_row: false,
             armed: None,
         }
     }
@@ -183,7 +186,6 @@ impl QuickPanel {
             let (key, v) = match list {
                 List::Outputs => ("quick:outputs", tauri::async_runtime::block_on(crate::providers::audio::audio_outputs())),
                 List::Apps => ("quick:apps", tauri::async_runtime::block_on(crate::providers::audio::audio_sessions())),
-                List::Power => return,
             };
             if let Ok(v) = v {
                 crate::native::post(crate::native::Msg::Data(key.into(), v));
@@ -238,7 +240,6 @@ impl QuickPanel {
             Some(List::Outputs) => rows(self.outputs.len(), 12.0 + line(g, &cx.secondary(12.0))),
             Some(List::Apps) if self.apps.is_empty() => line(g, &cx.secondary(12.0)),
             Some(List::Apps) => rows(self.apps.len(), 24.0),
-            Some(List::Power) => Self::power_h(g, cx),
             None => 0.0,
         };
         inner + 24.0
@@ -258,13 +259,8 @@ impl QuickPanel {
         h + status
     }
 
-    /// The power row's height (tiles like the big shortcut tiles).
-    fn power_h(g: &Gfx, cx: &Ctx) -> f32 {
-        12.0 + 14.0 + 7.0 + line(g, &cx.secondary(11.0)) + 10.0
-    }
-
     fn tiles_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
-        let n = self.tiles().len();
+        let n = if self.power_row { POWER.len() + 1 } else { self.tiles().len() };
         if n == 0 {
             return 0.0;
         }
@@ -445,7 +441,37 @@ impl Panel for QuickPanel {
             self.draw_list(cx, x, y, more_h - 14.0, alpha, &mut boxes, (ox, oy));
             y += more_h - 14.0;
         }
-        // Tiles: one row filling the width; three or fewer are slim pills.
+        // Tiles: one row filling the width; three or fewer are slim pills. After a click
+        // on Power: the power tiles instead, a back tile first.
+        if self.power_row {
+            y += 14.0 + 4.0;
+            let n = POWER.len() as f32 + 1.0;
+            let tw = (W - (n - 1.0) * 8.0) / n;
+            let th = self.tiles_h(g, cx);
+            let lf = cx.secondary(11.0);
+            let items = std::iter::once((Hit::PowerBack, "Back", "\u{E72B}")).chain(POWER.iter().enumerate().map(|(i, p)| (Hit::Power(i), p.1, p.2)));
+            for (k, (hit, label, glyph)) in items.enumerate() {
+                let tx = x + k as f32 * (tw + 8.0);
+                let hovered = self.hovered == Some(hit);
+                let armed = matches!(hit, Hit::Power(i) if self.armed == Some(i));
+                let bg = if armed {
+                    super::super::gfx::rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.22)
+                } else if hovered {
+                    if cx.opts.accent { cx.hover_bg(0.14) } else { white(0.14) }
+                } else {
+                    white(0.06)
+                };
+                g.fill_round(rect(tx, y, tw, th), 12.0, with_alpha(bg, alpha));
+                boxes.push((hit, tx - ox, y - oy, tw, th));
+                let gw = g.measure(glyph, &Font::icons(14.0));
+                g.text_at(glyph, &Font::icons(14.0), tx + (tw - gw) / 2.0, y + 12.0 + 7.0 + 1.0, fg);
+                let text = if armed { "Confirm?" } else { label };
+                let lw = g.measure(text, &lf).min(tw - 12.0);
+                g.text_at(&fit_text(g, text, &lf, tw - 12.0), &lf, tx + (tw - lw) / 2.0, y + 12.0 + 14.0 + 7.0 + line(g, &lf) / 2.0, if armed { fg } else { dim });
+            }
+            *self.boxes.borrow_mut() = boxes;
+            return;
+        }
         let tiles = self.tiles();
         if !tiles.is_empty() {
             y += 14.0 + 4.0;
@@ -554,18 +580,21 @@ impl Panel for QuickPanel {
                     return Reply::Redraw;
                 }
                 self.armed = None;
+                self.power_row = false;
                 Reply::CloseAnd(Act::Run { action: action.into(), target: None })
+            }
+            Some(Hit::PowerBack) => {
+                self.power_row = false;
+                self.armed = None;
+                Reply::Redraw
             }
             Some(Hit::Tile(i)) => {
                 let id = self.tiles().get(i).map(|t| t.0).unwrap_or("");
                 let target = self.tiles().get(i).map(|t| t.3).unwrap_or("");
                 if id == "power" {
                     self.armed = None;
-                    self.toggle_list(List::Power);
-                    return match self.pending.take() {
-                        Some(a) => Reply::Do(a),
-                        None => Reply::Redraw,
-                    };
+                    self.power_row = true;
+                    return Reply::Redraw;
                 }
                 if target == "kasumi:settings" {
                     Reply::CloseAnd(Act::call(|app| crate::settings::open(&app)))
@@ -577,8 +606,9 @@ impl Panel for QuickPanel {
         }
     }
     fn closed(&mut self) {
-        // The panel shut: the list goes with it (no animation).
+        // The panel shut: the list goes with it (no animation), the power tiles too.
         self.armed = None;
+        self.power_row = false;
         self.list = None;
         self.shown_list = None;
         self.slide = None;
@@ -686,31 +716,6 @@ impl QuickPanel {
                     let tw2 = g.measure(&num, &nf);
                     g.text_at(&num, &nf, cx0 + col - tw2, cyy, with_alpha(cx.look.dimmed(), a));
                     boxes.push((Hit::Track(s), tx - ox, cyy - 8.0 - oy, tw, 16.0));
-                }
-            }
-            Some(List::Power) => {
-                let n = POWER.len() as f32;
-                let tw = (iw - (n - 1.0) * 8.0) / n;
-                let th = Self::power_h(g, cx);
-                let lf = cx.secondary(11.0);
-                for (i, (_, label, glyph, _)) in POWER.iter().enumerate() {
-                    let tx = ix + i as f32 * (tw + 8.0);
-                    let hovered = self.hovered == Some(Hit::Power(i));
-                    let armed = self.armed == Some(i);
-                    let bg = if armed {
-                        super::super::gfx::rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.22)
-                    } else if hovered {
-                        if cx.opts.accent { cx.hover_bg(0.14) } else { white(0.14) }
-                    } else {
-                        white(0.06)
-                    };
-                    g.fill_round(rect(tx, iy, tw, th), 12.0, with_alpha(bg, a));
-                    boxes.push((Hit::Power(i), tx - ox, iy - oy, tw, th));
-                    let gw = g.measure(glyph, &Font::icons(14.0));
-                    g.text_at(glyph, &Font::icons(14.0), tx + (tw - gw) / 2.0, iy + 12.0 + 7.0 + 1.0, with_alpha(cx.look.fg, a));
-                    let text = if armed { "Confirm?" } else { label };
-                    let lw = g.measure(text, &lf).min(tw - 12.0);
-                    g.text_at(&fit_text(g, text, &lf, tw - 12.0), &lf, tx + (tw - lw) / 2.0, iy + 12.0 + 14.0 + 7.0 + line(g, &lf) / 2.0, with_alpha(if armed { cx.look.fg } else { cx.look.dimmed() }, a));
                 }
             }
             None => {}

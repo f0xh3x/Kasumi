@@ -130,6 +130,14 @@ pub fn run(args: &[String]) {
                 ("osd-caps", "notch://osd", serde_json::json!({ "kind": "caps", "level": 0, "muted": false, "text": "Caps Lock on" })),
                 ("osd-note", "notch://notification", serde_json::json!({ "app": "Discord", "aumid": "", "title": "Kip", "body": "are you coming tonight?" })),
             ];
+            // A level pop-up while the bar is open ([osd] open_bar).
+            surface.pose(&gfx, true, None, 0.0);
+            surface.event(&gfx, "notch://osd", &serde_json::json!({ "kind": "volume", "level": 0.42, "muted": false }));
+            surface.pose(&gfx, true, None, 0.0);
+            if surface.render(&gfx).is_ok() {
+                let (px, w, h) = surface.pixels();
+                save_png(&dir.join(format!("{label}-osd-open.png")), px, w, h);
+            }
             for (state, event, payload) in pops {
                 surface.pose(&gfx, false, None, 0.0);
                 surface.event(&gfx, event, &payload);

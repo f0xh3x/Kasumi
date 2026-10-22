@@ -1142,6 +1142,17 @@ export const pages: Page[] = [
           { kind: "toggle", label: "Show pop-ups", path: ["osd", "enabled"], default: true },
           { kind: "custom", editor: "osdPlace" },
           { kind: "slider", label: "Duration", help: "Volume, brightness, Caps Lock and the keyboard layout.", path: ["osd", "duration_ms"], default: 1500, min: 500, max: 4000, step: 100, unit: "ms" },
+          {
+            kind: "select",
+            label: "While the bar is open",
+            help: "Where pop-ups show when the bar is open (native Kasumi; the web version always drops them below).",
+            path: ["osd", "open_bar"],
+            default: "inline",
+            options: [
+              { value: "inline", label: "In the bar, in place of their notch's widgets" },
+              { value: "below", label: "In a pill below the bar" },
+            ],
+          },
           { kind: "slider", label: "Pill width", path: ["osd", "width"], default: 230, min: 160, max: 400, step: 5, unit: "px" },
           { kind: "slider", label: "Pill height", path: ["osd", "height"], default: 34, min: 24, max: 48, step: 1, unit: "px" },
         ],
