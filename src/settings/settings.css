@@ -714,3 +714,4 @@ body.view-setup #toast, body.view-notes #toast { bottom: 76px; }
 .cm-row.drop-before { box-shadow: 0 -2px 0 var(--fg); }
 .cm-row.drop-after { box-shadow: 0 2px 0 var(--fg); }
 .cm-row.drop-into { background: rgba(255, 255, 255, 0.08); outline: 1px solid var(--fg); }
+.cm-delete.armed { background: #c42b1c; border-color: #c42b1c; color: #ffffff; }

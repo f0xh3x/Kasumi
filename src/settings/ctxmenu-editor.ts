@@ -132,6 +132,8 @@ interface Row {
   ownerKey?: string;
   /** Has entries under it (a folder, or a Windows submenu Kasumi has seen). */
   parent?: string;
+  /** Hidden here (for this kind of click, or everywhere). */
+  off?: boolean;
 }
 
 export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
@@ -225,7 +227,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
   const rows = (list: MenuNode[], seen: Seen[], used: Set<number>, depth: number, out: Row[], owner?: Owner, ownerKey?: string) => {
     const kind = state.kind;
     for (const n of list) {
-      if (!owner && !applies(n, kind)) continue;
+      const off = !!n.hide || (!owner && !applies(n, kind));
       if (n.rest) {
         seen.forEach((e, i) => {
           if (used.has(i)) return;
@@ -234,20 +236,20 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
           if (!owner) subRows(e, row, depth + 1, out);
         });
       } else if (n.folder) {
-        const row: Row = { node: n, list, depth, seen, owner, ownerKey, parent: `folder:${n.folder}` };
+        const row: Row = { node: n, list, depth, seen, owner, ownerKey, parent: `folder:${n.folder}`, off };
         out.push(row);
         if (state.open.has(row.parent!)) rows(n.items ?? [], seen, used, depth + 1, out, owner, ownerKey);
       } else if (n.kasumi) {
         const k = KASUMI[n.kasumi];
-        if (!k?.kinds || k.kinds.includes(kind)) out.push({ node: n, list, depth, seen, owner, ownerKey });
+        if (!k?.kinds || k.kinds.includes(kind)) out.push({ node: n, list, depth, seen, owner, ownerKey, off });
       } else if (n.match?.length) {
         const hits = seen.filter((e) => n.match!.some((m) => matches(m, e)));
         if (!hits.length) continue;
-        const row: Row = { node: n, list, hits, depth, seen, owner, ownerKey };
+        const row: Row = { node: n, list, hits, depth, seen, owner, ownerKey, off };
         out.push(row);
         if (!owner) subRows(hits[0], row, depth + 1, out, n);
       } else {
-        out.push({ node: n, list, depth, seen, owner, ownerKey });
+        out.push({ node: n, list, depth, seen, owner, ownerKey, off });
       }
     }
   };
@@ -366,7 +368,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
   const rowEl = (row: Row): HTMLElement => {
     const n = row.node;
     const isSep = !!n.separator && !row.entry;
-    const el = $("div", `cm-row${n.hide && !row.entry ? " hidden-row" : ""}${n.folder ? " folder-row" : ""}`);
+    const el = $("div", `cm-row${row.off ? " hidden-row" : ""}${n.folder ? " folder-row" : ""}`);
     el.style.paddingLeft = `${row.depth * 24}px`;
 
     const handle = $("span", "cm-handle", glyph(0xe76f));
@@ -444,45 +446,66 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
 
     const details = $("div", "cm-details");
     details.hidden = true;
-    const hidden = !!n.hide && !row.entry;
-    const actions = $("div", "menu-row-actions", iconButton(hidden ? 0xed1a : 0xe7b3, hidden ? "Show" : "Hide", edit(row, (node) => (node.hide = !node.hide))));
-    if (!row.owner) actions.append(iconButton(0xe712, "Where it shows, and more", () => (details.hidden = !details.hidden)));
-    if (!row.entry) {
-      const title = n.match && !n.folder ? "Back to where Windows puts it" : "Remove";
-      actions.append(
-        iconButton(0xe74d, title, edit(row, (node, list) => {
-          list.splice(list.indexOf(node), 1, ...(node.folder ? (node.items ?? []) : []));
-        })),
-      );
-    }
-    el.append(actions);
+    const here = KINDS.find(([k]) => k === state.kind)?.[1] ?? "";
+    // The eye: shown or hidden for this kind of click (a submenu's entries: in it).
+    const eye = iconButton(
+      row.off ? 0xed1a : 0xe7b3,
+      row.owner ? (row.off ? "Show" : "Hide") : row.off ? `Show on ${here}` : `Hide on ${here}`,
+      edit(row, (node) => {
+        const all = KINDS.map(([k]) => k);
+        const set = new Set(node.where ? node.where.split("|") : all);
+        if (row.owner) {
+          node.hide = !node.hide;
+          return;
+        }
+        if (row.off) {
+          node.hide = false;
+          set.add(state.kind);
+        } else {
+          set.delete(state.kind);
+        }
+        node.where = set.size === all.length ? "" : [...set].join("|");
+      }),
+    );
+    const actions = $("div", "menu-row-actions", eye);
 
-    // Where it shows; Shift; a command's program and arguments.
-    const where = $("div", "cm-where", $("span", "row-help", "Shows for:"));
-    const on = new Set((n.where || KINDS.map(([k]) => k).join("|")).split("|"));
-    for (const [k, label] of KINDS) {
-      const b = $("button", `cm-tab small${row.entry || on.has(k) ? " on" : ""}`, label) as HTMLButtonElement;
-      b.addEventListener("click", () =>
-        edit(row, (node) => {
-          const set = new Set((node.where || KINDS.map(([x]) => x).join("|")).split("|"));
-          set.has(k) ? set.delete(k) : set.add(k);
-          node.where = set.size === KINDS.length ? "" : [...set].join("|");
-        })(),
-      );
-      where.append(b);
-    }
-    details.append(where);
-    if (n.folder || n.cmd) {
-      const shift = toggleSwitch(!!n.shift, (v) => edit(row, (node) => (node.shift = v))());
-      details.append($("div", "cm-where", $("span", "row-help", "Only with Shift held"), shift.el));
-    }
+    // What's behind "...": a command's program, Shift only, Delete (or Reset).
     if (n.cmd) {
-      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\\...)");
+      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\...)");
       cmd.addEventListener("change", () => edit(row, (node) => (node.cmd = cmd.value))());
       const args = input(n.args ?? "", 'Arguments: {path}, {paths}, {dir} ("{path}")');
       args.addEventListener("change", () => edit(row, (node) => (node.args = args.value))());
-      details.append($("div", "cm-where", cmd, args));
+      details.append($("div", "cm-where", $("span", "row-help", "Runs"), cmd, args));
     }
+    if ((n.folder || n.cmd) && !row.owner) {
+      const shift = toggleSwitch(!!n.shift, (v) => edit(row, (node) => (node.shift = v))());
+      details.append($("div", "cm-where", $("span", "row-help", "Only while Shift is held"), shift.el));
+    }
+    if (!row.entry && !(n.rest)) {
+      const windows = !!n.match && !n.folder;
+      const label = windows ? "Reset (Windows' own name and place)" : n.folder ? "Delete folder (its entries move out)" : "Delete";
+      const del = $("button", "button cm-delete", label) as HTMLButtonElement;
+      let armed: number | undefined;
+      del.addEventListener("click", () => {
+        if (armed === undefined) {
+          del.classList.add("armed");
+          del.textContent = windows ? "Click again to reset" : "Click again to delete";
+          armed = window.setTimeout(() => {
+            armed = undefined;
+            del.classList.remove("armed");
+            del.textContent = label;
+          }, 3000);
+          return;
+        }
+        window.clearTimeout(armed);
+        edit(row, (node, list) => {
+          list.splice(list.indexOf(node), 1, ...(node.folder ? (node.items ?? []) : []));
+        })();
+      });
+      details.append($("div", "cm-where", del));
+    }
+    if (details.childElementCount) actions.append(iconButton(0xe712, "More", () => (details.hidden = !details.hidden)));
+    el.append(actions);
     return $("div", "cm-item", el, ...(grid ? [grid] : []), details);
   };
 
@@ -544,7 +567,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       $(
         "p",
         "card-help",
-        "Drag an entry by its handle to move it, or onto a folder to put it inside. New entries come at the end: drag them where you want them. Changes apply to the next menu you open. Kasumi learns Windows' entries (and their submenus') as you use the menu: right-click a .zip or an image, or open a submenu, once to see its entries here.",
+        "Drag an entry by its handle to move it, or onto a folder to put it inside. The eye hides an entry for the kind of click you're looking at (it stays here, dimmed, to bring back). New entries come at the end: drag them where you want them. Changes apply to the next menu you open. Kasumi learns Windows' entries (and their submenus') as you use the menu: right-click a .zip or an image, or open a submenu, once to see its entries here.",
       ),
     );
   };
