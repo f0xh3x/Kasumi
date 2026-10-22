@@ -9,6 +9,14 @@ pub fn open(app: &AppHandle) {
     window(app, "settings", "settings.html", "Kasumi Settings", (940.0, 680.0), (760.0, 500.0));
 }
 
+/// Settings on one of its pages (already open: it goes there).
+pub fn open_page(app: &AppHandle, page: &str) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = tauri::Emitter::emit(&w, "settings-page", page);
+    }
+    window(app, "settings", &format!("settings.html?page={page}"), "Kasumi Settings", (940.0, 680.0), (760.0, 500.0));
+}
+
 /// The first-time setup (also from Settings > About).
 pub fn open_setup(app: &AppHandle) {
     window(app, "setup", "settings.html?view=setup", "Kasumi setup", (820.0, 640.0), (700.0, 560.0));

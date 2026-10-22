@@ -8,10 +8,11 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open config file", true, None::<&str>)?;
     let folder = MenuItem::with_id(app, "folder", "Open config folder", true, None::<&str>)?;
     let reload = MenuItem::with_id(app, "reload", "Reload config", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show_bars", "Show the bars", true, None::<&str>)?;
     let startup = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, autostart::is_enabled(), None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Kasumi", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&settings, &sep, &open, &folder, &reload, &sep, &startup, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&settings, &show, &sep, &open, &folder, &reload, &sep, &startup, &sep, &quit])?;
     let startup_item = startup.clone();
 
     let mut tray = TrayIconBuilder::with_id("main")
@@ -26,6 +27,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
             "folder" => {
                 let _ = std::process::Command::new("explorer.exe").arg(config::dir()).spawn();
             }
+            "show_bars" => crate::engine::wake(),
             "reload" => {
                 let _ = app.state::<ReloadSender>().0.send(());
             }

@@ -135,6 +135,9 @@ static OPEN: AtomicBool = AtomicBool::new(false);
 static PENDING: AtomicIsize = AtomicIsize::new(0);
 /// Tags the input Kasumi sends (a right-click handed back), so the hook lets it by.
 const TAG: usize = 0x4B4D_0000;
+/// The helper: its hooks take Explorer's right-clicks (and run all the time). In
+/// Kasumi itself (its bar menu) they only steer a menu while it shows.
+static INTERCEPT: AtomicBool = AtomicBool::new(false);
 
 const MSG_REQUEST: u32 = WM_APP + 1;
 const MSG_OUTSIDE: u32 = WM_APP + 2;
@@ -145,8 +148,12 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const TIMER_ANIM: usize = 2;
 
 struct Open {
-    target: Target,
-    built: Built,
+    /// An Explorer menu: its view and Windows' menu (none: Kasumi's bar menu).
+    shell: Option<(Target, Built)>,
+    /// Kasumi's bar menu: the app its entries run in.
+    app: Option<tauri::AppHandle>,
+    /// An entry clicked once that asks for a second ("Confirm?").
+    armed: Option<(usize, usize)>,
     levels: Vec<Level>,
     style: Rc<Style>,
     pt: POINT,
@@ -220,6 +227,28 @@ pub fn helper(app_pid: u32) {
     unsafe {
         let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = windows::Win32::System::Ole::OleInitialize(None);
+    }
+    if !init_ui() {
+        return;
+    }
+    INTERCEPT.store(true, Ordering::Relaxed);
+    std::thread::spawn(|| hooks());
+    unsafe {
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+/// The menus' windows and state on this thread (the helper's; in Kasumi, the native
+/// thread's, for its bar menu), once.
+fn init_ui() -> bool {
+    if UI.with(|u| u.try_borrow().is_ok_and(|g| g.is_some())) {
+        return true;
+    }
+    unsafe {
         let instance = GetModuleHandleW(None).unwrap_or_default();
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(host_proc), hInstance: instance.into(), lpszClassName: w!("KasumiMenuHost"), ..Default::default() });
         RegisterClassW(&WNDCLASSW {
@@ -232,25 +261,50 @@ pub fn helper(app_pid: u32) {
         let Ok(h) = CreateWindowExW(Default::default(), w!("KasumiMenuHost"), w!(""), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(instance.into()), None)
         else {
             eprintln!("[kasumi] context menu: no window");
-            return;
+            return false;
         };
         HOST.store(h.0 as isize, Ordering::Relaxed);
         let gfx = match Gfx::new() {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("[kasumi] context menu: no graphics: {e}");
-                return;
+                return false;
             }
         };
         UI.with(|u| *u.borrow_mut() = Some(Ui { gfx, open: None, closing: Vec::new(), last: None }));
         SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(on_foreground), 0, 0, WINEVENT_OUTOFCONTEXT);
-        std::thread::spawn(|| hooks());
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
     }
+    true
+}
+
+thread_local! {
+    /// In Kasumi: the hooks steering its bar menu, while it shows.
+    static HOOKS: RefCell<Option<(HHOOK, HHOOK)>> = const { RefCell::new(None) };
+}
+
+/// A menu shows (or doesn't). In Kasumi, hooks for its keys and the clicks away from
+/// it come and go with it (the helper's run all the time).
+fn set_open(on: bool) {
+    OPEN.store(on, Ordering::Relaxed);
+    if INTERCEPT.load(Ordering::Relaxed) {
+        return;
+    }
+    HOOKS.with(|h| {
+        let mut h = h.borrow_mut();
+        unsafe {
+            if on && h.is_none() {
+                let module = GetModuleHandleW(None).ok().map(Into::into);
+                if let (Ok(m), Ok(k)) = (SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), module, 0), SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_proc), module, 0)) {
+                    *h = Some((m, k));
+                }
+            } else if !on {
+                if let Some((m, k)) = h.take() {
+                    let _ = UnhookWindowsHookEx(m);
+                    let _ = UnhookWindowsHookEx(k);
+                }
+            }
+        }
+    });
 }
 
 // --- The hooks (their own thread: they must answer at once) -------------------------
@@ -297,9 +351,11 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
         if info.dwExtraInfo != TAG {
             match wp.0 as u32 {
                 WM_RBUTTONDOWN => {
-                    if let Some(view) = file_view_at(info.pt) {
-                        PENDING.store(view.0 as isize, Ordering::Relaxed);
-                        return LRESULT(1);
+                    if INTERCEPT.load(Ordering::Relaxed) {
+                        if let Some(view) = file_view_at(info.pt) {
+                            PENDING.store(view.0 as isize, Ordering::Relaxed);
+                            return LRESULT(1);
+                        }
                     }
                     if OPEN.load(Ordering::Relaxed) {
                         post(MSG_OUTSIDE, 0, pack(info.pt));
@@ -381,7 +437,7 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 }
 
 fn close() {
-    OPEN.store(false, Ordering::Relaxed);
+    set_open(false);
     with_ui(|u| {
         if let Some(mut o) = u.open.take() {
             let gone = std::mem::take(&mut o.levels);
@@ -425,6 +481,11 @@ fn request(defview: HWND, pt: POINT) {
     let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
     remember(built.ctx.kind.name(), &built.entries);
     let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, &target);
+    show(entries, pt, Some((target, built)), None, look, icons, anim);
+}
+
+/// A menu at `pt` (the cursor): Explorer's (`shell`) or Kasumi's bar menu (`app`).
+fn show(entries: Vec<shell::Entry>, pt: POINT, shell: Option<(Target, Built)>, app: Option<tauri::AppHandle>, look: Look, icons: bool, anim: crate::config::Animation) {
     let mon = crate::win::monitors()
         .into_iter()
         .find(|m| pt.x >= m.left && pt.x < m.right && pt.y >= m.top && pt.y < m.bottom)
@@ -435,12 +496,12 @@ fn request(defview: HWND, pt: POINT) {
         let mut root = Level::new(&u.gfx, style.clone(), entries, None, mon.scale as f32).ok()?;
         root.place_root(pt, &mon);
         root.draw(&u.gfx).ok()?;
-        u.open = Some(Open { target, built, levels: vec![root], style, pt, mon, switch: None });
+        u.open = Some(Open { shell, app, armed: None, levels: vec![root], style, pt, mon, switch: None });
         Some(())
     })
     .flatten();
     if shown.is_some() {
-        OPEN.store(true, Ordering::Relaxed);
+        set_open(true);
         animate();
     }
 }
@@ -452,17 +513,17 @@ fn open_sub(u: &mut Ui, li: usize, row: usize, first: bool) {
     if o.levels.len() > li + 1 {
         let gone = o.levels.split_off(li + 1);
         retire(&mut u.closing, gone);
-        o.levels[li].reset_shape();
     }
     let entry = &mut o.levels[li].entries[row];
     let items = match entry.sub.clone() {
         Some(Sub::Pending(h, pos)) => {
-            let items = o.built.populate(h, pos);
+            let Some((target, built)) = &o.shell else { return };
+            let items = built.populate(h, pos);
             // Remembered for the editor (by the submenu's own key), then arranged by its rules.
             if !entry.key.is_empty() {
                 remember(&format!("sub:{}", entry.key), &items);
             }
-            let items = if entry.rules.is_empty() { items } else { layout::arrange_sub(&entry.rules, items, &o.built.ctx, &o.target) };
+            let items = if entry.rules.is_empty() { items } else { layout::arrange_sub(&entry.rules, items, &built.ctx, target) };
             entry.sub = Some(Sub::Ready(items.clone()));
             items
         }
@@ -496,27 +557,39 @@ enum Run {
     Shell(u32, String),
     View(shell::ViewCmd),
     Kasumi(layout::Cmd),
+    App(String),
 }
 
-/// Row `row` of level `li` chosen: its submenu opens, or the menu closes and its
-/// command runs (returned, to run after the menu's state is let go).
+/// Row `row` of level `li` chosen: its submenu opens; one that asks for a second
+/// click says "Confirm?" first; else the menu closes and its command runs (returned,
+/// to run after the menu's state is let go).
 fn choose(u: &mut Ui, li: usize, row: usize) -> Option<(Open, Run)> {
     let o = u.open.as_mut()?;
-    let e = o.levels.get(li)?.entries.get(row)?;
-    if !e.usable() {
+    let (usable, sub, confirm, action, verb) = {
+        let e = o.levels.get(li)?.entries.get(row)?;
+        (e.usable(), e.sub.is_some(), e.confirm, e.action.clone(), e.verb.clone())
+    };
+    if !usable {
         return None;
     }
-    if e.sub.is_some() {
+    if sub {
         open_sub(u, li, row, false);
         return None;
     }
-    let run = match &e.action {
-        Action::Shell(off) => Run::Shell(*off, e.verb.clone()),
-        Action::View(cmd) => Run::View(*cmd),
-        Action::Kasumi(cmd) => Run::Kasumi(cmd.clone()),
+    if confirm && o.armed != Some((li, row)) {
+        o.armed = Some((li, row));
+        o.levels[li].entries[row].text = "Confirm?".into();
+        let _ = o.levels[li].draw(&u.gfx);
+        return None;
+    }
+    let run = match action {
+        Action::Shell(off) => Run::Shell(off, verb),
+        Action::View(cmd) => Run::View(cmd),
+        Action::Kasumi(cmd) => Run::Kasumi(cmd),
+        Action::App(id) => Run::App(id),
         Action::None => return None,
     };
-    OPEN.store(false, Ordering::Relaxed);
+    set_open(false);
     let mut open = u.open.take()?;
     let gone = std::mem::take(&mut open.levels);
     retire(&mut u.closing, gone);
@@ -525,10 +598,12 @@ fn choose(u: &mut Ui, li: usize, row: usize) -> Option<(Open, Run)> {
 
 fn run(chosen: Option<(Open, Run)>) {
     let Some((open, run)) = chosen else { return };
-    match run {
-        Run::Shell(off, verb) => open.built.invoke(&open.target, off, &verb, open.pt),
-        Run::View(cmd) => shell::run_view(&open.target, cmd),
-        Run::Kasumi(cmd) => layout::run(&cmd, &open.built.ctx, &open.target),
+    match (run, &open.shell, &open.app) {
+        (Run::Shell(off, verb), Some((t, b)), _) => b.invoke(t, off, &verb, open.pt),
+        (Run::View(cmd), Some((t, _)), _) => shell::run_view(t, cmd),
+        (Run::Kasumi(cmd), Some((t, b)), _) => layout::run(&cmd, &b.ctx, t),
+        (Run::App(id), _, Some(app)) => run_app(app, &id),
+        _ => {}
     }
 }
 
@@ -614,7 +689,6 @@ fn timer(id: usize) {
                 if o.levels.len() > li + 1 {
                     let gone = o.levels.split_off(li + 1);
                     retire(&mut u.closing, gone);
-                    o.levels[li].reset_shape();
                     let _ = o.levels[li].draw(&u.gfx);
                 }
                 if o.levels[li].entries[r].sub.is_some() && o.levels[li].entries[r].usable() {
@@ -636,7 +710,17 @@ fn timer(id: usize) {
                         more = true;
                     }
                 }
+                // Gone: their menus' corners on their side come back (unless another
+                // submenu has joined there since).
+                let gone: Vec<isize> = u.closing.iter().filter(|l| l.gone()).map(|l| l.hwnd.0 as isize).collect();
                 u.closing.retain(|l| !l.gone());
+                if let Some(o) = u.open.as_mut() {
+                    for l in o.levels.iter_mut() {
+                        if gone.iter().any(|&g| l.unjoin(g)) {
+                            let _ = l.draw(gfx);
+                        }
+                    }
+                }
                 if !more {
                     u.last = None;
                 }
@@ -659,7 +743,7 @@ fn outside(pt: POINT, force: bool) {
 }
 
 fn foreground(fg: HWND) {
-    let ours = with_ui(|u| u.open.as_ref().is_some_and(|o| fg == o.target.root || o.levels.iter().any(|l| l.hwnd == fg))).unwrap_or(true);
+    let ours = with_ui(|u| u.open.as_ref().is_some_and(|o| o.shell.as_ref().is_some_and(|(t, _)| fg == t.root) || o.levels.iter().any(|l| l.hwnd == fg))).unwrap_or(true);
     if !ours {
         close();
     }
@@ -693,10 +777,9 @@ fn key(vk: VIRTUAL_KEY) {
                 if d > 0 {
                     let gone = o.levels.split_off(d);
                     retire(&mut u.closing, gone);
-                    o.levels[d - 1].reset_shape();
                     let _ = o.levels[d - 1].draw(gfx);
                 } else if vk == VK_ESCAPE {
-                    OPEN.store(false, Ordering::Relaxed);
+                    set_open(false);
                     if let Some(mut o) = u.open.take() {
                         let gone = std::mem::take(&mut o.levels);
                         retire(&mut u.closing, gone);
@@ -705,7 +788,7 @@ fn key(vk: VIRTUAL_KEY) {
                 None
             }
             VK_APPS => {
-                OPEN.store(false, Ordering::Relaxed);
+                set_open(false);
                 if let Some(mut o) = u.open.take() {
                     let gone = std::mem::take(&mut o.levels);
                     retire(&mut u.closing, gone);
@@ -747,4 +830,116 @@ fn key(vk: VIRTUAL_KEY) {
     })
     .flatten();
     run(chosen);
+}
+
+// --- Kasumi's bar menu (right-click on a bar's empty space; on the native thread) ------
+
+/// The bar menu at the cursor.
+pub fn bar_menu(app: tauri::AppHandle) {
+    if !init_ui() {
+        return;
+    }
+    close();
+    let Some((x, y)) = crate::win::cursor_pos() else { return };
+    let cfg = crate::config::load().ok();
+    let power = cfg.as_ref().is_some_and(|c| c.bar_menu.power);
+    let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
+    show(bar_entries(power), POINT { x, y }, None, Some(app), look(cfg.as_ref()), true, anim);
+}
+
+fn app_item(text: &str, id: &str, g: char) -> shell::Entry {
+    shell::Entry::named(text, Action::App(id.into()), Some(shell::Icon::Glyph(g)))
+}
+
+fn app_folder(text: &str, g: char, items: Vec<shell::Entry>) -> shell::Entry {
+    let mut e = shell::Entry::named(text, Action::None, Some(shell::Icon::Glyph(g)));
+    e.sub = Some(Sub::Ready(items));
+    e
+}
+
+fn bar_entries(power: bool) -> Vec<shell::Entry> {
+    let mut presets: Vec<shell::Entry> = crate::presets::names()
+        .into_iter()
+        .map(|(name, current)| {
+            let mut e = shell::Entry::named(&name, Action::App(format!("preset:{name}")), None);
+            e.radio = true;
+            e.checked = current;
+            e
+        })
+        .collect();
+    if !presets.is_empty() {
+        presets.push(shell::Entry::separator());
+    }
+    presets.push(app_item("Manage presets…", "page:presets", '\u{E713}'));
+    let mut v = vec![
+        app_item("Kasumi settings", "settings", '\u{E713}'),
+        app_item("Edit this bar…", "page:widgets", '\u{E70F}'),
+        app_folder("Presets", '\u{E790}', presets),
+        shell::Entry::separator(),
+        app_item("Task Manager", "taskmgr", '\u{E9D9}'),
+        app_item("Show desktop", "desktop", '\u{E7F4}'),
+        app_folder(
+            "Hide the bars",
+            '\u{ED1A}',
+            vec![
+                app_item("For 10 minutes", "hide:600", '\u{E916}'),
+                app_item("For an hour", "hide:3600", '\u{E916}'),
+                app_item("Until I bring them back (tray icon)", "hide:0", '\u{ED1A}'),
+            ],
+        ),
+        shell::Entry::separator(),
+    ];
+    if power {
+        let confirm = |mut e: shell::Entry| {
+            e.confirm = true;
+            e
+        };
+        v.push(app_folder(
+            "Power",
+            '\u{E7E8}',
+            vec![
+                app_item("Lock", "power:lock", '\u{E72E}'),
+                confirm(app_item("Sleep", "power:sleep", '\u{E708}')),
+                confirm(app_item("Restart", "power:restart", '\u{E777}')),
+                confirm(app_item("Shut down", "power:shutdown", '\u{E7E8}')),
+            ],
+        ));
+        v.push(shell::Entry::separator());
+    }
+    v.push(app_item("Restart Kasumi", "restart", '\u{E72C}'));
+    v.push(app_item("Quit Kasumi", "quit", '\u{E711}'));
+    v
+}
+
+/// One of the bar menu's entries.
+fn run_app(app: &tauri::AppHandle, id: &str) {
+    let (kind, arg) = id.split_once(':').unwrap_or((id, ""));
+    match kind {
+        "settings" => crate::settings::open(app),
+        "page" => crate::settings::open_page(app, arg),
+        "preset" => {
+            let name = arg.to_string();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::presets::preset_apply(name).await {
+                    eprintln!("[kasumi] preset: {e}");
+                }
+            });
+        }
+        "taskmgr" => {
+            let _ = std::process::Command::new("taskmgr.exe").spawn();
+        }
+        "desktop" => crate::win::toggle_desktop(),
+        "hide" => crate::engine::snooze(arg.parse().unwrap_or(0)),
+        "power" => {
+            let (app, action) = (app.clone(), arg.to_string());
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::actions::run_action(app, action.clone(), None).await {
+                    eprintln!("[kasumi] {action}: {e}");
+                }
+            });
+        }
+        "restart" => app.restart(),
+        "quit" => app.exit(0),
+        _ => {}
+    }
 }

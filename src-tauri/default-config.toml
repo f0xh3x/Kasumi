@@ -39,6 +39,9 @@ previews = true           # live previews of the windows
 labels = "both"           # under each window: both | icons | titles | none (none: previews only)
 desktop = "off"           # "Show desktop" as a choice: off | first | last
 
+[bar_menu]
+power = false             # Lock, Sleep, Restart, Shut down in the bar's right-click menu (asks to confirm)
+
 [context_menu]
 enabled = false           # Kasumi's own right-click menus in Explorer and on the desktop (experimental, native Kasumi)
 icons = false             # icons beside the entries

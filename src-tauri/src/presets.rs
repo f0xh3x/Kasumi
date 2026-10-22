@@ -145,6 +145,11 @@ pub async fn presets_list() -> Result<Vec<Preset>, String> {
     Ok(out)
 }
 
+/// The presets' names, and which is in use (the bar menu).
+pub fn names() -> Vec<(String, bool)> {
+    tauri::async_runtime::block_on(presets_list()).unwrap_or_default().into_iter().map(|p| (p.name, p.current)).collect()
+}
+
 /// Saves the config in use as a preset (replacing one of the same name).
 #[tauri::command]
 pub async fn preset_save(name: String) -> Result<(), String> {

@@ -261,6 +261,8 @@ pub struct Surface {
     tip_want: Option<(String, (i32, i32))>,
     tip_since: Option<Instant>,
     tip_blocked: Option<String>,
+    /// A right-click on its empty space: the bar menu, for the native thread to show.
+    bar_menu: bool,
     /// Its apps' icons on screen as last published (native::set_icon_rects).
     sent_icons: Vec<(String, [i32; 4])>,
     /// A notification pop-up clicked ([osd] notification_click = "panel") while the bar
@@ -357,6 +359,7 @@ impl Surface {
             tip_want: None,
             tip_since: None,
             tip_blocked: None,
+            bar_menu: false,
             sent_icons: Vec::new(),
             notes_pending: None,
             alt_panel: None,
@@ -2229,9 +2232,15 @@ impl Surface {
                 other => other,
             }
         } else {
+            self.bar_menu = button == Button::Right;
             Reply::None
         };
         self.answer(gfx, reply)
+    }
+
+    /// A right-click on its empty space asked for the bar menu.
+    pub fn take_bar_menu(&mut self) -> bool {
+        std::mem::take(&mut self.bar_menu)
     }
 
     /// What a reply asks of the surface; the action to run, if any.

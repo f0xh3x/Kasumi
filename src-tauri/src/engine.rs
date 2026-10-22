@@ -909,6 +909,22 @@ pub fn layout_for(
 
 /// Creates, updates or destroys overlay windows to match monitors + config.
 
+
+/// The bars hidden for a while (the bar menu), until then.
+static SNOOZE: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+/// Hides the bars for `secs` seconds (0: until `wake`).
+pub fn snooze(secs: u64) {
+    let now = Instant::now();
+    let d = if secs == 0 { Duration::from_secs(10 * 365 * 24 * 3600) } else { Duration::from_secs(secs) };
+    *SNOOZE.lock().unwrap() = Some(now.checked_add(d).unwrap_or(now + Duration::from_secs(24 * 3600)));
+}
+
+/// Brings the bars back (tray menu: Show the bars).
+pub fn wake() {
+    *SNOOZE.lock().unwrap() = None;
+}
+
 impl Engine {
     fn run(mut self) {
         let mut last_monitor_check = Instant::now();
@@ -1262,15 +1278,18 @@ impl Engine {
                 if !peeking {
                     o.peek_until = None;
                 }
-                let hide = self.cfg.general.hide_in_fullscreen
-                    && !o.pinned
-                    && !peeking
-                    && o.fullscreen_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(500));
+                let snoozed = SNOOZE.lock().unwrap().is_some_and(|t| Instant::now() < t);
+                let hide = snoozed
+                    || (self.cfg.general.hide_in_fullscreen
+                        && !o.pinned
+                        && !peeking
+                        && o.fullscreen_since.is_some_and(|t| t.elapsed() >= Duration::from_millis(500)));
                 if hide != o.hidden {
                     if settling && !hide {
                         continue;
                     }
                     match (&fs, hide) {
+                        (_, true) if snoozed => eprintln!("[kasumi] hiding {label}: for a while (bar menu)"),
                         (Some((_, why)), true) => eprintln!("[kasumi] hiding {label}: {why}"),
                         _ => eprintln!("[kasumi] showing {label}"),
                     }

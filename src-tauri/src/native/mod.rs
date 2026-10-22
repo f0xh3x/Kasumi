@@ -850,11 +850,18 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                 // Alt + Tab in the middle of the screen: a card picked.
                 let act = act.or_else(|| n.alt_float.as_mut().filter(|f| f.hwnd == Some(hwnd)).and_then(|f| f.click(button, (x, y))));
                 report(n);
-                act.map(|a| (a, n.app.clone()))
+                let bar_menu = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).is_some_and(|s| s.take_bar_menu());
+                Some((act, bar_menu, n.app.clone()))
             })
             .flatten();
-            if let Some((act, app)) = act {
-                run_act(act, app);
+            if let Some((act, bar_menu, app)) = act {
+                if let Some(act) = act {
+                    run_act(act, app.clone());
+                }
+                // A right-click on a bar's empty space: Kasumi's bar menu.
+                if let (true, Some(app)) = (bar_menu, app) {
+                    ctxmenu::bar_menu(app);
+                }
             }
             LRESULT(0)
         }

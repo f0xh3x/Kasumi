@@ -2,6 +2,7 @@ import "@fontsource/inter/400.css";
 import "@fontsource/inter/600.css";
 import "./settings.css";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   collapsible,
@@ -26,7 +27,17 @@ const VIEW = new URLSearchParams(location.search).get("view");
 if (VIEW) document.body.classList.add(`view-${VIEW}`);
 
 let cfg: Cfg = {};
-let current = pages[0].id;
+let current = (() => {
+  const want = new URLSearchParams(location.search).get("page");
+  return pages.some((p) => p.id === want) ? want! : pages[0].id;
+})();
+// Opened on a page from elsewhere (the bar menu's Edit this bar...): go there.
+listen<string>("settings-page", (e) => {
+  if (!pages.some((p) => p.id === e.payload)) return;
+  current = e.payload;
+  render();
+  document.querySelector(".content")?.scrollTo(0, 0);
+});
 
 
 function getIn(obj: any, path: Path): unknown {

@@ -50,6 +50,8 @@ pub struct Config {
     #[serde(default)]
     pub context_menu: ContextMenuCfg,
     #[serde(default)]
+    pub bar_menu: BarMenuCfg,
+    #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
     pub osd: Osd,
@@ -245,6 +247,14 @@ impl Default for General {
 pub struct Shell {
     /// Hide the Windows taskbar while Kasumi runs (restored when it quits).
     pub hide_taskbar: bool,
+}
+
+/// `[bar_menu]`: the menu on a bar's empty space (right-click).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct BarMenuCfg {
+    /// Lock, Sleep, Restart and Shut down in it (each but Lock asks for a second click).
+    pub power: bool,
 }
 
 /// `[context_menu]`: Kasumi's own right-click menus in Explorer and on the desktop

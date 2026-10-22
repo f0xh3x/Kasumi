@@ -47,6 +47,8 @@ pub enum Action {
     View(ViewCmd),
     /// One of Kasumi's own (layout.rs).
     Kasumi(super::layout::Cmd),
+    /// Kasumi's bar menu: run by the app (mod.rs run_app).
+    App(String),
 }
 
 #[derive(Clone)]
@@ -77,6 +79,8 @@ pub struct Entry {
     pub key: String,
     /// A Windows submenu's layout (its entries arranged when it opens).
     pub rules: Vec<crate::config::MenuNode>,
+    /// Asks for a second click ("Confirm?") before it runs.
+    pub confirm: bool,
 }
 
 impl Entry {
@@ -105,6 +109,7 @@ impl Entry {
             sub: None,
             key: String::new(),
             rules: Vec::new(),
+            confirm: false,
         }
     }
 
@@ -468,6 +473,7 @@ unsafe fn read_menu(cm: &IContextMenu, hmenu: HMENU) -> Vec<Entry> {
             separator: false,
             key,
             rules: Vec::new(),
+            confirm: false,
             text,
             keys,
             accel,

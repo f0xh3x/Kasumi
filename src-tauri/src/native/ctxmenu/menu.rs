@@ -171,11 +171,13 @@ fn cascade_ms(n: usize) -> f32 {
 struct Shape {
     corners: [f32; 4],
     fillets: Vec<(f32, f32, f32, f32, f32)>,
+    /// The level it's joined to (its window).
+    with: isize,
 }
 
 impl Default for Shape {
     fn default() -> Shape {
-        Shape { corners: [RADIUS; 4], fillets: Vec::new() }
+        Shape { corners: [RADIUS; 4], fillets: Vec::new(), with: 0 }
     }
 }
 
@@ -339,10 +341,15 @@ impl Level {
         self.body = POINT { x, y: y.clamp(mon.top, (mon.bottom - h).max(mon.top)) };
     }
 
-    /// Its submenu closed: back to its own corners on that side (its join to its own
-    /// menu stays).
-    pub fn reset_shape(&mut self) {
+    /// Its submenu (`gone`, a window) has closed: back to its own corners on that side,
+    /// unless another has joined it since (its join to its own menu stays). True: it
+    /// changed.
+    pub fn unjoin(&mut self, gone: isize) -> bool {
+        if self.as_menu.with != gone || gone == 0 {
+            return false;
+        }
         self.as_menu = Shape::default();
+        true
     }
 
     /// A concave corner at (x, y) on screen, in this level's body.
@@ -602,6 +609,8 @@ pub fn join(p: &mut Level, c: &mut Level) {
             cs.corners[c_bot] = room(-d, f);
         }
     }
+    ps.with = c.hwnd.0 as isize;
+    cs.with = p.hwnd.0 as isize;
     p.as_menu = ps;
     c.as_sub = cs;
 }
