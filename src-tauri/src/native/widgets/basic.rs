@@ -209,6 +209,7 @@ impl Widget for Disk {
 
 struct Item {
     icon: String,
+    label: Option<String>,
     action: String,
     target: Option<String>,
     confirm: bool,
@@ -233,7 +234,7 @@ impl Buttons {
                 a.iter()
                     .filter_map(|it| {
                         let s = |k: &str| it.get(k).and_then(|v| v.as_str()).map(String::from);
-                        Some(Item { action: s("action")?, icon: s("icon").unwrap_or_else(|| BUTTON.into()), target: s("target"), confirm: it.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false) })
+                        Some(Item { label: s("label"), action: s("action")?, icon: s("icon").unwrap_or_else(|| BUTTON.into()), target: s("target"), confirm: it.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false) })
                     })
                     .collect()
             })
@@ -268,6 +269,12 @@ impl Buttons {
 }
 
 impl Widget for Buttons {
+    fn tooltip(&self) -> Option<String> {
+        let i = self.hovered?;
+        let it = self.items.get(i)?;
+        let label = it.label.clone().unwrap_or_else(|| it.action.clone());
+        Some(if self.armed.is_some_and(|(a, _)| a == i) { format!("Click again: {label}") } else { label })
+    }
     fn width(&mut self, cx: &Ctx) -> f32 {
         self.h = cx.h;
         row_width(cx.gfx, &self.pieces(cx))
@@ -445,6 +452,13 @@ impl Workspaces {
 impl Widget for Workspaces {
     fn keys(&self) -> &'static [&'static str] {
         &["workspaces"]
+    }
+    fn tooltip(&self) -> Option<String> {
+        let w = self.spaces.get(self.hovered?)?;
+        Some(match w.windows {
+            0 => format!("{} · empty", w.name),
+            n => format!("{} · {n} window{}", w.name, if n == 1 { "" } else { "s" }),
+        })
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         // Our monitor as komorebi names it: "\\.\DISPLAY4" -> "DISPLAY4".

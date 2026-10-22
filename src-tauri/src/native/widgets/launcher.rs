@@ -196,6 +196,9 @@ impl Widget for LauncherWidget {
     fn keys(&self) -> &'static [&'static str] {
         &["launcher:apps"]
     }
+    fn tooltip(&self) -> Option<String> {
+        (!searching()).then(|| "Search apps".into())
+    }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let apps = v.as_array().map(|a| a.iter().filter_map(|x| Some((x.get("id")?.as_str()?.to_string(), x.get("name")?.as_str()?.to_string()))).collect()).unwrap_or_default();
         S.with(|s| {

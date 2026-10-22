@@ -750,6 +750,41 @@ export const pages: Page[] = [
               { value: "active", label: "Title of the window in front" },
             ],
           },
+          {
+            kind: "toggle",
+            label: "Show apps asking for attention",
+            help: "A flashing accent dot on an app that wants you (a message, a finished task), until you switch to it.",
+            path: ["widgets", "tasks", "attention"],
+            default: true,
+          },
+          {
+            kind: "select",
+            label: "Hovering an app with several windows",
+            path: ["widgets", "tasks", "hover"],
+            default: "list",
+            options: [
+              { value: "list", label: "Lists its windows" },
+              { value: "previews", label: "Shows previews of its windows" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Scrolling over an app",
+            path: ["widgets", "tasks", "scroll"],
+            default: "windows",
+            options: [
+              { value: "windows", label: "Cycles its windows" },
+              { value: "volume", label: "Changes its volume" },
+              { value: "off", label: "Does nothing" },
+            ],
+          },
+          {
+            kind: "toggle",
+            label: "Win + 1…9 opens apps",
+            help: "Like the Windows taskbar: Win + 3 switches to (or starts) the third app here.",
+            path: ["widgets", "tasks", "win_keys"],
+            default: true,
+          },
         ],
       },
       {

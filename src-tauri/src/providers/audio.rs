@@ -118,6 +118,27 @@ pub async fn audio_session_set(pid: u32, level: Option<f32>, muted: Option<bool>
     })
 }
 
+/// Scrolling over an app in the dock: the volume of its sessions (by its program, so
+/// helper processes playing for it count too) up or down by `delta`. Its new level,
+/// if it's playing anything.
+pub fn app_volume_step(exe: &str, delta: f32) -> Option<f32> {
+    let exe = exe.to_lowercase();
+    let mut level = None;
+    let _ = for_sessions(|pid, vol| {
+        if crate::win::process_path(pid).is_some_and(|p| p.to_lowercase() == exe) {
+            unsafe {
+                let next = (vol.GetMasterVolume().unwrap_or(1.0) + delta).clamp(0.0, 1.0);
+                let _ = vol.SetMasterVolume(next, std::ptr::null());
+                if delta > 0.0 {
+                    let _ = vol.SetMute(false, std::ptr::null());
+                }
+                level = Some(next);
+            }
+        }
+    });
+    level
+}
+
 /// A program's icon for the per-app list, extracted once per program.
 fn app_icon(path: &str) -> Value {
     static CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Value>>> = std::sync::Mutex::new(None);

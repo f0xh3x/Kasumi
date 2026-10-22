@@ -63,6 +63,7 @@ fn main() {
             engine::start(app.handle());
             osd::start(app.handle());
             keyhook::start(osd::volume_key);
+            keyhook::on_win_digit(native::win_key);
             autostart::refresh();
             updater::start(app.handle());
             settings::startup(app.handle(), first_run);

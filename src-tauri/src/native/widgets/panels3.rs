@@ -546,7 +546,16 @@ pub struct TasksPanel {
     rows: Vec<(TaskRow, f32, f32)>,
     hovered: Option<(usize, bool)>,
     width: f32,
+    /// Previews ([widgets.tasks] hover = "previews", opened by hovering): a card per
+    /// window: its window, title, whether it's in front, and its box.
+    cards: Vec<(i64, String, bool, (f32, f32, f32, f32))>,
 }
+
+/// A preview card: its width, the thumbnail's height, its padding, and how many fit a row.
+const CARD_W: f32 = 208.0;
+const THUMB_H: f32 = 117.0;
+const CARD_PAD: f32 = 6.0;
+const CARDS_PER_ROW: usize = 4;
 
 #[derive(Clone, PartialEq, Debug)]
 enum TaskRow {
@@ -581,7 +590,7 @@ fn short_title(title: &str, app: &str) -> String {
 
 impl TasksPanel {
     pub fn new(opts: &Opts) -> TasksPanel {
-        TasksPanel { opts: opts.clone(), tasks: Value::Null, pixels: HashMap::new(), icons: HashMap::new(), rows: Vec::new(), hovered: None, width: 220.0 }
+        TasksPanel { opts: opts.clone(), tasks: Value::Null, pixels: HashMap::new(), icons: HashMap::new(), rows: Vec::new(), hovered: None, width: 220.0, cards: Vec::new() }
     }
     fn app(&self) -> Option<&Value> {
         let key = super::tasks::menu_target();
@@ -621,7 +630,24 @@ impl TasksPanel {
             _ => ("", String::new()),
         }
     }
+    /// Previews instead of the list: [widgets.tasks] hover = "previews", opened by hovering.
+    fn previews(&self) -> bool {
+        self.opts.str("hover") == Some("previews") && super::tasks::menu_by_hover()
+    }
+    /// The close button's box on a card (the title row's right end), in the panel's px.
+    fn card_x(card: &(f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+        let (x, y, w, h) = *card;
+        (x + w - CARD_PAD - 18.0, y + h - CARD_PAD - 18.0, 18.0, 18.0)
+    }
     fn hit(&self, p: (f32, f32)) -> Option<(usize, bool)> {
+        if self.previews() {
+            let i = self.cards.iter().position(|c| {
+                let (x, y, w, h) = c.3;
+                p.0 >= x && p.0 < x + w && p.1 >= y && p.1 < y + h
+            })?;
+            let (bx, by, bw, bh) = Self::card_x(&self.cards[i].3);
+            return Some((i, p.0 >= bx && p.0 < bx + bw && p.1 >= by && p.1 < by + bh));
+        }
         let i = self.rows.iter().position(|(_, top, h)| p.1 >= *top && p.1 < top + h)?;
         let on_x = matches!(self.rows[i].0, TaskRow::Window(..)) && p.0 >= self.width - 8.0 - 18.0;
         Some((i, on_x))
@@ -654,6 +680,29 @@ impl Panel for TasksPanel {
         let g = cx.gfx;
         let body = cx.body();
         let lh = line(g, &body);
+        if self.previews() {
+            let key = super::tasks::menu_target();
+            if !self.icons.contains_key(&key) {
+                if let Some(i) = self.pixels.get(&key).and_then(|px| AppIcon::new(g, px, Style::Color)) {
+                    self.icons.insert(key, i);
+                }
+            }
+            let wins: Vec<(i64, String, bool)> = self.list().into_iter().filter_map(|r| if let TaskRow::Window(h, t, a) = r { Some((h, t, a)) } else { None }).collect();
+            let card_h = CARD_PAD + THUMB_H + CARD_PAD + lh.max(18.0) + CARD_PAD;
+            let per_row = wins.len().clamp(1, CARDS_PER_ROW);
+            self.cards = wins
+                .into_iter()
+                .enumerate()
+                .map(|(i, (h, t, a))| {
+                    let (col, row) = ((i % per_row) as f32, (i / per_row) as f32);
+                    (h, t, a, (col * (CARD_W + 8.0), row * (card_h + 8.0), CARD_W, card_h))
+                })
+                .collect();
+            let rows = self.cards.len().div_ceil(per_row).max(1) as f32;
+            self.width = per_row as f32 * CARD_W + (per_row as f32 - 1.0) * 8.0;
+            return (self.width, rows * card_h + (rows - 1.0) * 8.0);
+        }
+        self.cards.clear();
         let list = self.list();
         let count = list.iter().filter(|r| matches!(r, TaskRow::Window(..))).count();
         let name = self.app().and_then(|a| a.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -698,6 +747,34 @@ impl Panel for TasksPanel {
         let body = cx.body();
         let fg = with_alpha(cx.look.fg, alpha);
         let dim = with_alpha(cx.look.dimmed(), alpha);
+        if self.previews() {
+            let key = super::tasks::menu_target();
+            let f = cx.secondary(cx.look.font_size);
+            for (i, (_, title, active, card)) in self.cards.iter().enumerate() {
+                let (left, top, w, h) = (x + card.0, y + card.1, card.2, card.3);
+                if self.hovered.is_some_and(|(k, _)| k == i) {
+                    g.fill_round(rect(left, top, w, h), 10.0, with_alpha(cx.hover_bg(0.1), alpha));
+                }
+                // Behind the live preview: shows for minimized windows (no preview to draw).
+                let (tx, ty, tw) = (left + CARD_PAD, top + CARD_PAD, w - 2.0 * CARD_PAD);
+                g.fill_round(rect(tx, ty, tw, THUMB_H), 6.0, white(0.05 * alpha));
+                if let Some(icon) = self.icons.get(&key) {
+                    icon.draw(g, tx + tw / 2.0 - 16.0, ty + THUMB_H / 2.0 - 16.0, 32.0, 0.5 * alpha);
+                }
+                let (bx, by, bw, bh) = Self::card_x(card);
+                let (bx, by) = (x + bx, y + by);
+                let mid = by + bh / 2.0;
+                g.text_at(&fit_text(g, title, &f, w - 2.0 * CARD_PAD - bw - 6.0), &f, left + CARD_PAD + 2.0, mid, if *active { fg } else { dim });
+                let on_x = self.hovered == Some((i, true));
+                if on_x {
+                    g.fill_round(rect(bx, by, bw, bh), 6.0, white(0.12 * alpha));
+                }
+                let xf = Font::icons(10.0);
+                let xw = g.measure("\u{E711}", &xf);
+                g.text_at("\u{E711}", &xf, bx + (bw - xw) / 2.0, mid, white(if on_x { alpha } else { 0.6 * alpha }));
+            }
+            return;
+        }
         let count = self.rows.iter().filter(|r| matches!(r.0, TaskRow::Window(..))).count();
         for (i, (r, top, h)) in self.rows.iter().enumerate() {
             let (ry, cy) = (y + top, y + top + h / 2.0);
@@ -755,6 +832,18 @@ impl Panel for TasksPanel {
             return Reply::None;
         }
         let Some((i, on_x)) = self.hit(at) else { return Reply::None };
+        if self.previews() {
+            let hwnd = self.cards[i].0 as isize;
+            return if on_x {
+                Reply::Do(Act::call(move |_| {
+                    let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_close(hwnd));
+                }))
+            } else {
+                Reply::CloseAnd(Act::call(move |_| {
+                    let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(hwnd, false));
+                }))
+            };
+        }
         let key = super::tasks::menu_target();
         let save_pins = |pins: Vec<String>| {
             Act::call(move |_| {
@@ -796,6 +885,15 @@ impl Panel for TasksPanel {
         self.hovered = None;
     }
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
+        if self.previews() {
+            return self.cards.iter().map(|c| c.3).collect();
+        }
         self.rows.iter().map(|(_, top, h)| (0.0, *top, self.width, *h)).collect()
+    }
+    fn thumbs(&self) -> Vec<(isize, (f32, f32, f32, f32))> {
+        if !self.previews() {
+            return Vec::new();
+        }
+        self.cards.iter().map(|(h, _, _, (x, y, w, _))| (*h as isize, (x + CARD_PAD, y + CARD_PAD, w - 2.0 * CARD_PAD, THUMB_H))).collect()
     }
 }

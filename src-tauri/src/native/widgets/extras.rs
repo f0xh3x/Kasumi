@@ -34,6 +34,9 @@ impl Widget for Focus {
     fn keys(&self) -> &'static [&'static str] {
         &["focus"]
     }
+    fn tooltip(&self) -> Option<String> {
+        Some(self.title.clone()).filter(|t| !t.is_empty())
+    }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let s = |k: &str| v.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
         let (title, app) = (s("title"), s("app"));
@@ -209,6 +212,9 @@ impl Widget for Clipboard {
     fn keys(&self) -> &'static [&'static str] {
         &["clipboard"]
     }
+    fn tooltip(&self) -> Option<String> {
+        Some("Clipboard history".into())
+    }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let n = v.as_array().map_or(0, |a| a.len());
         let changed = n != self.count;
@@ -267,6 +273,12 @@ impl Notifications {
 impl Widget for Notifications {
     fn keys(&self) -> &'static [&'static str] {
         &["notifications"]
+    }
+    fn tooltip(&self) -> Option<String> {
+        Some(match self.total.max(0) {
+            0 => "No notifications".into(),
+            n => format!("{n} notification{}", if n == 1 { "" } else { "s" }),
+        })
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let total = v.get("count").and_then(|c| c.as_i64()).unwrap_or(0);

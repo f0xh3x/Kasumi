@@ -487,6 +487,18 @@ pub trait Widget {
     fn act(&mut self) -> Option<Act> {
         None
     }
+    /// The mouse wheel over it (its own px; notches, up positive): something to do.
+    fn wheel(&mut self, _at: (f32, f32), _notches: f32) -> Option<Act> {
+        None
+    }
+    /// Win + n (1-based): what to do (the tasks widget's nth app, as a click on it).
+    fn win_key(&mut self, _n: usize) -> Option<Act> {
+        None
+    }
+    /// Its hint for what's under the cursor (as last hovered; [general] tooltips).
+    fn tooltip(&self) -> Option<String> {
+        None
+    }
     /// It wants its panel open now (the tasks widget, hovered a moment over an app
     /// with several windows). Asked after its ticks.
     fn wants_panel(&mut self) -> bool {
@@ -514,6 +526,11 @@ pub trait Panel {
     }
     fn tick(&mut self, _now: Instant) -> bool {
         false
+    }
+    /// Live window previews to show (DWM thumbnails, drawn by Windows over the panel):
+    /// each window and its box in the panel's own px.
+    fn thumbs(&self) -> Vec<(isize, (f32, f32, f32, f32))> {
+        Vec::new()
     }
     /// Padding toward the bar, away from it, and on the sides (the page's .panel padding).
     fn pad(&self) -> (f32, f32, f32) {

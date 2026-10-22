@@ -2,7 +2,8 @@
 //! output devices and per-app volume behind buttons at its start) and brightness
 //! side by side, battery and network, a row of shortcut tiles. The lists open in
 //! a box that slides open between the controls and the tiles (above the controls
-//! on a bottom dock), so the controls stay put.
+//! on a bottom dock), so the controls stay put. The Power tile opens a row of power
+//! tiles there (lock, sign out, hibernate, restart, shut down).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -34,6 +35,15 @@ const TILES: [(&str, &str, &str, &str); 16] = [
     ("kasumi", "Kasumi", "", "kasumi:settings"),
 ];
 const DEFAULT_TILES: [&str; 6] = ["wifi", "bluetooth", "display", "sound", "power", "settings"];
+
+/// The Power tile's row: action, label, glyph, and whether it takes a second click.
+const POWER: [(&str, &str, &str, bool); 5] = [
+    ("lock", "Lock", "\u{E72E}", false),
+    ("sign_out", "Sign out", "\u{E8F8}", true),
+    ("hibernate", "Hibernate", "\u{E823}", false),
+    ("restart", "Restart", "\u{E777}", true),
+    ("shutdown", "Shut down", "\u{E7E8}", true),
+];
 const MAX_TILES: usize = 6;
 
 /// Kasumi's logo (icons/kasumi-mark.svg), view box 30 30 541 541.
@@ -63,6 +73,7 @@ enum Slider {
 enum List {
     Outputs,
     Apps,
+    Power,
 }
 
 /// What can be clicked, by where it was drawn (content px).
@@ -75,6 +86,7 @@ enum Hit {
     Display,
     Output(usize),
     Tile(usize),
+    Power(usize),
 }
 
 pub struct QuickPanel {
@@ -99,6 +111,8 @@ pub struct QuickPanel {
     /// Clickable boxes as last drawn (content px from the panel's content corner).
     boxes: std::cell::RefCell<Vec<(Hit, f32, f32, f32, f32)>>,
     width: f32,
+    /// A power tile clicked once (restart, shut down, sign out): it asks to confirm.
+    armed: Option<usize>,
 }
 
 const W: f32 = 540.0;
@@ -126,6 +140,7 @@ impl QuickPanel {
             hovered: None,
             boxes: std::cell::RefCell::new(Vec::new()),
             width: W,
+            armed: None,
         }
     }
 
@@ -168,6 +183,7 @@ impl QuickPanel {
             let (key, v) = match list {
                 List::Outputs => ("quick:outputs", tauri::async_runtime::block_on(crate::providers::audio::audio_outputs())),
                 List::Apps => ("quick:apps", tauri::async_runtime::block_on(crate::providers::audio::audio_sessions())),
+                List::Power => return,
             };
             if let Ok(v) = v {
                 crate::native::post(crate::native::Msg::Data(key.into(), v));
@@ -222,6 +238,7 @@ impl QuickPanel {
             Some(List::Outputs) => rows(self.outputs.len(), 12.0 + line(g, &cx.secondary(12.0))),
             Some(List::Apps) if self.apps.is_empty() => line(g, &cx.secondary(12.0)),
             Some(List::Apps) => rows(self.apps.len(), 24.0),
+            Some(List::Power) => Self::power_h(g, cx),
             None => 0.0,
         };
         inner + 24.0
@@ -239,6 +256,11 @@ impl QuickPanel {
             h += 12.0;
         }
         h + status
+    }
+
+    /// The power row's height (tiles like the big shortcut tiles).
+    fn power_h(g: &Gfx, cx: &Ctx) -> f32 {
+        12.0 + 14.0 + 7.0 + line(g, &cx.secondary(11.0)) + 10.0
     }
 
     fn tiles_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
@@ -525,8 +547,26 @@ impl Panel for QuickPanel {
                     }
                 }))
             }
+            Some(Hit::Power(i)) => {
+                let (action, _, _, confirm) = POWER[i];
+                if confirm && self.armed != Some(i) {
+                    self.armed = Some(i);
+                    return Reply::Redraw;
+                }
+                self.armed = None;
+                Reply::CloseAnd(Act::Run { action: action.into(), target: None })
+            }
             Some(Hit::Tile(i)) => {
+                let id = self.tiles().get(i).map(|t| t.0).unwrap_or("");
                 let target = self.tiles().get(i).map(|t| t.3).unwrap_or("");
+                if id == "power" {
+                    self.armed = None;
+                    self.toggle_list(List::Power);
+                    return match self.pending.take() {
+                        Some(a) => Reply::Do(a),
+                        None => Reply::Redraw,
+                    };
+                }
                 if target == "kasumi:settings" {
                     Reply::CloseAnd(Act::call(|app| crate::settings::open(&app)))
                 } else {
@@ -538,6 +578,7 @@ impl Panel for QuickPanel {
     }
     fn closed(&mut self) {
         // The panel shut: the list goes with it (no animation).
+        self.armed = None;
         self.list = None;
         self.shown_list = None;
         self.slide = None;
@@ -645,6 +686,31 @@ impl QuickPanel {
                     let tw2 = g.measure(&num, &nf);
                     g.text_at(&num, &nf, cx0 + col - tw2, cyy, with_alpha(cx.look.dimmed(), a));
                     boxes.push((Hit::Track(s), tx - ox, cyy - 8.0 - oy, tw, 16.0));
+                }
+            }
+            Some(List::Power) => {
+                let n = POWER.len() as f32;
+                let tw = (iw - (n - 1.0) * 8.0) / n;
+                let th = Self::power_h(g, cx);
+                let lf = cx.secondary(11.0);
+                for (i, (_, label, glyph, _)) in POWER.iter().enumerate() {
+                    let tx = ix + i as f32 * (tw + 8.0);
+                    let hovered = self.hovered == Some(Hit::Power(i));
+                    let armed = self.armed == Some(i);
+                    let bg = if armed {
+                        super::super::gfx::rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.22)
+                    } else if hovered {
+                        if cx.opts.accent { cx.hover_bg(0.14) } else { white(0.14) }
+                    } else {
+                        white(0.06)
+                    };
+                    g.fill_round(rect(tx, iy, tw, th), 12.0, with_alpha(bg, a));
+                    boxes.push((Hit::Power(i), tx - ox, iy - oy, tw, th));
+                    let gw = g.measure(glyph, &Font::icons(14.0));
+                    g.text_at(glyph, &Font::icons(14.0), tx + (tw - gw) / 2.0, iy + 12.0 + 7.0 + 1.0, with_alpha(cx.look.fg, a));
+                    let text = if armed { "Confirm?" } else { label };
+                    let lw = g.measure(text, &lf).min(tw - 12.0);
+                    g.text_at(&fit_text(g, text, &lf, tw - 12.0), &lf, tx + (tw - lw) / 2.0, iy + 12.0 + 14.0 + 7.0 + line(g, &lf) / 2.0, with_alpha(if armed { cx.look.fg } else { cx.look.dimmed() }, a));
                 }
             }
             None => {}

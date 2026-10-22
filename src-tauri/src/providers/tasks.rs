@@ -35,6 +35,40 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Set by the WinEvent hook; the scan timer clears it.
 static DIRTY: AtomicBool = AtomicBool::new(true);
+/// Windows that asked for attention (FlashWindow: the taskbar button flashes), until
+/// they come to the front.
+static ATTENTION: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
+/// The shell hook's message (RegisterWindowMessage "SHELLHOOK").
+static SHELLHOOK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The shell hook window's messages: HSHELL_FLASH marks a window as asking for attention.
+unsafe extern "system" fn hook_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> windows::Win32::Foundation::LRESULT {
+    const HSHELL_FLASH: usize = 0x8006;
+    if msg != 0 && msg == SHELLHOOK.load(Ordering::Relaxed) && wp.0 == HSHELL_FLASH {
+        let mut list = ATTENTION.lock().unwrap();
+        if !list.contains(&lp.0) {
+            list.push(lp.0);
+            DIRTY.store(true, Ordering::Relaxed);
+        }
+        return windows::Win32::Foundation::LRESULT(0);
+    }
+    windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(h, msg, wp, lp)
+}
+
+/// A hidden window that hears the shell hook (apps flashing their taskbar button).
+unsafe fn shell_hook() {
+    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, RegisterClassW, RegisterShellHookWindow, RegisterWindowMessageW, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP};
+    let Ok(instance) = windows::Win32::System::LibraryLoader::GetModuleHandleW(None) else { return };
+    RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(hook_proc), hInstance: instance.into(), lpszClassName: windows::core::w!("KasumiShellHook"), ..Default::default() });
+    let Ok(h) = CreateWindowExW(WS_EX_TOOLWINDOW, windows::core::w!("KasumiShellHook"), windows::core::w!("Kasumi"), WS_POPUP, 0, 0, 0, 0, None, None, Some(instance.into()), None) else {
+        eprintln!("[kasumi] tasks: no shell hook window");
+        return;
+    };
+    SHELLHOOK.store(RegisterWindowMessageW(windows::core::w!("SHELLHOOK")), Ordering::Relaxed);
+    if !RegisterShellHookWindow(h).as_bool() {
+        eprintln!("[kasumi] tasks: couldn't register the shell hook (no attention dots)");
+    }
+}
 
 /// System.AppUserModel.ID
 const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
@@ -257,6 +291,7 @@ fn run(app: AppHandle) {
         ] {
             SetWinEventHook(lo, hi, None, Some(on_event), 0, 0, flags);
         }
+        shell_hook();
         // Rescan when something changed (at most every 120 ms), and every few
         // seconds anyway in case an event was missed.
         SetTimer(None, 0, 120, None);
@@ -472,10 +507,17 @@ fn scan(app: &AppHandle) {
             })
         })
         .collect();
+    // Asking for attention until it comes to the front (or goes away).
+    let attention = {
+        let mut a = ATTENTION.lock().unwrap();
+        a.retain(|h| windows.iter().any(|w| w.0 as isize == *h && !w.3));
+        a.clone()
+    };
     let list: Vec<Value> = windows
         .iter()
         .map(|(id, title, key, active, minimized, monitor, z)| {
-            json!({ "hwnd": id, "title": title, "app": key, "active": active, "minimized": minimized, "monitor": monitor, "z": z })
+            let attention = attention.contains(&(*id as isize));
+            json!({ "hwnd": id, "title": title, "app": key, "active": active, "minimized": minimized, "monitor": monitor, "z": z, "attention": attention })
         })
         .collect();
     drop(st);
@@ -604,6 +646,12 @@ pub async fn task_activate(hwnd_id: isize, toggle: bool) -> Result<(), String> {
     }
     DIRTY.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+/// Scrolling over an app: its volume up or down (its new level, if it plays anything).
+pub fn task_app_volume(app_key: &str, delta: f32) -> Option<f32> {
+    let exe = state().lock().unwrap().apps.get(app_key).map(|a| a.exe.clone())?;
+    super::audio::app_volume_step(&exe, delta)
 }
 
 /// Files dropped on an app: opened with it, through its exe (or its taskbar shortcut)

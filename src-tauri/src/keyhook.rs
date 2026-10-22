@@ -1,6 +1,7 @@
 //! The keyboard hook, in a small helper process (`Kasumi.exe --keyhook <pid>`):
-//! the volume keys (osd/volume.rs) and the Windows key opening the launcher
-//! instead of Start ([launcher] start_menu).
+//! the volume keys (osd/volume.rs), the Windows key opening the launcher
+//! instead of Start ([launcher] start_menu), and Win + 1..9 opening the tasks
+//! widget's apps ([widgets.tasks] win_keys).
 //!
 //! Why a separate process: while one of our windows had the focus, Windows didn't
 //! run a low-level hook of ours that was first in line, nor the hooks after it.
@@ -50,6 +51,9 @@ struct Events {
     replace_volume: HANDLE,
     start_key: HANDLE,
     volume: [HANDLE; 3],
+    /// Win + 1..9 on (switch), and one signal per digit.
+    win_keys: HANDLE,
+    digits: [HANDLE; 9],
 }
 unsafe impl Send for Events {}
 unsafe impl Sync for Events {}
@@ -65,6 +69,8 @@ fn events() -> &'static Events {
             replace_volume: make("ReplaceVolume", true),
             start_key: make("StartKey", true),
             volume: [make("VolumeUp", false), make("VolumeDown", false), make("VolumeMute", false)],
+            win_keys: make("WinKeys", true),
+            digits: std::array::from_fn(|i| make(&format!("WinDigit{}", i + 1), false)),
         }
     })
 }
@@ -110,6 +116,27 @@ pub fn start(on_volume: fn(VolumeKey)) {
         .expect("spawn volume key thread");
 }
 
+/// Hands the Win + 1..9 presses the helper signals to `on_digit` (1..=9).
+pub fn on_win_digit(on_digit: fn(u8)) {
+    let digits = events().digits.map(|h| h.0 as isize);
+    std::thread::Builder::new()
+        .name("kasumi-winkeys".into())
+        .spawn(move || loop {
+            let handles = digits.map(|h| HANDLE(h as *mut _));
+            let r = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
+            match r.0.wrapping_sub(WAIT_OBJECT_0.0) {
+                i @ 0..=8 => on_digit(i as u8 + 1),
+                _ => return,
+            }
+        })
+        .expect("spawn win key thread");
+}
+
+/// Whether Win + 1..9 open the tasks widget's apps.
+pub fn set_win_keys(on: bool) {
+    set(events().win_keys, on);
+}
+
 /// Whether the helper takes over the volume keys (the OSD handles them).
 pub fn set_replace_volume(on: bool) {
     set(events().replace_volume, on);
@@ -124,6 +151,10 @@ pub fn set_start_key(on: bool) {
 
 /// A physical Windows key that's down but held back from Windows (its vk; 0 = none).
 static WIN_HELD: AtomicU32 = AtomicU32::new(0);
+/// A Windows key that's down and Windows has seen (Win + 1..9 then need care: see on_key).
+static WIN_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The held-back Windows key was used for Win + 1..9: its release does nothing.
+static WIN_USED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Tags the keys we send, so the hook lets them through (low bits clear: see
 /// win::send_keys).
 const OURS: usize = 0x534E_0000;
@@ -159,6 +190,20 @@ fn on_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
         return true;
     }
     let held = WIN_HELD.load(Ordering::Relaxed) as u16;
+    // Win + 1..9: the tasks widget's apps (the digit never reaches Windows).
+    if (0x31..=0x39).contains(&vk) && is_set(ev.win_keys) && (held != 0 || WIN_DOWN.load(Ordering::Relaxed)) {
+        if down {
+            if held == 0 {
+                // Windows saw Win go down: a key in between (one no keyboard has) keeps its
+                // release from opening Start.
+                crate::win::send_keys(&[KeyEvent::key(VIRTUAL_KEY(0xE8), false), KeyEvent::key(VIRTUAL_KEY(0xE8), true)], OURS);
+            } else {
+                WIN_USED.store(true, Ordering::Relaxed);
+            }
+            set(ev.digits[(vk - 0x31) as usize], true);
+        }
+        return true;
+    }
     if vk == VK_LWIN.0 || vk == VK_RWIN.0 {
         if down {
             if held != 0 {
@@ -166,15 +211,20 @@ fn on_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
             }
             let simulated = info.flags.0 & LLKHF_INJECTED.0 != 0 && info.dwExtraInfo != AS_PHYSICAL;
             if simulated || !is_set(ev.start_key) {
+                WIN_DOWN.store(!simulated, Ordering::Relaxed);
                 return false;
             }
             WIN_HELD.store(vk as u32, Ordering::Relaxed);
             return true;
         }
+        WIN_DOWN.store(false, Ordering::Relaxed);
         if held != vk {
             return false; // Windows has seen this one (a shortcut): its release too
         }
         WIN_HELD.store(0, Ordering::Relaxed);
+        if WIN_USED.swap(false, Ordering::Relaxed) {
+            return true; // used for Win + 1..9: no Start, no launcher
+        }
         let k = KeyEvent::key;
         let (ctrl, alt, shift, key) = (VK_LCONTROL, VK_LMENU, VK_LSHIFT, START_HOTKEY.1);
         crate::win::send_keys(

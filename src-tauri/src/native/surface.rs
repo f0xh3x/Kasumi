@@ -63,6 +63,35 @@ struct Placed {
     fades: bool,
     /// Where it was last drawn (window px, logical): x, centre y, alpha.
     drawn: Option<(f32, f32, f32)>,
+    /// Open bar: sliding from where it was (px off its place) since when (main.ts flipBar).
+    slide: Option<(f32, Instant)>,
+    /// Hidden under a window (hide_when_maximized), and since when that changed: it fades
+    /// out where it was drawn, or back in (the page's .covered, 160 ms).
+    covered: bool,
+    cover_at: Option<(Instant, Option<(f32, f32)>)>,
+}
+
+/// The two small motions: a covered widget fading, an open bar's widget sliding over.
+const COVER_MS: f32 = 160.0;
+const SLIDE_MS: f32 = 220.0;
+
+impl Placed {
+    /// How far into its cover fade (0..1), if it's in one.
+    fn cover_k(&self, now: Instant) -> Option<f32> {
+        let (t, _) = self.cover_at?;
+        let k = now.saturating_duration_since(t).as_secs_f32() * 1000.0 / COVER_MS;
+        (k < 1.0).then_some(k)
+    }
+    /// Its slide's offset now (px), if it's sliding (eased out, like the page's
+    /// cubic-bezier(0.2, 0.8, 0.2, 1)).
+    fn slide_dx(&self, now: Instant) -> Option<f32> {
+        let (dx, t) = self.slide?;
+        let k = now.saturating_duration_since(t).as_secs_f32() * 1000.0 / SLIDE_MS;
+        (k < 1.0).then(|| dx * (1.0 - k).powi(3))
+    }
+    fn moving(&self, now: Instant) -> bool {
+        self.cover_k(now).is_some() || self.slide_dx(now).is_some()
+    }
 }
 
 /// A panel and its box.
@@ -143,17 +172,20 @@ impl Drop {
     }
 }
 
+/// How long the cursor rests on a widget before its hint shows.
+const TIP_MS: u64 = 500;
+
 /// The layered window's bitmap.
-struct Dib {
-    dc: HDC,
+pub(super) struct Dib {
+    pub(super) dc: HDC,
     bmp: HBITMAP,
     bits: *mut u8,
-    w: i32,
-    h: i32,
+    pub(super) w: i32,
+    pub(super) h: i32,
 }
 
 impl Dib {
-    fn new(w: i32, h: i32) -> Result<Dib> {
+    pub(super) fn new(w: i32, h: i32) -> Result<Dib> {
         unsafe {
             let dc = CreateCompatibleDC(None);
             let bmi = BITMAPINFO {
@@ -211,6 +243,15 @@ pub struct Surface {
     size: SIZE,
     pos: POINT,
     tracking: bool,
+    /// The hovered widget's hint: the window, what it should show and where (screen
+    /// px), since when the cursor rests on it, and a hint a click put away (until the
+    /// cursor moves to something else).
+    tip: super::tooltip::Tooltip,
+    tip_want: Option<(String, (i32, i32))>,
+    tip_since: Option<Instant>,
+    tip_blocked: Option<String>,
+    /// Live window previews shown on a panel: window, DWM thumbnail, its box (device px).
+    thumbs: Vec<(isize, isize, [i32; 4])>,
     /// What the engine was last told, and what's waiting to be told.
     sent_widths: String,
     sent_regions: String,
@@ -288,6 +329,11 @@ impl Surface {
             size: SIZE { cx: w, cy: 1 },
             pos: POINT::default(),
             tracking: false,
+            tip: Default::default(),
+            tip_want: None,
+            tip_since: None,
+            tip_blocked: None,
+            thumbs: Vec::new(),
             sent_widths: String::new(),
             sent_regions: String::new(),
             pending_widths: None,
@@ -440,7 +486,7 @@ impl Surface {
                         c(a).total_cmp(&c(b))
                     });
                 if let Some(di) = middle {
-                    self.widgets.push(Placed { name: "launcher".into(), w: Box::new(widgets::launcher::LauncherWidget::new(&lopts, true)), opts: lopts.clone(), notch: Some(di), width: 0.0, open_width: 0.0, bar_x: None, slot_x: 0.0, fades: false, drawn: None });
+                    self.widgets.push(Placed { name: "launcher".into(), w: Box::new(widgets::launcher::LauncherWidget::new(&lopts, true)), opts: lopts.clone(), notch: Some(di), width: 0.0, open_width: 0.0, bar_x: None, slot_x: 0.0, fades: false, drawn: None, slide: None, covered: false, cover_at: None });
                     let wi = self.widgets.len() - 1;
                     self.drops[di].slot.push(wi);
                     let pi = self.panels.len();
@@ -492,7 +538,7 @@ impl Surface {
     fn add_widget(&mut self, name: &str, notch: Option<usize>) -> usize {
         let opts = self.opts_for(name);
         let w = widgets::create(name, opts.clone());
-        self.widgets.push(Placed { name: name.to_string(), w, opts, notch, width: 0.0, open_width: 0.0, bar_x: None, slot_x: 0.0, fades: false, drawn: None });
+        self.widgets.push(Placed { name: name.to_string(), w, opts, notch, width: 0.0, open_width: 0.0, bar_x: None, slot_x: 0.0, fades: false, drawn: None, slide: None, covered: false, cover_at: None });
         self.widgets.len() - 1
     }
 
@@ -758,6 +804,9 @@ impl Surface {
     }
 
     pub fn tick(&mut self, gfx: &Gfx, now: Instant) {
+        if self.tip_since.is_some_and(|t| now >= t + std::time::Duration::from_millis(TIP_MS)) {
+            self.show_tip(gfx);
+        }
         // A hover-opened panel the cursor has left.
         if let Some((wi, Some(left))) = self.hover_panel {
             if now >= left + std::time::Duration::from_millis(350) {
@@ -809,11 +858,16 @@ impl Surface {
 
     pub fn wake(&self) -> Option<Instant> {
         let hover = self.hover_panel.and_then(|(_, left)| left).map(|t| t + std::time::Duration::from_millis(350));
-        hover.into_iter().chain(self.widgets.iter().filter_map(|w| w.w.wake())).chain(self.panels.iter().filter_map(|p| p.p.wake())).chain(self.pop.wake()).min()
+        let tip = self.tip_since.map(|t| t + std::time::Duration::from_millis(TIP_MS));
+        hover.into_iter().chain(tip).chain(self.widgets.iter().filter_map(|w| w.w.wake())).chain(self.panels.iter().filter_map(|p| p.p.wake())).chain(self.pop.wake()).min()
     }
 
     pub fn set_shown(&mut self, shown: bool) {
         self.shown = shown;
+        if !shown {
+            self.tip.hide();
+            self.tip_since = None;
+        }
         if !self.offscreen {
             unsafe {
                 let _ = ShowWindow(self.hwnd, if shown { SW_SHOWNOACTIVATE } else { SW_HIDE });
@@ -981,6 +1035,23 @@ impl Surface {
                 x += self.widgets[wi].width + gap;
             }
         }
+        // Widgets just covered fade out where they were; uncovered ones fade back in.
+        let now = Instant::now();
+        let mut moved = false;
+        for di in 0..self.drops.len() {
+            for wi in self.drops[di].slot.clone() {
+                let c = self.covered(&self.drops[di], wi);
+                let p = &mut self.widgets[wi];
+                if c != p.covered {
+                    p.covered = c;
+                    p.cover_at = Some((now, p.drawn.filter(|d| d.2 > 0.0).map(|d| (d.0, d.1))));
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            self.kick();
+        }
     }
 
     /// A slot's padding on each side: a corner notch's content keeps to the corner,
@@ -1076,12 +1147,23 @@ impl Surface {
                 }
             }
         }
+        let was: Vec<Option<f32>> = self.widgets.iter().map(|p| p.bar_x).collect();
+        let visible = self.expanded && self.expand.value > 0.5;
+        let now = Instant::now();
         for p in &mut self.widgets {
             p.bar_x = None;
             p.fades = false;
         }
         for (wi, x) in places {
-            self.widgets[wi].bar_x = Some(x.round());
+            let x = x.round();
+            let p = &mut self.widgets[wi];
+            p.bar_x = Some(x);
+            // Moved in the open bar (a title got longer, a widget appeared): slide over.
+            if let (true, None, Some(old)) = (visible, p.notch, was[wi]) {
+                if (old - x).abs() > 1.0 {
+                    p.slide = Some((old - x + p.slide_dx(now).unwrap_or(0.0), now));
+                }
+            }
         }
         for wi in fades {
             self.widgets[wi].fades = true;
@@ -1379,7 +1461,7 @@ impl Surface {
         }
         // Cascades run on time (a spring is nearly open within ~100 ms): frames until they're done.
         let cascading = self.panels.iter().any(|p| p.cascade.is_some_and(|t0| now < t0 + cascade_length(p.p.pieces().len())));
-        let busy = self.widgets.iter().any(|w| w.w.animating(now)) || panels_moving || cascading || bouncing;
+        let busy = self.widgets.iter().any(|w| w.w.animating(now) || w.moving(now)) || panels_moving || cascading || bouncing;
         if springs.iter().all(|s| s.settled()) && !busy {
             for s in springs.iter_mut() {
                 s.snap();
@@ -1399,6 +1481,7 @@ impl Surface {
 
     /// Draws the surface into its window, only as tall as what shows.
     pub fn render(&mut self, gfx: &Gfx) -> Result<()> {
+        let now = Instant::now();
         self.update_cascades();
         let order = self.ordered();
         let (bumps, frame) = self.frame_of(&order, false);
@@ -1509,10 +1592,21 @@ impl Surface {
                 }
                 let x = (x * scale).round() / scale;
                 let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: if dock { row_h_dock } else { row as f32 }, open: bar_open };
+                let alpha = alpha * p.cover_k(now).unwrap_or(1.0);
                 if alpha > 0.0 {
                     p.w.draw(&cx, x, cy, alpha);
                 }
                 drawn.push((wi, Some((x, cy, alpha))));
+            }
+            // Just covered: fading out where it was.
+            for &wi in &d.slot {
+                let p = &self.widgets[wi];
+                let (true, Some(k), Some((Some((x, wy)), _))) = (p.covered, p.cover_k(now), p.cover_at.map(|c| (c.1, ()))) else { continue };
+                let a = alpha * (1.0 - k);
+                if a > 0.0 {
+                    let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: if dock { row_h_dock } else { row as f32 }, open: bar_open };
+                    p.w.draw(&cx, x, wy, a);
+                }
             }
         }
 
@@ -1557,6 +1651,7 @@ impl Surface {
                     continue;
                 }
                 let Some(x) = p.bar_x else { continue };
+                let x = x + p.slide_dx(now).unwrap_or(0.0);
                 let a = alpha as f32 * if p.fades { fade } else { 1.0 };
                 if a > 0.0 {
                     let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: h_bar as f32, open: 1.0 };
@@ -1660,7 +1755,68 @@ impl Surface {
         }
         self.size = size;
         self.pos = pos;
+        self.sync_thumbs();
         Ok(())
+    }
+
+    /// Windows' live previews (DWM thumbnails) on a fully open panel's cards. They can't
+    /// be clipped to the shape, so they show once the panel is open and go as it closes.
+    fn sync_thumbs(&mut self) {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::Graphics::Dwm::*;
+        let scale = self.scale();
+        let mut want: Vec<(isize, [i32; 4])> = Vec::new();
+        if !self.offscreen {
+            for d in &self.drops {
+                let Some(pi) = d.active else { continue };
+                if d.spring.target < 0.5 || d.spring.value < 0.97 {
+                    continue;
+                }
+                let Some((left, top)) = self.panels[pi].drawn else { continue };
+                for (h, (x, y, w, hh)) in self.panels[pi].p.thumbs() {
+                    let r = [((left + x) * scale) as i32, ((top + y) * scale) as i32, ((left + x + w) * scale) as i32, ((top + y + hh) * scale) as i32];
+                    want.push((h, r));
+                }
+            }
+        }
+        // Gone (or moved): let go of the old ones.
+        self.thumbs.retain(|(h, id, r)| {
+            let keep = want.iter().any(|(wh, wr)| wh == h && wr == r);
+            if !keep {
+                unsafe {
+                    let _ = DwmUnregisterThumbnail(*id);
+                }
+            }
+            keep
+        });
+        for (h, r) in want {
+            if self.thumbs.iter().any(|(th, _, _)| *th == h) {
+                continue;
+            }
+            unsafe {
+                let Ok(id) = DwmRegisterThumbnail(self.hwnd, HWND(h as _)) else { continue };
+                // Fit the window's shape into the box, centred.
+                let (bw, bh) = ((r[2] - r[0]) as f32, (r[3] - r[1]) as f32);
+                let (mut fw, mut fh) = (bw, bh);
+                if let Ok(src) = DwmQueryThumbnailSourceSize(id) {
+                    if src.cx > 0 && src.cy > 0 {
+                        let k = (bw / src.cx as f32).min(bh / src.cy as f32);
+                        (fw, fh) = (src.cx as f32 * k, src.cy as f32 * k);
+                    }
+                }
+                let (x0, y0) = (r[0] + ((bw - fw) / 2.0) as i32, r[1] + ((bh - fh) / 2.0) as i32);
+                let props = DWM_THUMBNAIL_PROPERTIES {
+                    dwFlags: DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY,
+                    rcDestination: RECT { left: x0, top: y0, right: x0 + fw as i32, bottom: y0 + fh as i32 },
+                    opacity: 255,
+                    fVisible: true.into(),
+                    fSourceClientAreaOnly: false.into(),
+                    ..Default::default()
+                };
+                let _ = DwmUpdateThumbnailProperties(id, &props);
+                self.thumbs.push((h, id, r));
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1789,6 +1945,25 @@ impl Surface {
             let local = over_widget.filter(|(w, _)| *w == wi).map(|(_, l)| l);
             changed |= self.widgets[wi].w.hover(local);
         }
+        // The hint of what's under the cursor: bar widgets only, not while a panel is open.
+        let panel_open = self.drops.iter().any(|d| d.spring.target > 0.5);
+        let want = match (pt, over_widget) {
+            (Some((x, _)), Some((wi, _))) if self.layout.tooltips && !panel_open => self.widgets[wi].w.tooltip().zip(self.widgets[wi].drawn).map(|(text, (_, cy, _))| {
+                let l = &self.layout;
+                let row = match (self.dock(), self.expanded) {
+                    (true, true) => l.open_height,
+                    (true, false) => l.rest_height,
+                    (false, true) => l.geometry.expanded_height,
+                    (false, false) => l.geometry.notch_height,
+                } as f32;
+                let s = self.scale();
+                // Past the row's far side (below a top bar, above a bottom one).
+                let edge = if self.bottom() { cy - row / 2.0 - super::tooltip::GAP } else { cy + row / 2.0 + super::tooltip::GAP };
+                (text, (self.pos.x + (x * s) as i32, self.pos.y + (edge * s) as i32))
+            }),
+            _ => None,
+        };
+        self.set_tip(gfx, want);
         if changed {
             // Hover effects that move (dock icons magnifying) draw frames until they settle.
             let now = Instant::now();
@@ -1880,7 +2055,62 @@ impl Surface {
     }
 
     /// The left button down: a panel part that drags (a slider) takes the mouse.
+    pub fn has_tasks(&self) -> bool {
+        self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "tasks")
+    }
+
+    pub fn on_monitor(&self, x: i32, y: i32) -> bool {
+        let m = &self.monitor;
+        x >= m.left && x < m.right && y >= m.top && y < m.bottom
+    }
+
+    /// Win + n: the tasks widget's nth app.
+    pub fn win_key(&mut self, n: usize) {
+        if let Some(act) = self.widgets.iter_mut().find_map(|w| w.w.win_key(n)) {
+            self.pending.push(act);
+        }
+    }
+
+    /// What the hint should show (see `mouse_move`): after a moment, or right away when
+    /// one is up already (moving along the bar).
+    fn set_tip(&mut self, gfx: &Gfx, want: Option<(String, (i32, i32))>) {
+        let Some((text, at)) = want else {
+            self.tip_want = None;
+            self.tip_since = None;
+            self.tip_blocked = None;
+            self.tip.hide();
+            return;
+        };
+        if self.tip_blocked.as_deref() == Some(text.as_str()) {
+            return;
+        }
+        self.tip_blocked = None;
+        let same = self.tip_want.as_ref().is_some_and(|w| w.0 == text);
+        self.tip_want = Some((text.clone(), at));
+        if self.tip.shown() {
+            if self.tip.text != text {
+                self.show_tip(gfx);
+            }
+        } else if !same || self.tip_since.is_none() {
+            self.tip_since = Some(Instant::now());
+        }
+    }
+
+    fn show_tip(&mut self, gfx: &Gfx) {
+        self.tip_since = None;
+        if let Some((text, at)) = self.tip_want.clone() {
+            let bounds = (self.monitor.left, self.monitor.right);
+            if let Err(e) = self.tip.show(gfx, &self.look, &text, at, self.bottom(), bounds, self.scale()) {
+                eprintln!("[kasumi] {}: tooltip: {e}", self.label);
+            }
+        }
+    }
+
     pub fn press(&mut self, gfx: &Gfx, at: (i32, i32)) -> bool {
+        // A click puts the hint away until the cursor moves to something else.
+        self.tip_blocked = self.tip_want.take().map(|w| w.0);
+        self.tip_since = None;
+        self.tip.hide();
         let (x, y) = self.logical(at);
         let Some((_, pi, local)) = self.panel_at(x, y) else {
             // A widget that drags (tasks).
@@ -1971,7 +2201,11 @@ impl Surface {
     /// The wheel over a panel (sliders step with it).
     pub fn wheel(&mut self, gfx: &Gfx, at: (i32, i32), notches: f32) -> Option<Act> {
         let (x, y) = self.logical(at);
-        let (_, pi, local) = self.panel_at(x, y)?;
+        let Some((_, pi, local)) = self.panel_at(x, y) else {
+            // Over a widget (tasks: cycle an app's windows, or its volume).
+            let (wi, local) = self.widget_at(gfx, x, y)?;
+            return self.widgets[wi].w.wheel(local, notches);
+        };
         let reply = self.panels[pi].p.wheel(local, notches);
         let act = self.answer(gfx, reply);
         self.redraw(gfx);

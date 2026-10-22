@@ -27,6 +27,8 @@ const PAUSE: &str = "\u{E769}";
 pub struct Media {
     opts: Opts,
     line: Option<String>,
+    /// Title, and the artist under it.
+    tip: String,
     playing: bool,
     can: [bool; 3],
     hovered: Option<usize>,
@@ -43,7 +45,7 @@ const KEYS_W: f32 = 3.0 * KEY_W + 2.0 * 2.0;
 
 impl Media {
     pub fn new(opts: Opts) -> Media {
-        Media { opts, line: None, playing: false, can: [false; 3], hovered: None, keys_x: 0.0, label_w: 0.0, box_w: 0.0 }
+        Media { opts, line: None, tip: String::new(), playing: false, can: [false; 3], hovered: None, keys_x: 0.0, label_w: 0.0, box_w: 0.0 }
     }
 
     fn keys(&self) -> &str {
@@ -96,6 +98,10 @@ impl Widget for Media {
     fn keys(&self) -> &'static [&'static str] {
         &["media"]
     }
+    fn tooltip(&self) -> Option<String> {
+        // Not over the keys: those say what they do by their icons.
+        (self.line.is_some() && self.hovered.is_none()).then(|| self.tip.clone()).filter(|t| !t.is_empty())
+    }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         if v.is_null() {
             let had = self.line.is_some();
@@ -105,6 +111,7 @@ impl Widget for Media {
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
         let b = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
         let (title, artist) = (s("title"), s("artist"));
+        self.tip = if artist.is_empty() { title.clone() } else { format!("{title}\n{artist}") };
         let line = Some(if artist.is_empty() { title } else { format!("{title} — {artist}") });
         let can = [b("canPrevious"), b("canPlayPause"), b("canNext")];
         let changed = line != self.line || b("playing") != self.playing || can != self.can;
@@ -265,13 +272,14 @@ pub fn network_glyph(n: &Value) -> &'static str {
 /// The quick settings button: battery (on PCs with one) or a gear (`icon`), its panel the settings.
 pub struct Quick {
     opts: Opts,
+    tip: String,
     glyph: String,
     value: Roll,
 }
 
 impl Quick {
     pub fn new(opts: Opts) -> Quick {
-        Quick { opts, glyph: "\u{E713}".into(), value: Roll::default() }
+        Quick { opts, tip: "Quick settings".into(), glyph: "\u{E713}".into(), value: Roll::default() }
     }
     fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
         let mut out = vec![Piece::glyph(self.glyph.clone(), 14.0, cx.look.fg)];
@@ -286,6 +294,9 @@ impl Quick {
 impl Widget for Quick {
     fn keys(&self) -> &'static [&'static str] {
         &["system"]
+    }
+    fn tooltip(&self) -> Option<String> {
+        Some(self.tip.clone())
     }
     fn data(&mut self, _key: &str, s: &Value) -> bool {
         let mode = self.opts.str("icon").unwrap_or("auto");
@@ -307,6 +318,16 @@ impl Widget for Quick {
             "custom" if self.opts.str("custom_icon").is_some_and(|c| !c.is_empty()) => self.opts.str("custom_icon").unwrap().into(),
             _ => "\u{E713}".into(),
         };
+        let net = s.get("network").filter(|n| n.get("connected").and_then(|c| c.as_bool()).unwrap_or(false));
+        self.tip = match show {
+            "battery" => battery.and_then(|b| {
+                let p = b.get("percent")?.as_f64()?;
+                Some(format!("Battery {p}%{}", if b.get("charging").and_then(|c| c.as_bool()).unwrap_or(false) { ", charging" } else { "" }))
+            }),
+            "network" => Some(net.and_then(|n| n.get("name")?.as_str().map(String::from)).unwrap_or_else(|| "Not connected".into())),
+            _ => None,
+        }
+        .unwrap_or_else(|| "Quick settings".into());
         let changed = glyph != self.glyph;
         self.glyph = glyph;
         self.value.set(text, self.opts.roll) || changed
@@ -326,6 +347,7 @@ impl Widget for Quick {
 
 struct TrayIcon {
     id: String,
+    tip: String,
     rgba: String,
     px: Option<Pixels>,
 }
@@ -363,6 +385,13 @@ impl Widget for Tray {
     fn keys(&self) -> &'static [&'static str] {
         &["tray"]
     }
+    fn tooltip(&self) -> Option<String> {
+        if !self.inline() {
+            let n = self.icons.len();
+            return Some(if n == 0 { "No tray icons".into() } else { format!("{n} tray icon{}", if n == 1 { "" } else { "s" }) });
+        }
+        self.icons.get(self.hovered?).map(|i| i.tip.clone()).filter(|t| !t.is_empty())
+    }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let list = v.as_array().cloned().unwrap_or_default();
         self.icons = list
@@ -371,7 +400,9 @@ impl Widget for Tray {
                 let id = i.get("id")?.as_str()?.to_string();
                 let rgba = i.get("rgba")?.as_str()?.to_string();
                 let fresh = !self.bitmaps.get(&id).is_some_and(|(r, _)| *r == rgba);
-                Some(TrayIcon { id, px: if fresh { decode(i) } else { None }, rgba })
+                let s = |k: &str| i.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let tip = Some(s("tip")).filter(|t| !t.is_empty()).unwrap_or_else(|| s("exe"));
+                Some(TrayIcon { id, tip, px: if fresh { decode(i) } else { None }, rgba })
             })
             .collect();
         true

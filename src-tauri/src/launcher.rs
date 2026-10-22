@@ -205,6 +205,10 @@ pub fn start(app: &AppHandle) {
                             }
                         }
                         crate::keyhook::set_start_key(start);
+                        // Win + 1..9: the native bars' tasks widget (on unless switched off).
+                        let win_keys = crate::native::active()
+                            && cfg.widgets.get("tasks").and_then(|t| t.get("win_keys")).and_then(|v| v.as_bool()) != Some(false);
+                        crate::keyhook::set_win_keys(win_keys);
                         let hotkey = cfg.launcher.hotkey.trim();
                         (cfg.launcher.enabled && !hotkey.is_empty()).then(|| hotkey.to_string())
                     };

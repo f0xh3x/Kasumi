@@ -11,6 +11,7 @@ mod icons;
 mod popup;
 pub mod snapshot;
 mod surface;
+mod tooltip;
 mod widgets;
 
 use std::cell::RefCell;
@@ -108,6 +109,13 @@ pub enum Msg {
     Entries(String, serde_json::Map<String, Value>),
     Shown(String, bool),
     ClickThrough(String, bool),
+    /// Win + n (1..9): the tasks widget's nth app, on the monitor under the cursor.
+    WinKey(u8),
+}
+
+/// Win + n from the keyboard helper.
+pub fn win_key(n: u8) {
+    post(Msg::WinKey(n));
 }
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -386,6 +394,15 @@ impl Native {
             Msg::ClickThrough(label, ignore) => {
                 if let Some(s) = self.surface(&label) {
                     s.set_click_through(ignore);
+                }
+            }
+            Msg::WinKey(n) => {
+                // The bar on the cursor's monitor if it has a tasks widget, else the first that does.
+                let at = crate::win::cursor_pos();
+                let here = self.surfaces.iter().position(|s| s.has_tasks() && at.is_some_and(|(x, y)| s.on_monitor(x, y)));
+                let any = self.surfaces.iter().position(|s| s.has_tasks());
+                if let Some(i) = here.or(any) {
+                    self.surfaces[i].win_key(n as usize);
                 }
             }
         }

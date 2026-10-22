@@ -26,11 +26,21 @@ pub fn menu_target() -> String {
     MENU_TARGET.with(|t| t.borrow().clone())
 }
 
+thread_local! {
+    /// The windows panel was opened by hovering the app (previews may show), not by a right click.
+    static MENU_HOVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn menu_by_hover() -> bool {
+    MENU_HOVER.with(|h| h.get())
+}
+
 #[derive(Clone, Debug)]
 struct Win {
     hwnd: i64,
     title: String,
     active: bool,
+    attention: bool,
     minimized: bool,
     z: i64,
 }
@@ -38,9 +48,28 @@ struct Win {
 /// How long files are held over a running app before its window comes up.
 const DRAG_RAISE_MS: u64 = 600;
 
+/// The attention dot flashes: this long on, as long off.
+const BLINK_MS: u128 = 600;
+
+fn blink_epoch() -> Instant {
+    static T: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    *T.get_or_init(Instant::now)
+}
+
+fn blink_on(now: Instant) -> bool {
+    (now.saturating_duration_since(blink_epoch()).as_millis() / BLINK_MS).is_multiple_of(2)
+}
+
+/// When the dot next turns on or off.
+fn next_blink() -> Instant {
+    let since = Instant::now().saturating_duration_since(blink_epoch()).as_millis();
+    blink_epoch() + std::time::Duration::from_millis(((since / BLINK_MS + 1) * BLINK_MS) as u64)
+}
+
 #[derive(Clone, Debug)]
 struct App {
     key: String,
+    name: String,
     wins: Vec<Win>,
     pinned: bool,
     /// Its entry in the pin list (an app key or a dropped file's path).
@@ -224,9 +253,65 @@ impl Tasks {
     }
 }
 
+impl Tasks {
+    /// [widgets.tasks] attention (on).
+    fn attention(&self) -> bool {
+        self.opts.flag("attention") != Some(false)
+    }
+    /// An app here is asking for attention (its dot flashes).
+    fn flashing(&self) -> bool {
+        self.attention() && self.apps.iter().any(|a| a.wins.iter().any(|w| w.attention))
+    }
+}
+
 impl Widget for Tasks {
     fn keys(&self) -> &'static [&'static str] {
         &["tasks", "taskIcons"]
+    }
+    fn wheel(&mut self, at: (f32, f32), notches: f32) -> Option<Act> {
+        let i = self.boxes.iter().position(|(_, bx, bw)| at.0 >= *bx && at.0 < bx + bw)?;
+        let a = self.apps.get(i)?;
+        match self.opts.str("scroll").unwrap_or("windows") {
+            // Up: louder, 4% a notch; Kasumi's volume pop-up shows the app's level.
+            "volume" => {
+                let (key, delta) = (a.key.clone(), notches * 0.04);
+                Some(Act::call(move |app| {
+                    if let Some(level) = crate::providers::tasks::task_app_volume(&key, delta) {
+                        crate::osd::show(&app, "volume", level, false);
+                    }
+                }))
+            }
+            // Its windows in turn: down the next, up the one before.
+            "windows" if !a.wins.is_empty() => {
+                let mut wins: Vec<&Win> = a.wins.iter().collect();
+                wins.sort_by_key(|w| w.hwnd);
+                let n = wins.len() as i64;
+                let at = wins.iter().position(|w| w.active).map_or(-1, |k| k as i64);
+                let step = if notches < 0.0 { 1 } else { -1 };
+                let next = if at < 0 { 0 } else { (at + step).rem_euclid(n) };
+                let hwnd = wins[next as usize].hwnd as isize;
+                Some(Act::call(move |_| {
+                    let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(hwnd, false));
+                }))
+            }
+            _ => None,
+        }
+    }
+    fn win_key(&mut self, n: usize) -> Option<Act> {
+        let (_, bx, bw) = self.boxes.get(n.checked_sub(1)?).cloned()?;
+        match self.click(Button::Left, (bx + bw / 2.0, 0.0)) {
+            Reply::Do(act) => Some(act),
+            _ => None,
+        }
+    }
+    fn tooltip(&self) -> Option<String> {
+        // Several windows: their list pops up instead.
+        let a = self.apps.get(self.hovered?).filter(|_| self.drag.is_none())?;
+        match a.wins.len() {
+            0 => Some(if a.name.is_empty() { a.key.clone() } else { a.name.clone() }),
+            1 => Some(a.wins[0].title.clone()).filter(|t| !t.is_empty()),
+            _ => None,
+        }
     }
 
     fn data(&mut self, key: &str, v: &Value) -> bool {
@@ -255,7 +340,7 @@ impl Widget for Tasks {
                         let b = |k: &str| w.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
                         (
                             s("app"),
-                            Win { hwnd: w.get("hwnd").and_then(|x| x.as_i64()).unwrap_or(0), title: s("title"), active: b("active"), minimized: b("minimized"), z: w.get("z").and_then(|x| x.as_i64()).unwrap_or(0) },
+                            Win { hwnd: w.get("hwnd").and_then(|x| x.as_i64()).unwrap_or(0), title: s("title"), active: b("active"), attention: b("attention"), minimized: b("minimized"), z: w.get("z").and_then(|x| x.as_i64()).unwrap_or(0) },
                             s("monitor"),
                         )
                     })
@@ -272,7 +357,7 @@ impl Widget for Tasks {
                         let key = a.get("key")?.as_str()?.to_string();
                         let pinned = a.get("pinned").and_then(|p| p.as_bool()).unwrap_or(false);
                         let w: Vec<Win> = mine.iter().filter(|(k, _, _)| *k == key).map(|(_, w, _)| w.clone()).collect();
-                        ((pinning && pinned) || !w.is_empty()).then(|| App { key, wins: w, pinned, pin: a.get("pin").and_then(|p| p.as_str()).map(String::from) })
+                        ((pinning && pinned) || !w.is_empty()).then(|| App { name: a.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(), key, wins: w, pinned, pin: a.get("pin").and_then(|p| p.as_str()).map(String::from) })
                     })
                     .collect()
             })
@@ -361,6 +446,12 @@ impl Widget for Tasks {
                 Some(icon) => icon.draw(g, sx, sy, size * s, a_alpha * dim),
                 None => g.fill_round(rect(sx, sy, size * s, size * s), size * s * 0.25, white(0.15 * a_alpha)),
             }
+            // Asking for attention: an accent dot on the icon's corner, flashing.
+            if self.attention() && a.wins.iter().any(|w| w.attention) && blink_on(now) {
+                let r = (size * s * 0.13).max(3.0);
+                let (dx, dy) = (sx + size * s - r * 0.8, sy + r * 0.8);
+                g.fill_round(rect(dx - r, dy - r, 2.0 * r, 2.0 * r), r, with_alpha(cx.look.accent, a_alpha));
+            }
             if self.labels() {
                 if let Some(t) = a.wins.iter().find(|w| w.active) {
                     let label = fit_text(g, &t.title, &cx.body(), 160.0);
@@ -424,17 +515,21 @@ impl Widget for Tasks {
     fn wake(&self) -> Option<Instant> {
         let menu = self.hover_since.map(|(_, t)| t + std::time::Duration::from_millis(450));
         let raise = self.drag_hover.filter(|d| !d.2).map(|(_, t, _)| t + std::time::Duration::from_millis(DRAG_RAISE_MS));
-        [menu, raise].into_iter().flatten().min()
+        // The attention dot's next flash (on or off).
+        let blink = self.flashing().then(next_blink);
+        [menu, raise, blink].into_iter().flatten().min()
     }
 
     fn tick(&mut self, now: Instant) -> bool {
         if let Some((k, t)) = self.hover_since {
             if now >= t + std::time::Duration::from_millis(450) && self.hovered == Some(k) {
                 MENU_TARGET.with(|m| *m.borrow_mut() = self.apps[k].key.clone());
+                MENU_HOVER.with(|h| h.set(true));
                 self.open_request = true;
             }
             self.hover_since = None;
         }
+        let flashing = self.flashing();
         // Files held over a running app: bring its window up to drop them into.
         if let Some((k, t, false)) = self.drag_hover {
             if now >= t + std::time::Duration::from_millis(DRAG_RAISE_MS) {
@@ -447,7 +542,7 @@ impl Widget for Tasks {
                 }
             }
         }
-        false
+        flashing
     }
 
     fn act(&mut self) -> Option<Act> {
@@ -601,6 +696,7 @@ impl Widget for Tasks {
             Button::Right => {
                 self.hover_since = None;
                 MENU_TARGET.with(|t| *t.borrow_mut() = a.key.clone());
+                MENU_HOVER.with(|h| h.set(false));
                 Reply::TogglePanel
             }
         }
