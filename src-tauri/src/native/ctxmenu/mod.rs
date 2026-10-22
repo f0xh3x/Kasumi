@@ -70,26 +70,15 @@ fn seen_path() -> std::path::PathBuf {
     crate::config::dir().join("menu-seen.json")
 }
 
-/// Remembers a menu's entries for its kind of click: this time's first, in Windows'
-/// order, then ones seen before but not now (another file type's, say).
-fn remember(name: &str, entries: &[shell::Entry]) {
-    use serde_json::{json, Map, Value};
-    let path = seen_path();
-    let mut all: Map<String, Value> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let key = |v: &Value| {
-        let verb = v.get("verb").and_then(|x| x.as_str()).unwrap_or("");
-        if verb.is_empty() {
-            format!("text:{}", v.get("text").and_then(|x| x.as_str()).unwrap_or(""))
-        } else {
-            format!("verb:{verb}")
-        }
-    };
-    let mut merged: Vec<Value> = entries
+/// Entries as the editor lists them: text, verb, a submenu or not, the icon (Kasumi's
+/// glyph, or the app's own small bitmap).
+fn entries_json(entries: &[shell::Entry]) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    entries
         .iter()
         .filter(|e| !e.separator)
         .map(|e| {
             let mut v = json!({ "text": e.text, "verb": e.verb, "sub": e.sub.is_some() });
-            // Its icon, for the editor to show: Kasumi's glyph, or the app's own (small) bitmap.
             match &e.icon {
                 Some(shell::Icon::Glyph(g)) => v["glyph"] = json!(format!("{:X}", *g as u32)),
                 Some(shell::Icon::Bitmap((w, h, px))) if *w <= 32 && *h <= 32 => {
@@ -100,7 +89,24 @@ fn remember(name: &str, entries: &[shell::Entry]) {
             }
             v
         })
-        .collect();
+        .collect()
+}
+
+/// Remembers a menu's entries for its kind of click: this time's first, in Windows'
+/// order, then ones seen before but not now (another file type's, say).
+fn remember(name: &str, entries: &[shell::Entry]) {
+    use serde_json::{Map, Value};
+    let path = seen_path();
+    let mut all: Map<String, Value> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let key = |v: &Value| {
+        let verb = v.get("verb").and_then(|x| x.as_str()).unwrap_or("");
+        if verb.is_empty() {
+            format!("text:{}", v.get("text").and_then(|x| x.as_str()).unwrap_or(""))
+        } else {
+            format!("verb:{verb}")
+        }
+    };
+    let mut merged = entries_json(entries);
     if let Some(Value::Array(old)) = all.get(name) {
         for o in old {
             if !merged.iter().any(|m| key(m) == key(o)) {
@@ -120,7 +126,15 @@ fn remember(name: &str, entries: &[shell::Entry]) {
 /// Kasumi's default layout (what the editor starts from without one of your own).
 #[tauri::command]
 pub async fn context_menu_info() -> serde_json::Value {
-    let seen: serde_json::Value = std::fs::read_to_string(seen_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| serde_json::json!({}));
+    let mut seen: serde_json::Value = std::fs::read_to_string(seen_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| serde_json::json!({}));
+    // Kasumi's bar menu: all its entries (Power too), and its folders' own.
+    let bar = bar_entries(true, crate::presets::names_async().await);
+    seen["bar"] = serde_json::Value::Array(entries_json(&bar));
+    for e in &bar {
+        if let Some(Sub::Ready(items)) = &e.sub {
+            seen[format!("sub:{}", e.key)] = serde_json::Value::Array(entries_json(items));
+        }
+    }
     serde_json::json!({ "seen": seen, "default": layout::default_layout() })
 }
 
@@ -150,8 +164,9 @@ const TIMER_ANIM: usize = 2;
 struct Open {
     /// An Explorer menu: its view and Windows' menu (none: Kasumi's bar menu).
     shell: Option<(Target, Built)>,
-    /// Kasumi's bar menu: the app its entries run in.
+    /// Kasumi's bar menu: the app its entries run in, and its click (for its commands).
     app: Option<tauri::AppHandle>,
+    bar_ctx: Option<layout::Ctx>,
     /// An entry clicked once that asks for a second ("Confirm?").
     armed: Option<(usize, usize)>,
     levels: Vec<Level>,
@@ -480,12 +495,22 @@ fn request(defview: HWND, pt: POINT) {
     let (look, icons) = (look(cfg.as_ref()), menu_cfg.icons);
     let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
     remember(built.ctx.kind.name(), &built.entries);
-    let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, &target);
-    show(entries, pt, Some((target, built)), None, look, icons, anim);
+    let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, Some(&target));
+    show(entries, pt, Some((target, built)), None, None, look, icons, anim);
 }
 
 /// A menu at `pt` (the cursor): Explorer's (`shell`) or Kasumi's bar menu (`app`).
-fn show(entries: Vec<shell::Entry>, pt: POINT, shell: Option<(Target, Built)>, app: Option<tauri::AppHandle>, look: Look, icons: bool, anim: crate::config::Animation) {
+#[allow(clippy::too_many_arguments)]
+fn show(
+    entries: Vec<shell::Entry>,
+    pt: POINT,
+    shell: Option<(Target, Built)>,
+    app: Option<tauri::AppHandle>,
+    bar_ctx: Option<layout::Ctx>,
+    look: Look,
+    icons: bool,
+    anim: crate::config::Animation,
+) {
     let mon = crate::win::monitors()
         .into_iter()
         .find(|m| pt.x >= m.left && pt.x < m.right && pt.y >= m.top && pt.y < m.bottom)
@@ -496,7 +521,7 @@ fn show(entries: Vec<shell::Entry>, pt: POINT, shell: Option<(Target, Built)>, a
         let mut root = Level::new(&u.gfx, style.clone(), entries, None, mon.scale as f32).ok()?;
         root.place_root(pt, &mon);
         root.draw(&u.gfx).ok()?;
-        u.open = Some(Open { shell, app, armed: None, levels: vec![root], style, pt, mon, switch: None });
+        u.open = Some(Open { shell, app, bar_ctx, armed: None, levels: vec![root], style, pt, mon, switch: None });
         Some(())
     })
     .flatten();
@@ -523,9 +548,20 @@ fn open_sub(u: &mut Ui, li: usize, row: usize, first: bool) {
             if !entry.key.is_empty() {
                 remember(&format!("sub:{}", entry.key), &items);
             }
-            let items = if entry.rules.is_empty() { items } else { layout::arrange_sub(&entry.rules, items, &built.ctx, target) };
+            let items = if entry.rules.is_empty() { items } else { layout::arrange_sub(&entry.rules, items, &built.ctx, Some(target)) };
             entry.sub = Some(Sub::Ready(items.clone()));
             items
+        }
+        // One of Kasumi's (the bar menu's Presets...): arranged by its rules, once.
+        Some(Sub::Ready(v)) if !entry.rules.is_empty() => {
+            let rules = std::mem::take(&mut entry.rules);
+            let ctx = o.shell.as_ref().map(|(_, b)| &b.ctx).or(o.bar_ctx.as_ref());
+            let v = match ctx {
+                Some(ctx) => layout::arrange_sub(&rules, v, ctx, o.shell.as_ref().map(|(t, _)| t)),
+                None => v,
+            };
+            entry.sub = Some(Sub::Ready(v.clone()));
+            v
         }
         Some(Sub::Ready(v)) => v,
         None => return,
@@ -601,7 +637,12 @@ fn run(chosen: Option<(Open, Run)>) {
     match (run, &open.shell, &open.app) {
         (Run::Shell(off, verb), Some((t, b)), _) => b.invoke(t, off, &verb, open.pt),
         (Run::View(cmd), Some((t, _)), _) => shell::run_view(t, cmd),
-        (Run::Kasumi(cmd), Some((t, b)), _) => layout::run(&cmd, &b.ctx, t),
+        (Run::Kasumi(cmd), shell, _) => {
+            let ctx = shell.as_ref().map(|(_, b)| &b.ctx).or(open.bar_ctx.as_ref());
+            if let Some(ctx) = ctx {
+                layout::run(&cmd, ctx, shell.as_ref().map(|(t, _)| t));
+            }
+        }
         (Run::App(id), _, Some(app)) => run_app(app, &id),
         _ => {}
     }
@@ -844,24 +885,41 @@ pub fn bar_menu(app: tauri::AppHandle) {
     let cfg = crate::config::load().ok();
     let power = cfg.as_ref().is_some_and(|c| c.bar_menu.power);
     let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
-    show(bar_entries(power), POINT { x, y }, None, Some(app), look(cfg.as_ref()), true, anim);
+    // Arranged by its layout ([bar_menu] layout; none: as Kasumi lists them).
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let shift = unsafe { GetAsyncKeyState(VK_SHIFT.0 as i32) } < 0;
+    let ctx = layout::Ctx { kind: layout::Kind::Bar, paths: Vec::new(), dir: home.clone(), here: home, shift };
+    let mut rules = cfg.as_ref().map(|c| c.bar_menu.layout.clone()).unwrap_or_default();
+    if rules.is_empty() {
+        rules.push(crate::config::MenuNode { rest: true, ..Default::default() });
+    }
+    let entries = layout::arrange_with(&rules, &[], bar_entries(power, crate::presets::names()), &ctx, None);
+    show(entries, POINT { x, y }, None, Some(app), Some(ctx), look(cfg.as_ref()), true, anim);
 }
 
-fn app_item(text: &str, id: &str, g: char) -> shell::Entry {
-    shell::Entry::named(text, Action::App(id.into()), Some(shell::Icon::Glyph(g)))
-}
-
-fn app_folder(text: &str, g: char, items: Vec<shell::Entry>) -> shell::Entry {
-    let mut e = shell::Entry::named(text, Action::None, Some(shell::Icon::Glyph(g)));
-    e.sub = Some(Sub::Ready(items));
+/// An entry's name in layouts: `verb:kasumi.<id>` (the editor places it by that).
+fn named_as(mut e: shell::Entry, id: &str) -> shell::Entry {
+    e.verb = format!("kasumi.{}", id.replace(':', "."));
+    e.key = format!("verb:{}", e.verb);
     e
 }
 
-fn bar_entries(power: bool) -> Vec<shell::Entry> {
-    let mut presets: Vec<shell::Entry> = crate::presets::names()
+fn app_item(text: &str, id: &str, g: char) -> shell::Entry {
+    named_as(shell::Entry::named(text, Action::App(id.into()), Some(shell::Icon::Glyph(g))), id)
+}
+
+fn app_folder(text: &str, id: &str, g: char, items: Vec<shell::Entry>) -> shell::Entry {
+    let mut e = shell::Entry::named(text, Action::None, Some(shell::Icon::Glyph(g)));
+    e.sub = Some(Sub::Ready(items));
+    named_as(e, id)
+}
+
+fn bar_entries(power: bool, presets: Vec<(String, bool)>) -> Vec<shell::Entry> {
+    let mut presets: Vec<shell::Entry> = presets
         .into_iter()
         .map(|(name, current)| {
-            let mut e = shell::Entry::named(&name, Action::App(format!("preset:{name}")), None);
+            let id = format!("preset:{name}");
+            let mut e = named_as(shell::Entry::named(&name, Action::App(id.clone()), None), &id);
             e.radio = true;
             e.checked = current;
             e
@@ -874,12 +932,13 @@ fn bar_entries(power: bool) -> Vec<shell::Entry> {
     let mut v = vec![
         app_item("Kasumi settings", "settings", '\u{E713}'),
         app_item("Edit this bar…", "page:widgets", '\u{E70F}'),
-        app_folder("Presets", '\u{E790}', presets),
+        app_folder("Presets", "presets", '\u{E790}', presets),
         shell::Entry::separator(),
         app_item("Task Manager", "taskmgr", '\u{E9D9}'),
         app_item("Show desktop", "desktop", '\u{E7F4}'),
         app_folder(
             "Hide the bars",
+            "hide",
             '\u{ED1A}',
             vec![
                 app_item("For 10 minutes", "hide:600", '\u{E916}'),
@@ -896,6 +955,7 @@ fn bar_entries(power: bool) -> Vec<shell::Entry> {
         };
         v.push(app_folder(
             "Power",
+            "power",
             '\u{E7E8}',
             vec![
                 app_item("Lock", "power:lock", '\u{E72E}'),

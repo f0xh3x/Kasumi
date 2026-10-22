@@ -255,6 +255,8 @@ pub struct Shell {
 pub struct BarMenuCfg {
     /// Lock, Sleep, Restart and Shut down in it (each but Lock asks for a second click).
     pub power: bool,
+    /// How it's arranged (the context menu's layout format; empty: as Kasumi lists it).
+    pub layout: Vec<MenuNode>,
 }
 
 /// `[context_menu]`: Kasumi's own right-click menus in Explorer and on the desktop

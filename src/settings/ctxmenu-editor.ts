@@ -50,6 +50,8 @@ const KINDS: [string, string][] = [
   ["background", "Folder background"],
   ["desktop", "Desktop"],
 ];
+/** The tabs: each kind of Explorer click, and Kasumi's bar menu (its own layout). */
+const TABS: [string, string][] = [...KINDS, ["bar", "Kasumi bar"]];
 const SELECTION = ["file", "folder", "drive", "multiple"];
 const SPACE = ["background", "desktop"];
 
@@ -139,12 +141,18 @@ interface Row {
 export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
   const box = $("div", "cm-editor", $("p", "card-help", "Loading…"));
   let layout: MenuNode[] = [];
+  /** Explorer's menu's layout, and the bar menu's ([bar_menu] layout): `layout` is the
+   *  one on the tab shown. */
+  let mainLayout: MenuNode[] = [];
+  let barLayout: MenuNode[] = [{ rest: true }];
+  const pick = () => (layout = state.kind === "bar" ? barLayout : mainLayout);
   let seenAll: Record<string, Seen[]> = {};
   let drag: Row | null = null;
 
   const save = () => {
+    if (state.kind === "bar") return ctx.save(["bar_menu", "layout"], barLayout.map(clean)).catch((e) => ctx.toast(String(e), true));
     const hasCustom = ((ctx.cfg as any).context_menu?.custom ?? []).length > 0;
-    const value = layout.map(clean);
+    const value = mainLayout.map(clean);
     const done = hasCustom
       ? ctx.saveMany([
           { path: ["context_menu", "layout"], value },
@@ -450,11 +458,11 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     // The eye: shown or hidden for this kind of click (a submenu's entries: in it).
     const eye = iconButton(
       row.off ? 0xed1a : 0xe7b3,
-      row.owner ? (row.off ? "Show" : "Hide") : row.off ? `Show on ${here}` : `Hide on ${here}`,
+      row.owner || state.kind === "bar" ? (row.off ? "Show" : "Hide") : row.off ? `Show on ${here}` : `Hide on ${here}`,
       edit(row, (node) => {
         const all = KINDS.map(([k]) => k);
         const set = new Set(node.where ? node.where.split("|") : all);
-        if (row.owner) {
+        if (row.owner || state.kind === "bar") {
           node.hide = !node.hide;
           return;
         }
@@ -515,17 +523,20 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     rows(layout, seen, claimedIn(layout, seen), 0, list);
 
     const tabs = $("div", "cm-tabs");
-    for (const [k, label] of KINDS) {
+    for (const [k, label] of TABS) {
       const b = $("button", `cm-tab${k === state.kind ? " on" : ""}`, label) as HTMLButtonElement;
       b.addEventListener("click", () => {
         state.kind = k;
+        pick();
         render();
       });
       tabs.append(b);
     }
 
     const table = $("div", "cm-rows");
-    if (!seen.length) {
+    if (state.kind === "bar") {
+      table.append($("p", "card-help", "The menu you get by right-clicking a bar's empty space. Power shows only with Power in the bar menu on (Settings › General)."));
+    } else if (!seen.length) {
       table.append($("p", "card-help", "Kasumi hasn't seen this kind of menu yet: right-click one once (with Kasumi's menu on), then come back."));
     }
     for (const row of list) table.append(rowEl(row));
@@ -539,7 +550,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       return !has(layout);
     });
     const addKasumi = select([["", "Add Kasumi's entry…"], ...missing.map((id) => [id, KASUMI[id].label] as [string, string])], "");
-    addKasumi.hidden = !missing.length;
+    addKasumi.hidden = !missing.length || state.kind === "bar";
     addKasumi.addEventListener("change", () => addKasumi.value && add({ kasumi: addKasumi.value }));
     const bFolder = $("button", "button", "New folder");
     const bCmd = $("button", "button", "New command");
@@ -554,10 +565,14 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     bSep.addEventListener("click", () => add({ separator: true }));
     bReset.addEventListener("click", async () => {
       if (!confirm("Go back to Kasumi's default menu? Your changes and your own entries go.")) return;
-      await ctx.saveMany([
-        { path: ["context_menu", "layout"], value: null },
-        { path: ["context_menu", "custom"], value: null },
-      ]);
+      await ctx.saveMany(
+        state.kind === "bar"
+          ? [{ path: ["bar_menu", "layout"], value: null }]
+          : [
+              { path: ["context_menu", "layout"], value: null },
+              { path: ["context_menu", "custom"], value: null },
+            ],
+      );
     });
 
     box.replaceChildren(
@@ -576,7 +591,9 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
   const setup = (info: Info) => {
     seenAll = info.seen ?? {};
     const cm = (ctx.cfg as any).context_menu ?? {};
-    layout = structuredClone(cm.layout?.length ? cm.layout : info.default);
+    const bm = (ctx.cfg as any).bar_menu ?? {};
+    barLayout = structuredClone(bm.layout?.length ? bm.layout : [{ rest: true }]);
+    layout = mainLayout = structuredClone(cm.layout?.length ? cm.layout : info.default);
     // Your own entries (`custom`) become part of the layout where it said `custom`.
     const custom: MenuNode[] = structuredClone(cm.custom ?? []);
     const at = layout.findIndex((n) => n.custom);
@@ -584,6 +601,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     else layout.push(...custom);
     expandGroups(layout);
     if (!state.open.size) for (const n of layout) if (n.folder) state.open.add(`folder:${n.folder}`);
+    pick();
     render();
   };
 

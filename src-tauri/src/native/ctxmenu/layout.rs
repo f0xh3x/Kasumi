@@ -21,6 +21,8 @@ pub enum Kind {
     Background,
     /// The desktop's empty space.
     Desktop,
+    /// Kasumi's bar menu (a bar's empty space).
+    Bar,
 }
 
 impl Kind {
@@ -33,16 +35,18 @@ impl Kind {
             Kind::Multiple => "multiple",
             Kind::Background => "background",
             Kind::Desktop => "desktop",
+            Kind::Bar => "bar",
         }
     }
 
     fn selection(self) -> bool {
-        !matches!(self, Kind::Background | Kind::Desktop)
+        !matches!(self, Kind::Background | Kind::Desktop | Kind::Bar)
     }
 }
 
 /// The click: what it was on, the paths selected, the folder shown, and where a
 /// terminal opens ("here": the folder clicked, else the one shown).
+#[derive(Clone)]
 pub struct Ctx {
     pub kind: Kind,
     pub paths: Vec<String>,
@@ -211,7 +215,7 @@ fn claimed(nodes: &[MenuNode], windows: &[Entry], used: &mut [bool]) {
 
 /// A Windows submenu's entries, arranged by its rules (the ones they don't name stay,
 /// in Windows' order, where the rules say "rest", else at the end).
-pub fn arrange_sub(rules: &[MenuNode], items: Vec<Entry>, ctx: &Ctx, t: &Target) -> Vec<Entry> {
+pub fn arrange_sub(rules: &[MenuNode], items: Vec<Entry>, ctx: &Ctx, t: Option<&Target>) -> Vec<Entry> {
     let mut rules = rules.to_vec();
     if !rules.iter().any(|n| n.rest) {
         rules.push(MenuNode { rest: true, ..Default::default() });
@@ -230,17 +234,22 @@ fn glyph(hex: &str) -> Option<Icon> {
 
 /// The menu: Windows' entries arranged by the layout (Kasumi's default unless the
 /// config has its own), with the config's own entries where it says `custom`.
-pub fn arrange(cfg: &crate::config::ContextMenuCfg, windows: Vec<Entry>, ctx: &Ctx, t: &Target) -> Vec<Entry> {
+pub fn arrange(cfg: &crate::config::ContextMenuCfg, windows: Vec<Entry>, ctx: &Ctx, t: Option<&Target>) -> Vec<Entry> {
     let layout = if cfg.layout.is_empty() { default_layout() } else { cfg.layout.clone() };
+    arrange_with(&layout, &cfg.custom, windows, ctx, t)
+}
+
+/// Entries arranged by a layout (`custom`: where it says so).
+pub fn arrange_with(layout: &[MenuNode], custom: &[MenuNode], windows: Vec<Entry>, ctx: &Ctx, t: Option<&Target>) -> Vec<Entry> {
     let mut used = vec![false; windows.len()];
-    claimed(&layout, &windows, &mut used);
-    claimed(&cfg.custom, &windows, &mut used);
-    let mut out = place(&layout, &windows, &used, ctx, t, &cfg.custom);
+    claimed(layout, &windows, &mut used);
+    claimed(custom, &windows, &mut used);
+    let mut out = place(layout, &windows, &used, ctx, t, custom);
     shell::tidy(&mut out);
     out
 }
 
-fn place(nodes: &[MenuNode], windows: &[Entry], used: &[bool], ctx: &Ctx, t: &Target, custom: &[MenuNode]) -> Vec<Entry> {
+fn place(nodes: &[MenuNode], windows: &[Entry], used: &[bool], ctx: &Ctx, t: Option<&Target>, custom: &[MenuNode]) -> Vec<Entry> {
     let mut out = Vec::new();
     for n in nodes {
         if !applies(n, ctx) || n.hide {
@@ -317,13 +326,16 @@ fn check(mut e: Entry, on: bool) -> Entry {
 
 /// Kasumi's own entries: a group ("view", "terminal", "file_manage", "go_to") or one
 /// of a group's ("file_manage.select").
-fn builtin(id: &str, ctx: &Ctx, t: &Target) -> Vec<Entry> {
+fn builtin(id: &str, ctx: &Ctx, t: Option<&Target>) -> Vec<Entry> {
     let (group, one) = match id.split_once('.') {
         Some((g, o)) => (g, Some(o)),
         None => (id, None),
     };
     let all: Vec<(&str, Entry)> = match group {
-        "view" if !ctx.kind.selection() => ["view", "sort", "refresh"].into_iter().zip(shell::view_entries(t)).collect(),
+        "view" if !ctx.kind.selection() => match t {
+            Some(t) => ["view", "sort", "refresh"].into_iter().zip(shell::view_entries(t)).collect(),
+            None => Vec::new(),
+        },
         "terminal" => terminal(),
         "file_manage" => file_manage(ctx),
         "go_to" => go_to(),
@@ -487,7 +499,7 @@ fn go_to() -> Vec<(&'static str, Entry)> {
 }
 
 /// Runs one of Kasumi's own entries.
-pub fn run(cmd: &Cmd, ctx: &Ctx, t: &Target) {
+pub fn run(cmd: &Cmd, ctx: &Ctx, t: Option<&Target>) {
     let shell_open = |file: &str, args: &str, dir: &str| unsafe {
         let (f, a, d) = (HSTRING::from(file), HSTRING::from(args), HSTRING::from(dir));
         ShellExecuteW(None, windows::core::w!("open"), &f, if args.is_empty() { PCWSTR::null() } else { PCWSTR(a.as_ptr()) }, &d, SW_SHOWNORMAL);
@@ -496,7 +508,11 @@ pub fn run(cmd: &Cmd, ctx: &Ctx, t: &Target) {
         Cmd::Run(exe, args) => shell_open(exe, args, &ctx.here),
         Cmd::Open(target) => shell_open(target, "", &ctx.here),
         Cmd::Copy(text) => crate::win::set_clipboard_text(text),
-        Cmd::Select(how) => shell::select(t, *how),
+        Cmd::Select(how) => {
+            if let Some(t) = t {
+                shell::select(t, *how);
+            }
+        }
         Cmd::ShowHidden | Cmd::ShowExtensions => {
             let (name, value) = match cmd {
                 Cmd::ShowHidden => ("Hidden", if explorer_flag("Hidden") == Some(1) { 2 } else { 1 }),
@@ -504,7 +520,9 @@ pub fn run(cmd: &Cmd, ctx: &Ctx, t: &Target) {
             };
             crate::win::reg_set_dword(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", name, value);
             crate::win::broadcast_setting("ShellState");
-            shell::run_view(t, ViewCmd::Refresh);
+            if let Some(t) = t {
+                shell::run_view(t, ViewCmd::Refresh);
+            }
         }
         Cmd::Attribute(bit) => {
             for p in &ctx.paths {
