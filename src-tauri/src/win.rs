@@ -703,39 +703,15 @@ pub fn send_keys(keys: &[KeyEvent], mark: usize) {
 
 /// Switches the foreground window to the next installed keyboard layout (like Alt+Shift).
 pub fn next_keyboard_layout() -> Result<(), String> {
-    unsafe {
-        let fg = GetForegroundWindow();
-        if fg.is_invalid() {
-            return Err("no foreground window".into());
-        }
-        let tid = GetWindowThreadProcessId(fg, None);
-        let current = GetKeyboardLayout(tid);
-        let count = GetKeyboardLayoutList(None).max(0) as usize;
-        let mut list = vec![HKL::default(); count];
-        let n = GetKeyboardLayoutList(Some(&mut list)).max(0) as usize;
-        list.truncate(n);
-        if list.len() < 2 {
-            return Err("only one keyboard layout installed".into());
-        }
-        let i = list.iter().position(|h| *h == current).unwrap_or(0);
-        let next = list[(i + 1) % list.len()];
-
-        // Ask the focused control (falling back to the window) to switch...
-        let mut gui = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
-        let target = if GetGUIThreadInfo(tid, &mut gui).is_ok() && !gui.hwndFocus.is_invalid() { gui.hwndFocus } else { fg };
-        let _ = PostMessageW(Some(target), WM_INPUTLANGCHANGEREQUEST, WPARAM(0), LPARAM(next.0 as isize));
-
-        // ...and if nothing there handled it (no text field, some app types), use the hotkey.
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        if GetKeyboardLayout(tid) == current {
-            press_layout_hotkey();
-        }
-        Ok(())
+    if keyboard_layouts().len() < 2 {
+        return Err("only one keyboard layout installed".into());
     }
+    step_keyboard_layout(false);
+    Ok(())
 }
 
-/// The installed keyboard layouts (HKLs), in Windows' order.
-pub fn keyboard_layouts() -> Vec<isize> {
+/// The keyboard layouts loaded (HKLs): the user's, and any an app loaded on its own.
+fn loaded_layouts() -> Vec<isize> {
     unsafe {
         let count = GetKeyboardLayoutList(None).max(0) as usize;
         let mut list = vec![HKL::default(); count];
@@ -743,6 +719,57 @@ pub fn keyboard_layouts() -> Vec<isize> {
         list.truncate(n);
         list.into_iter().map(|h| h.0 as isize).collect()
     }
+}
+
+/// The user's keyboards (Settings > Time & language > Language), in their order, as
+/// HKLs (low 32 bits): Keyboard Layout\Preload, its substitutes, and a variant
+/// layout's id ("Layout Id": HKL F0xx).
+fn user_layouts() -> Vec<u32> {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let mut out = Vec::new();
+    for i in 1..32 {
+        let Some(pre) = reg_string(HKEY_CURRENT_USER, r"Keyboard Layout\Preload", &i.to_string()) else { break };
+        let klid_s = reg_string(HKEY_CURRENT_USER, r"Keyboard Layout\Substitutes", &pre).unwrap_or_else(|| pre.clone());
+        let (Ok(pre), Ok(klid)) = (u32::from_str_radix(&pre, 16), u32::from_str_radix(&klid_s, 16)) else { continue };
+        let hkl = if klid & 0xF000_0000 == 0xE000_0000 {
+            klid // an IME: its HKL is its id
+        } else if klid >> 16 == 0 {
+            (klid & 0xFFFF) << 16 | (pre & 0xFFFF)
+        } else {
+            let id = reg_string(HKEY_LOCAL_MACHINE, &format!(r"SYSTEM\CurrentControlSet\Control\Keyboard Layouts\{klid_s}"), "Layout Id")
+                .and_then(|v| u32::from_str_radix(&v, 16).ok());
+            match id {
+                Some(id) => (0xF000 | (id & 0x0FFF)) << 16 | (pre & 0xFFFF),
+                None => continue,
+            }
+        };
+        out.push(hkl);
+    }
+    out
+}
+
+/// The user's keyboard layouts (HKLs) in their order: the loaded ones they set up
+/// (not "ghost" layouts an app loaded, which Windows' picker hides too). All loaded
+/// ones if that can't be told.
+pub fn keyboard_layouts() -> Vec<isize> {
+    let loaded = loaded_layouts();
+    let mine: Vec<isize> = user_layouts().into_iter().filter_map(|u| loaded.iter().copied().find(|&h| h as u32 == u)).collect();
+    if mine.is_empty() {
+        loaded
+    } else {
+        mine
+    }
+}
+
+/// Switches the window in front to the next keyboard layout (or the previous).
+pub fn step_keyboard_layout(back: bool) {
+    let list = keyboard_layouts();
+    let n = list.len();
+    if n < 2 {
+        return;
+    }
+    let i = foreground_hkl().and_then(|c| list.iter().position(|&h| h as u32 == c as u32)).unwrap_or(0);
+    set_keyboard_layout(list[if back { (i + n - 1) % n } else { (i + 1) % n }]);
 }
 
 /// The window in front's keyboard layout (HKL).
@@ -779,7 +806,7 @@ pub fn set_keyboard_layout(target: isize) {
         }
         let tid = GetWindowThreadProcessId(fg, None);
         let current = GetKeyboardLayout(tid);
-        if current.0 as isize == target {
+        if current.0 as u32 == target as u32 {
             return;
         }
         let mut gui = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
@@ -789,7 +816,7 @@ pub fn set_keyboard_layout(target: isize) {
         if GetKeyboardLayout(tid) == current {
             let list = keyboard_layouts();
             let n = list.len();
-            let (Some(i), Some(j)) = (list.iter().position(|&h| h == current.0 as isize), list.iter().position(|&h| h == target)) else { return };
+            let (Some(i), Some(j)) = (list.iter().position(|&h| h as u32 == current.0 as u32), list.iter().position(|&h| h as u32 == target as u32)) else { return };
             for _ in 0..(j + n - i) % n {
                 press_layout_hotkey();
                 std::thread::sleep(std::time::Duration::from_millis(60));

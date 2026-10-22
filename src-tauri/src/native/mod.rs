@@ -115,6 +115,8 @@ pub enum Msg {
     /// Alt + Tab's keys (Kasumi's switcher).
     AltTab(crate::keyhook::AltTabKey),
     Lang(crate::keyhook::AltTabKey),
+    /// Win + Space still held a moment after: the picker shows (that press's number).
+    LangReveal(u64),
 }
 
 /// Alt + Tab's keys from the keyboard helper (and the commit hotkey).
@@ -221,6 +223,10 @@ pub(crate) struct Native {
     app: Option<AppHandle>,
     /// Alt + Tab in the middle of the screen (made the first time).
     alt_float: Option<floating::Floating>,
+    /// Win + Space pressed, the picker not shown yet (a quick press just switches):
+    /// which press (its number) and its direction.
+    lang_pending: Option<(u64, bool)>,
+    lang_presses: u64,
 }
 
 thread_local! {
@@ -270,7 +276,7 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
         return;
     };
     WAKE.store(wake.0 as isize, Ordering::Relaxed);
-    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None }));
+    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None, lang_pending: None, lang_presses: 0 }));
     INBOX.with(|i| *i.borrow_mut() = Some(rx));
     let _ = ready.send(());
     eprintln!("[kasumi] native renderer started");
@@ -433,6 +439,11 @@ impl Native {
             }
             Msg::AltTab(key) => self.switcher(widgets::alttab::Kind::Windows, key),
             Msg::Lang(key) => self.switcher(widgets::alttab::Kind::Languages, key),
+            Msg::LangReveal(n) => {
+                if let Some((_, back)) = self.lang_pending.take_if(|p| p.0 == n) {
+                    self.lang_open(back);
+                }
+            }
             Msg::WinKey(n) => {
                 // The bar on the cursor's monitor if it has a tasks widget, else the first that does.
                 let at = crate::win::cursor_pos();
@@ -453,6 +464,35 @@ impl Native {
         let (open, showing) = alttab::with(|s| (s.open, s.kind));
         // The other switcher is showing: these keys aren't for it.
         if open && showing != kind {
+            return;
+        }
+        // Win + Space: the picker shows once Win is held a moment (or Space pressed
+        // again); a quick press just switches, and the layout pop-up shows it.
+        if kind == Kind::Languages && !open {
+            match key {
+                K::Next | K::Prev => {
+                    if let Some((_, back)) = self.lang_pending.take() {
+                        self.lang_open(back);
+                        if alttab::with(|s| s.open) {
+                            self.switcher(kind, key);
+                        }
+                        return;
+                    }
+                    self.lang_presses += 1;
+                    let n = self.lang_presses;
+                    self.lang_pending = Some((n, matches!(key, K::Prev)));
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        post(Msg::LangReveal(n));
+                    });
+                }
+                K::Commit => {
+                    if let Some((_, back)) = self.lang_pending.take() {
+                        std::thread::spawn(move || crate::win::step_keyboard_layout(back));
+                    }
+                }
+                K::Cancel => self.lang_pending = None,
+            }
             return;
         }
         match key {
@@ -593,7 +633,7 @@ impl Native {
         if n < 2 {
             return;
         }
-        let i = crate::win::foreground_hkl().and_then(|c| hkls.iter().position(|&h| h == c)).unwrap_or(0);
+        let i = crate::win::foreground_hkl().and_then(|c| hkls.iter().position(|&h| h as u32 == c as u32)).unwrap_or(0);
         let sel = if back { (i + n - 1) % n } else { (i + 1) % n };
         let langs: Vec<Lang> = hkls
             .iter()
