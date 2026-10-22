@@ -11,7 +11,16 @@ use serde_json::Value;
 
 use super::icon::{decode, AppIcon, Pixels, Style};
 use super::{fit_text, Act, Button, Ctx, Panel, Reply};
-use crate::native::gfx::{rect, white, with_alpha, Gfx};
+use crate::native::gfx::{rect, white, with_alpha, Font, Gfx};
+
+/// The desktop's choice ("Show desktop", hwnd 0): its glyph, centred at x, y.
+const DESKTOP: &str = "\u{E7F4}";
+
+fn desktop_glyph(g: &Gfx, x: f32, y: f32, size: f32, color: crate::native::gfx::Color) {
+    let f = Font::icons(size);
+    let w = g.measure(DESKTOP, &f);
+    g.text_at(DESKTOP, &f, x - w / 2.0, y, color);
+}
 
 /// A window to switch to: its handle, title and app.
 #[derive(Clone)]
@@ -140,7 +149,9 @@ impl Panel for AltTabPanel {
                 // Behind the live preview: shows for minimized windows (Windows draws none).
                 let (tx, ty, tw) = (left + PAD, top + PAD, w - 2.0 * PAD);
                 g.fill_round(rect(tx, ty, tw, THUMB_H), 8.0, white(0.05 * alpha));
-                if let Some(ic) = icon {
+                if e.hwnd == 0 {
+                    desktop_glyph(g, tx + tw / 2.0, ty + THUMB_H / 2.0, 32.0, with_alpha(cx.look.fg, 0.7 * alpha));
+                } else if let Some(ic) = icon {
                     ic.draw(g, tx + tw / 2.0 - 16.0, ty + THUMB_H / 2.0 - 16.0, 32.0, 0.5 * alpha);
                 }
                 if show_icon || show_title {
@@ -150,7 +161,9 @@ impl Panel for AltTabPanel {
                     let total = iw + g.measure(&text, &f) - if show_title { 0.0 } else { 6.0 };
                     let mut lx = tx + (tw - total) / 2.0;
                     if show_icon {
-                        if let Some(ic) = icon {
+                        if e.hwnd == 0 {
+                            desktop_glyph(g, lx + 8.0, cy, 14.0, fg);
+                        } else if let Some(ic) = icon {
                             ic.draw(g, lx, cy - 8.0, 16.0, alpha);
                         }
                         lx += iw;
@@ -165,7 +178,9 @@ impl Panel for AltTabPanel {
                 if show_icon {
                     let size = 32.0;
                     let iy = if show_title { ty } else { top + (h - size) / 2.0 };
-                    if let Some(ic) = icon {
+                    if e.hwnd == 0 {
+                        desktop_glyph(g, cxm, iy + size / 2.0, 28.0, fg);
+                    } else if let Some(ic) = icon {
                         ic.draw(g, cxm - size / 2.0, iy, size, alpha);
                     }
                     ty += size + 8.0;
@@ -194,6 +209,7 @@ impl Panel for AltTabPanel {
             s.list.get(i).map(|e| e.hwnd as isize)
         });
         match hwnd {
+            Some(0) => Reply::CloseAnd(Act::call(|_| crate::win::toggle_desktop())),
             Some(h) => Reply::CloseAnd(Act::call(move |_| {
                 let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(h, false));
             })),
@@ -211,6 +227,6 @@ impl Panel for AltTabPanel {
         if !previews {
             return Vec::new();
         }
-        list.iter().zip(&self.cards).map(|(h, (x, y, w, _))| (*h as isize, (x + PAD, y + PAD, w - 2.0 * PAD, THUMB_H))).collect()
+        list.iter().zip(&self.cards).filter(|(h, _)| **h != 0).map(|(h, (x, y, w, _))| (*h as isize, (x + PAD, y + PAD, w - 2.0 * PAD, THUMB_H))).collect()
     }
 }

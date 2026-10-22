@@ -250,11 +250,13 @@ pub struct AltTabCfg {
     /// Under each window: "both" (icon and title), "icons", "titles", or "none"
     /// (previews only; without previews it shows both).
     pub labels: String,
+    /// "Show desktop" as a choice: "off", "first" or "last" in the list.
+    pub desktop: String,
 }
 
 impl Default for AltTabCfg {
     fn default() -> Self {
-        Self { enabled: true, position: "top".into(), replace_tasks: true, monitors: "current".into(), previews: true, labels: "both".into() }
+        Self { enabled: true, position: "top".into(), replace_tasks: true, monitors: "current".into(), previews: true, labels: "both".into(), desktop: "off".into() }
     }
 }
 

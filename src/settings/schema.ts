@@ -1339,6 +1339,18 @@ export const pages: Page[] = [
               { value: "none", label: "Nothing" },
             ],
           },
+          {
+            kind: "select",
+            label: "Show desktop",
+            help: "A choice that shows the desktop (as Win + D). First: Alt + Tab still goes to the previous window; Shift + Tab reaches it.",
+            path: ["alt_tab", "desktop"],
+            default: "off",
+            options: [
+              { value: "off", label: "Off" },
+              { value: "first", label: "First in the list" },
+              { value: "last", label: "Last in the list" },
+            ],
+          },
         ],
       },
     ],

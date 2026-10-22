@@ -472,7 +472,9 @@ impl Native {
                 } else if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
                     s.alt_tab_close();
                 }
-                if let (K::Commit, Some(h)) = (key, hwnd) {
+                if let (K::Commit, Some(0)) = (key, hwnd) {
+                    crate::win::toggle_desktop();
+                } else if let (K::Commit, Some(h)) = (key, hwnd) {
                     run_act(
                         widgets::Act::call(move |_| {
                             let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(h, false));
@@ -511,9 +513,22 @@ impl Native {
         if list.is_empty() {
             return;
         }
-        let n = list.len();
         let first_in_front = wins.iter().find(|w| all || mon.as_ref().is_none_or(|m| s(w, "monitor") == *m)).is_some_and(|w| active(w));
-        let sel = if back { n - 1 } else if first_in_front && n > 1 { 1 } else { 0 };
+        let mut sel = if first_in_front && list.len() > 1 { 1 } else { 0 };
+        // "Show desktop" as a choice (hwnd 0): first (Alt + Tab still picks the previous
+        // window) or last.
+        let mut list = list;
+        let desk = Entry { hwnd: 0, title: "Desktop".into(), app: String::new() };
+        match cfg.desktop.as_str() {
+            "first" => {
+                list.insert(0, desk);
+                sel += 1;
+            }
+            "last" => list.push(desk),
+            _ => {}
+        }
+        let n = list.len();
+        let sel = if back { n - 1 } else { sel.min(n - 1) };
         // Out of the top bar's notch or the dock's on that monitor (all monitors: where the
         // cursor is); in the middle without one there, or when asked to.
         let at = if all { cursor_mon.or(mon) } else { mon };

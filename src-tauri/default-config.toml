@@ -37,6 +37,7 @@ replace_tasks = true      # a notch with the tasks widget turns into the switche
 monitors = "current"      # current (the monitor you're working on) | all
 previews = true           # live previews of the windows
 labels = "both"           # under each window: both | icons | titles | none (none: previews only)
+desktop = "off"           # "Show desktop" as a choice: off | first | last
 
 [theme]
 background = "#000000"

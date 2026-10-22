@@ -858,3 +858,15 @@ pub fn bitmap_bgra(bmp: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<(u32, 
         (lines != 0).then_some((w, h, px))
     }
 }
+
+/// Shows the desktop, or brings the windows back, as Win + D does (Explorer's taskbar
+/// does it; hidden by Kasumi, it still listens).
+pub fn toggle_desktop() {
+    use windows::core::w;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_COMMAND};
+    unsafe {
+        if let Ok(tray) = FindWindowW(w!("Shell_TrayWnd"), None) {
+            let _ = PostMessageW(Some(tray), WM_COMMAND, windows::Win32::Foundation::WPARAM(407), windows::Win32::Foundation::LPARAM(0));
+        }
+    }
+}
