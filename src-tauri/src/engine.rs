@@ -1412,6 +1412,11 @@ impl Engine {
         {
             let sh = self.shared.lock().unwrap();
             for (label, o) in sh.overlays.iter() {
+                // An open dock keeps its covered islands as tiny strips (only the one hovered
+                // opens, over the window); bars dock everything while open (below).
+                if o.expanded && shrinks(o) {
+                    continue;
+                }
                 let m = &o.monitor;
                 let width = m.width() as f64 / m.scale;
                 let mut undocked = Vec::new();
