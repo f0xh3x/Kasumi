@@ -4,11 +4,11 @@
 //! title: nothing of Explorer's is taken over (apps' own taskbar progress isn't
 //! reachable without that).
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 use windows::core::{w, PCWSTR};
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowTextW};
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowTextW, IsWindowVisible};
 
 use crate::providers::SharedConfig;
 
@@ -29,33 +29,43 @@ pub fn start(app: &AppHandle) {
     std::thread::Builder::new()
         .name("kasumi-fileops".into())
         .spawn(move || {
-            let mut last: Option<f32> = None;
+            // The copy window: since when it's open, the last percentage shown and when.
+            let mut since: Option<Instant> = None;
+            let mut shown: Option<(f32, Instant)> = None;
             loop {
                 let on = {
                     let cfg = app.state::<SharedConfig>();
                     let cfg = cfg.read().unwrap();
                     cfg.osd.enabled && cfg.osd.file_progress
                 };
-                let window = if on { unsafe { FindWindowW(w!("OperationStatusWindow"), PCWSTR::null()) }.ok() } else { None };
+                let window = if on { unsafe { FindWindowW(w!("OperationStatusWindow"), PCWSTR::null()) }.ok().filter(|h| unsafe { IsWindowVisible(*h) }.as_bool()) } else { None };
                 match window {
                     Some(h) => {
+                        let now = Instant::now();
+                        let opened = *since.get_or_insert(now);
                         let mut buf = [0u16; 256];
                         let n = unsafe { GetWindowTextW(h, &mut buf) } as usize;
+                        // Half a second in (not with the window opening, and no flash for tiny
+                        // copies), then up for as long as it runs: on each change, and again
+                        // every second while the number stands still.
                         if let Some(p) = percent(&String::from_utf16_lossy(&buf[..n])) {
-                            if last != Some(p) {
-                                last = Some(p);
-                                super::show_progress(&app, p / 100.0, 3000);
+                            let due = shown.is_none_or(|(last, at)| last != p || now.duration_since(at) >= Duration::from_secs(1));
+                            if now.duration_since(opened) >= Duration::from_millis(500) && due {
+                                shown = Some((p, now));
+                                super::show_progress(&app, p / 100.0, 2500);
                             }
                         }
                         std::thread::sleep(Duration::from_millis(300));
                     }
                     None => {
-                        // Finished (nearly there when it closed): a last full bar.
-                        if last.is_some_and(|p| p >= 90.0) {
+                        // Done: a full bar for a moment, then it goes back (a calm moment after
+                        // the window has closed).
+                        if shown.is_some() {
                             super::show_progress(&app, 1.0, 1200);
                         }
-                        last = None;
-                        std::thread::sleep(Duration::from_secs(1));
+                        since = None;
+                        shown = None;
+                        std::thread::sleep(Duration::from_millis(if on { 500 } else { 2000 }));
                     }
                 }
             }
