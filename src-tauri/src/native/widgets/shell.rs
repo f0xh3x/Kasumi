@@ -36,6 +36,9 @@ pub struct Media {
     keys_x: f32,
     label_w: f32,
     box_w: f32,
+    /// When the title next moves a pixel, as scheduled (worked out again at that very
+    /// moment it would already be the pixel after, and the tick never came due).
+    due: std::cell::Cell<Option<Instant>>,
 }
 
 // .media-btn: 24 × 22, 2 px apart, 12 px icons; the title 2 px from the keys, 6 px gap.
@@ -45,7 +48,7 @@ const KEYS_W: f32 = 3.0 * KEY_W + 2.0 * 2.0;
 
 impl Media {
     pub fn new(opts: Opts) -> Media {
-        Media { opts, line: None, tip: String::new(), playing: false, can: [false; 3], hovered: None, keys_x: 0.0, label_w: 0.0, box_w: 0.0 }
+        Media { opts, line: None, tip: String::new(), playing: false, can: [false; 3], hovered: None, keys_x: 0.0, label_w: 0.0, box_w: 0.0, due: std::cell::Cell::new(None) }
     }
 
     fn keys(&self) -> &str {
@@ -122,9 +125,15 @@ impl Widget for Media {
     }
     fn wake(&self) -> Option<Instant> {
         // The title scrolls a whole pixel at a time: a redraw per pixel, not per display refresh.
-        self.scroll(Instant::now()).2
+        if let Some(due) = self.due.get() {
+            return Some(due);
+        }
+        let due = self.scroll(Instant::now()).2;
+        self.due.set(due);
+        due
     }
     fn tick(&mut self, _now: Instant) -> bool {
+        self.due.set(None);
         true
     }
     fn tick_resizes(&self) -> bool {
