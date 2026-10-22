@@ -4,6 +4,7 @@
 //! `ui.rs`, which posts `Msg`s here. A surface reports what a page reported
 //! (notch widths, interactive regions) straight to the engine.
 
+pub mod ctxmenu;
 pub mod geometry;
 mod drop;
 mod floating;

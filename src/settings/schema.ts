@@ -1287,6 +1287,21 @@ export const pages: Page[] = [
     ],
   },
   {
+    id: "context-menu",
+    label: "Context menu",
+    icon: 0xe700,
+    sections: [
+      {
+        title: "Context menu (experimental)",
+        help: "Kasumi draws the right-click menu in File Explorer and on the desktop, in its own look: Windows' entries (and other apps'), sized to fit, highlighted in the accent colour. It's new and some things may not work yet: Explorer's navigation pane and other apps' Open / Save dialogs keep Windows' menu, and right-dragging files doesn't work while it's on. Native Kasumi only.",
+        fields: [
+          { kind: "toggle", label: "Kasumi's context menu", help: "Off: Windows' menu (or your own, like Nilesoft Shell), as usual.", path: ["context_menu", "enabled"], default: false },
+          { kind: "toggle", label: "Icons", help: "An icon beside each entry that has one.", path: ["context_menu", "icons"], default: false },
+        ],
+      },
+    ],
+  },
+  {
     id: "switchers",
     label: "Switchers",
     icon: 0xe7c4,

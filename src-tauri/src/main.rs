@@ -31,6 +31,11 @@ fn main() {
         keyhook::helper(args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(0));
         return;
     }
+    // The context menu's helper process (native/ctxmenu): nothing else of the app.
+    if let Some(i) = args.iter().position(|a| a == "--menu") {
+        native::ctxmenu::helper(args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(0));
+        return;
+    }
     // Native bars drawn off screen into PNGs (native/snapshot.rs): nothing else of the app.
     if args.iter().any(|a| a == "--native-snapshot") {
         native::snapshot::run(&args);
@@ -67,6 +72,7 @@ fn main() {
             keyhook::on_win_digit(native::win_key);
             keyhook::on_alt_tab(native::alt_tab);
             keyhook::on_lang(native::lang_switch);
+            native::ctxmenu::watch(app.handle().clone());
             autostart::refresh();
             updater::start(app.handle());
             settings::startup(app.handle(), first_run);

@@ -50,7 +50,10 @@ pub struct Look {
 
 impl Look {
     pub fn from_layout(l: &Layout) -> Look {
-        let t = &l.theme;
+        Look::from_theme(&l.theme, l.edge == crate::config::Edge::Bottom)
+    }
+
+    pub fn from_theme(t: &crate::config::Theme, bottom: bool) -> Look {
         Look {
             bg: hex(&t.background).unwrap_or(rgba(0.0, 0.0, 0.0, 1.0)),
             opacity: (t.opacity as f32 / 100.0).clamp(0.0, 1.0),
@@ -61,7 +64,7 @@ impl Look {
             font_size: t.font_size as f32,
             main: Family::from_config(&t.font),
             secondary: if t.font_secondary.trim().is_empty() { Family::from_config(&t.font) } else { Family::from_config(&t.font_secondary) },
-            bottom: l.edge == crate::config::Edge::Bottom,
+            bottom,
         }
     }
 

@@ -48,6 +48,8 @@ pub struct Config {
     #[serde(default)]
     pub lang_switch: LangSwitchCfg,
     #[serde(default)]
+    pub context_menu: ContextMenuCfg,
+    #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
     pub osd: Osd,
@@ -232,6 +234,16 @@ impl Default for General {
 pub struct Shell {
     /// Hide the Windows taskbar while Kasumi runs (restored when it quits).
     pub hide_taskbar: bool,
+}
+
+/// `[context_menu]`: Kasumi's own right-click menus in Explorer and on the desktop
+/// (experimental; native bars).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ContextMenuCfg {
+    pub enabled: bool,
+    /// Icons beside the entries.
+    pub icons: bool,
 }
 
 /// `[lang_switch]`: Kasumi's keyboard language picker (Win + Space held; native bars).

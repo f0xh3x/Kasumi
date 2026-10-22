@@ -39,6 +39,10 @@ previews = true           # live previews of the windows
 labels = "both"           # under each window: both | icons | titles | none (none: previews only)
 desktop = "off"           # "Show desktop" as a choice: off | first | last
 
+[context_menu]
+enabled = false           # Kasumi's own right-click menus in Explorer and on the desktop (experimental, native Kasumi)
+icons = false             # icons beside the entries
+
 [lang_switch]
 enabled = true            # Kasumi's keyboard language picker: hold Win, press Space (native Kasumi)
 position = "default"      # default (where the switchers show: [alt_tab] position) | widget (out of the language widget) | top | center | bottom
