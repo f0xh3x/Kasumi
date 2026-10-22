@@ -130,6 +130,31 @@ pub fn run(args: &[String]) {
                 ("osd-caps", "notch://osd", serde_json::json!({ "kind": "caps", "level": 0, "muted": false, "text": "Caps Lock on" })),
                 ("osd-note", "notch://notification", serde_json::json!({ "app": "Discord", "aumid": "", "title": "Kip", "body": "are you coming tonight?" })),
             ];
+            // Alt + Tab out of a top bar's notch (sample windows; previews are Windows').
+            if surface.is_top() {
+                surface.pose(&gfx, false, None, 0.0);
+                for (state, previews, labels) in [("alttab", true, "both"), ("alttab-icons", false, "both")] {
+                    super::widgets::alttab::with(|st| {
+                        st.open = true;
+                        st.list = ["Code", "Discord", "Spotify"].iter().map(|t| super::widgets::alttab::Entry { hwnd: 0, title: format!("{t} window"), app: t.to_string() }).collect();
+                        st.sel = 1;
+                        st.label = label.clone();
+                        st.previews = previews;
+                        st.labels = labels.into();
+                    });
+                    surface.alt_tab_open(&gfx, &HashMap::new());
+                    surface.settle();
+                    let _ = surface.render(&gfx);
+                    surface.settle();
+                    if surface.render(&gfx).is_ok() {
+                        let (px, w, h) = surface.pixels();
+                        save_png(&dir.join(format!("{label}-{state}.png")), px, w, h);
+                    }
+                    surface.alt_tab_close();
+                    surface.settle();
+                    let _ = surface.render(&gfx);
+                }
+            }
             // A level pop-up while the bar is open ([osd] open_bar).
             surface.pose(&gfx, true, None, 0.0);
             surface.event(&gfx, "notch://osd", &serde_json::json!({ "kind": "volume", "level": 0.42, "muted": false }));

@@ -1265,6 +1265,44 @@ export const pages: Page[] = [
     ],
   },
   {
+    id: "alt-tab",
+    label: "Alt + Tab",
+    icon: 0xe7c4,
+    sections: [
+      {
+        title: "Alt + Tab",
+        help: "Kasumi's own window switcher: Alt + Tab drops it out of the top bar's notch. Tab / Shift + Tab or the arrow keys move, letting go of Alt switches, Esc cancels. Native Kasumi only (Settings › About).",
+        fields: [
+          { kind: "toggle", label: "Kasumi's Alt + Tab", help: "Off: the Windows switcher, as usual.", path: ["alt_tab", "enabled"], default: true },
+          {
+            kind: "select",
+            label: "Windows from",
+            path: ["alt_tab", "monitors"],
+            default: "current",
+            options: [
+              { value: "current", label: "The monitor you're working on" },
+              { value: "all", label: "All monitors" },
+            ],
+          },
+          { kind: "toggle", label: "Previews", help: "A live preview of each window.", path: ["alt_tab", "previews"], default: true },
+          {
+            kind: "select",
+            label: "Under each window",
+            help: "\"Nothing\" only works with previews on; without them each window shows its icon and title.",
+            path: ["alt_tab", "labels"],
+            default: "both",
+            options: [
+              { value: "both", label: "Icon and title" },
+              { value: "icons", label: "Icon" },
+              { value: "titles", label: "Title" },
+              { value: "none", label: "Nothing" },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
     id: "presets",
     label: "Presets",
     icon: 0xe728,

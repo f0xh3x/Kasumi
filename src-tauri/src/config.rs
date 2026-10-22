@@ -44,6 +44,8 @@ pub struct Config {
     #[serde(default)]
     pub launcher: LauncherCfg,
     #[serde(default)]
+    pub alt_tab: AltTabCfg,
+    #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
     pub osd: Osd,
@@ -228,6 +230,26 @@ impl Default for General {
 pub struct Shell {
     /// Hide the Windows taskbar while Kasumi runs (restored when it quits).
     pub hide_taskbar: bool,
+}
+
+/// `[alt_tab]`: Kasumi's own Alt + Tab switcher (native bars), out of the top bar's notch.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AltTabCfg {
+    pub enabled: bool,
+    /// "current": the windows on the monitor you're working on; "all": every monitor's.
+    pub monitors: String,
+    /// Live previews of the windows.
+    pub previews: bool,
+    /// Under each window: "both" (icon and title), "icons", "titles", or "none"
+    /// (previews only; without previews it shows both).
+    pub labels: String,
+}
+
+impl Default for AltTabCfg {
+    fn default() -> Self {
+        Self { enabled: true, monitors: "current".into(), previews: true, labels: "both".into() }
+    }
 }
 
 /// `[launcher]`: the app launcher (a panel in a bar or dock).

@@ -1,7 +1,8 @@
 //! The keyboard hook, in a small helper process (`Kasumi.exe --keyhook <pid>`):
 //! the volume keys (osd/volume.rs), the Windows key opening the launcher
-//! instead of Start ([launcher] start_menu), and Win + 1..9 opening the tasks
-//! widget's apps ([widgets.tasks] win_keys).
+//! instead of Start ([launcher] start_menu), Win + 1..9 opening the tasks
+//! widget's apps ([widgets.tasks] win_keys), and Alt + Tab showing Kasumi's
+//! switcher ([alt_tab]).
 //!
 //! Why a separate process: while one of our windows had the focus, Windows didn't
 //! run a low-level hook of ours that was first in line, nor the hooks after it.
@@ -27,7 +28,8 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, VIRTUAL_KEY, VK_F24, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-    VK_RWIN, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP,
+    VK_RWIN, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP, VK_F23, VK_TAB, VK_ESCAPE, VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN,
+    VK_RMENU, VK_MENU, VK_SHIFT, GetAsyncKeyState,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, SetWindowsHookExW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG,
@@ -36,6 +38,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// The hotkey a lone Windows key press becomes (no keyboard has F24).
 pub const START_HOTKEY: (HOT_KEY_MODIFIERS, VIRTUAL_KEY) = (HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_SHIFT.0), VK_F24);
+/// The hotkey letting go of Alt becomes while Kasumi's switcher shows (it switches;
+/// a hotkey lets the app bring the chosen window to the front).
+pub const ALT_TAB_HOTKEY: (HOT_KEY_MODIFIERS, VIRTUAL_KEY) = (HOT_KEY_MODIFIERS(MOD_CONTROL.0 | MOD_ALT.0 | MOD_SHIFT.0), VK_F23);
+
+/// Kasumi's Alt + Tab: what the keys asked for.
+#[derive(Clone, Copy, Debug)]
+pub enum AltTabKey {
+    Next,
+    Prev,
+    Cancel,
+    Commit,
+}
 
 /// A volume key the helper took over.
 #[derive(Clone, Copy, Debug)]
@@ -54,6 +68,9 @@ struct Events {
     /// Win + 1..9 on (switch), and one signal per digit.
     win_keys: HANDLE,
     digits: [HANDLE; 9],
+    /// Alt + Tab on (switch), and its signals: next, previous, cancel.
+    alt_tab: HANDLE,
+    alt_tab_keys: [HANDLE; 3],
 }
 unsafe impl Send for Events {}
 unsafe impl Sync for Events {}
@@ -71,6 +88,8 @@ fn events() -> &'static Events {
             volume: [make("VolumeUp", false), make("VolumeDown", false), make("VolumeMute", false)],
             win_keys: make("WinKeys", true),
             digits: std::array::from_fn(|i| make(&format!("WinDigit{}", i + 1), false)),
+            alt_tab: make("AltTab", true),
+            alt_tab_keys: [make("AltTabNext", false), make("AltTabPrev", false), make("AltTabCancel", false)],
         }
     })
 }
@@ -132,6 +151,30 @@ pub fn on_win_digit(on_digit: fn(u8)) {
         .expect("spawn win key thread");
 }
 
+/// Hands Alt + Tab's next / previous / cancel to `on_key` (the commit comes as
+/// ALT_TAB_HOTKEY, to the app's hotkey thread).
+pub fn on_alt_tab(on_key: fn(AltTabKey)) {
+    let keys = events().alt_tab_keys.map(|h| h.0 as isize);
+    std::thread::Builder::new()
+        .name("kasumi-alttab".into())
+        .spawn(move || loop {
+            let handles = keys.map(|h| HANDLE(h as *mut _));
+            let r = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
+            match r.0.wrapping_sub(WAIT_OBJECT_0.0) {
+                0 => on_key(AltTabKey::Next),
+                1 => on_key(AltTabKey::Prev),
+                2 => on_key(AltTabKey::Cancel),
+                _ => return,
+            }
+        })
+        .expect("spawn alt tab thread");
+}
+
+/// Whether Alt + Tab shows Kasumi's switcher.
+pub fn set_alt_tab(on: bool) {
+    set(events().alt_tab, on);
+}
+
 /// Whether Win + 1..9 open the tasks widget's apps.
 pub fn set_win_keys(on: bool) {
     set(events().win_keys, on);
@@ -155,6 +198,65 @@ static WIN_HELD: AtomicU32 = AtomicU32::new(0);
 static WIN_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// The held-back Windows key was used for Win + 1..9: its release does nothing.
 static WIN_USED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Kasumi's switcher is showing (Alt + Tab, Alt still held).
+static SWITCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Set in a key event's flags while Alt is held (KBDLLHOOKSTRUCT).
+const LLKHF_ALTDOWN: u32 = 0x20;
+
+/// Alt + Tab while Kasumi's switcher is on: Tab / Shift + Tab, the arrows and Esc go
+/// to it; letting go of Alt switches (through ALT_TAB_HOTKEY). True: swallowed.
+fn alt_tab_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
+    let ev = events();
+    let vk = VIRTUAL_KEY(info.vkCode as u16);
+    let switching = SWITCHING.load(Ordering::Relaxed);
+    let alt_held = info.flags.0 & LLKHF_ALTDOWN != 0;
+    if vk == VK_TAB && (switching || (alt_held && is_set(ev.alt_tab))) {
+        if down {
+            if !switching {
+                SWITCHING.store(true, Ordering::Relaxed);
+                // Alt was down on its own so far: a key in between keeps its release from
+                // opening the window's menu bar.
+                crate::win::send_keys(&[KeyEvent::key(VIRTUAL_KEY(0xE8), false), KeyEvent::key(VIRTUAL_KEY(0xE8), true)], OURS);
+            }
+            let shift = unsafe { GetAsyncKeyState(VK_SHIFT.0 as i32) } < 0;
+            set(ev.alt_tab_keys[if shift { 1 } else { 0 }], true);
+        }
+        return true;
+    }
+    if !switching {
+        return false;
+    }
+    match vk {
+        VK_RIGHT | VK_DOWN => {
+            if down {
+                set(ev.alt_tab_keys[0], true);
+            }
+            true
+        }
+        VK_LEFT | VK_UP => {
+            if down {
+                set(ev.alt_tab_keys[1], true);
+            }
+            true
+        }
+        VK_ESCAPE => {
+            if down {
+                SWITCHING.store(false, Ordering::Relaxed);
+                set(ev.alt_tab_keys[2], true);
+            }
+            true
+        }
+        // Alt let go: the private hotkey (Alt still down for it), then Alt's release.
+        VK_LMENU | VK_RMENU | VK_MENU if !down => {
+            SWITCHING.store(false, Ordering::Relaxed);
+            let k = KeyEvent::key;
+            let (ctrl, shift, key) = (VK_LCONTROL, VK_LSHIFT, ALT_TAB_HOTKEY.1);
+            crate::win::send_keys(&[k(ctrl, false), k(shift, false), k(key, false), k(key, true), k(shift, true), k(ctrl, true), k(vk, true)], OURS);
+            true
+        }
+        _ => false,
+    }
+}
 /// Tags the keys we send, so the hook lets them through (low bits clear: see
 /// win::send_keys).
 const OURS: usize = 0x534E_0000;
@@ -171,6 +273,9 @@ const AS_PHYSICAL: usize = 0x534E_0200;
 fn on_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
     if info.dwExtraInfo == OURS {
         return false;
+    }
+    if alt_tab_key(info, down) {
+        return true;
     }
     let ev = events();
     let vk = info.vkCode as u16;

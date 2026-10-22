@@ -3,6 +3,7 @@
 //! is what drops out of the bar or a notch for it. Both may take data keys the
 //! providers publish (the same JSON the pages got).
 
+pub mod alttab;
 mod basic;
 pub mod launcher;
 pub use basic::language_code;

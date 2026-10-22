@@ -111,6 +111,13 @@ pub enum Msg {
     ClickThrough(String, bool),
     /// Win + n (1..9): the tasks widget's nth app, on the monitor under the cursor.
     WinKey(u8),
+    /// Alt + Tab's keys (Kasumi's switcher).
+    AltTab(crate::keyhook::AltTabKey),
+}
+
+/// Alt + Tab's keys from the keyboard helper (and the commit hotkey).
+pub fn alt_tab(key: crate::keyhook::AltTabKey) {
+    post(Msg::AltTab(key));
 }
 
 /// Win + n from the keyboard helper.
@@ -396,6 +403,7 @@ impl Native {
                     s.set_click_through(ignore);
                 }
             }
+            Msg::AltTab(key) => self.alt_tab(key),
             Msg::WinKey(n) => {
                 // The bar on the cursor's monitor if it has a tasks widget, else the first that does.
                 let at = crate::win::cursor_pos();
@@ -406,6 +414,100 @@ impl Native {
                 }
             }
         }
+    }
+
+    /// Alt + Tab's keys: open the switcher (Tab / Shift + Tab), move its choice, switch
+    /// (Alt let go) or cancel (Esc).
+    fn alt_tab(&mut self, key: crate::keyhook::AltTabKey) {
+        use crate::keyhook::AltTabKey as K;
+        use widgets::alttab;
+        let open = alttab::with(|s| s.open);
+        match key {
+            K::Next | K::Prev if open => {
+                let label = alttab::with(|s| {
+                    let n = s.list.len();
+                    if n > 0 {
+                        s.sel = if matches!(key, K::Next) { (s.sel + 1) % n } else { (s.sel + n - 1) % n };
+                    }
+                    s.label.clone()
+                });
+                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                    s.alt_tab_changed(&self.gfx);
+                }
+            }
+            K::Next | K::Prev => self.alt_tab_open(matches!(key, K::Prev)),
+            K::Commit | K::Cancel if open => {
+                let (label, hwnd) = alttab::with(|s| {
+                    s.open = false;
+                    (s.label.clone(), s.list.get(s.sel).map(|e| e.hwnd as isize))
+                });
+                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                    s.alt_tab_close();
+                }
+                if let (K::Commit, Some(h)) = (key, hwnd) {
+                    run_act(
+                        widgets::Act::call(move |_| {
+                            let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(h, false));
+                        }),
+                        self.app.clone(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The switcher's windows (most recent first; the monitor you're working on, or
+    /// all), the first choice (the window before the one in front, as Windows does) and
+    /// the top bar it shows on.
+    fn alt_tab_open(&mut self, back: bool) {
+        use widgets::alttab::{self, Entry};
+        let Some(app) = self.app.clone() else { return };
+        let cfg = tauri::Manager::state::<crate::providers::SharedConfig>(&app).read().unwrap().alt_tab.clone();
+        let Some(wins) = self.store.get("tasks").and_then(|t| t.get("windows")).and_then(|w| w.as_array()) else { return };
+        let mut wins: Vec<&Value> = wins.iter().collect();
+        wins.sort_by_key(|w| w.get("z").and_then(|z| z.as_i64()).unwrap_or(i64::MAX));
+        let s = |w: &Value, k: &str| w.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let active = |w: &Value| w.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+        // The monitor you're working on: the window in front's, else the cursor's.
+        let cursor = crate::win::cursor_pos();
+        let cursor_mon = self.surfaces.iter().find(|s| cursor.is_some_and(|(x, y)| s.on_monitor(x, y))).map(|s| s.device().to_string());
+        let front_mon = wins.iter().find(|w| active(w)).map(|w| s(w, "monitor")).filter(|m| !m.is_empty());
+        let mon = front_mon.clone().or(cursor_mon.clone());
+        let all = cfg.monitors == "all";
+        let list: Vec<Entry> = wins
+            .iter()
+            .filter(|w| all || mon.as_ref().is_none_or(|m| s(w, "monitor") == *m))
+            .map(|w| Entry { hwnd: w.get("hwnd").and_then(|h| h.as_i64()).unwrap_or(0), title: s(w, "title"), app: s(w, "app") })
+            .collect();
+        if list.is_empty() {
+            return;
+        }
+        let n = list.len();
+        let first_in_front = wins.iter().find(|w| all || mon.as_ref().is_none_or(|m| s(w, "monitor") == *m)).is_some_and(|w| active(w));
+        let sel = if back { n - 1 } else if first_in_front && n > 1 { 1 } else { 0 };
+        // The top bar there (all monitors: where the cursor is); else any bar there, else the first.
+        let at = if all { cursor_mon.or(mon) } else { mon };
+        let on = |s: &Surface| at.as_deref().is_none_or(|m| s.device() == m);
+        let Some(i) = self
+            .surfaces
+            .iter()
+            .position(|s| s.is_top() && on(s))
+            .or_else(|| self.surfaces.iter().position(|s| on(s)))
+            .or(if self.surfaces.is_empty() { None } else { Some(0) })
+        else {
+            return;
+        };
+        let label = self.surfaces[i].label.clone();
+        alttab::with(|st| {
+            st.open = true;
+            st.list = list;
+            st.sel = sel;
+            st.label = label;
+            st.previews = cfg.previews;
+            st.labels = cfg.labels.clone();
+        });
+        self.surfaces[i].alt_tab_open(&self.gfx, &self.store);
     }
 
     /// Widgets' timers: run the due ones, then sleep until the next.

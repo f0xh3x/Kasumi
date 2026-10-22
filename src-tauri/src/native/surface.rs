@@ -250,6 +250,10 @@ pub struct Surface {
     tip_want: Option<(String, (i32, i32))>,
     tip_since: Option<Instant>,
     tip_blocked: Option<String>,
+    /// Alt + Tab: its panel (made the first time), and the notch it took over with that
+    /// notch's own panel state (given back once it's shut).
+    alt_panel: Option<usize>,
+    alt: Option<(usize, Option<usize>, bool)>,
     /// Live window previews shown on a panel: window, DWM thumbnail, its box (device px).
     thumbs: Vec<(isize, isize, [i32; 4])>,
     /// What the engine was last told, and what's waiting to be told.
@@ -333,6 +337,8 @@ impl Surface {
             tip_want: None,
             tip_since: None,
             tip_blocked: None,
+            alt_panel: None,
+            alt: None,
             thumbs: Vec::new(),
             sent_widths: String::new(),
             sent_regions: String::new(),
@@ -1262,6 +1268,14 @@ impl Surface {
             d.panel_h = pb.h;
             d.has_panel = true;
         }
+        // Alt + Tab's panel hangs from the notch it took over.
+        if let (Some((di, _, _)), Some(pi)) = (self.alt, self.alt_panel) {
+            let (w, h) = (self.panels[pi].w, self.panels[pi].h);
+            let d = &mut self.drops[di];
+            d.panel_w = w;
+            d.panel_h = h;
+            d.has_panel = true;
+        }
     }
 
     /// Where a widget sits once the bar is open: its place in the bar's row, else its notch.
@@ -1377,6 +1391,9 @@ impl Surface {
                     width += 10.0 * nudged;
                     height += 4.0 * nudged;
                 }
+                if !dock && self.alt.is_some_and(|a| a.0 == di) && val(&self.expand) < 0.5 {
+                    panel_top = Some(height);
+                }
                 if let Some(s) = &d.shown {
                     // Retracting (hidden under a window): shrink into the edge around the centre.
                     let s = clamp01(val(s));
@@ -1435,6 +1452,14 @@ impl Surface {
 
     /// Panels' cascades: one starts as its panel begins to open, and resets once it's shut.
     fn update_cascades(&mut self) {
+        if let Some((di, prev, had)) = self.alt {
+            let d = &mut self.drops[di];
+            if d.spring.target < 0.5 && d.spring.value <= 0.01 {
+                d.active = prev;
+                d.has_panel = had;
+                self.alt = None;
+            }
+        }
         for d in &self.drops {
             let Some(pi) = d.active else { continue };
             let pb = &mut self.panels[pi];
@@ -2082,6 +2107,61 @@ impl Surface {
     }
 
     /// The left button down: a panel part that drags (a slider) takes the mouse.
+    pub fn device(&self) -> &str {
+        &self.monitor.device
+    }
+
+    pub fn is_top(&self) -> bool {
+        !self.bottom()
+    }
+
+    /// Alt + Tab: its panel out of this bar's centre notch (whatever else was open goes).
+    pub fn alt_tab_open(&mut self, gfx: &Gfx, store: &HashMap<String, Value>) {
+        let pi = match self.alt_panel {
+            Some(pi) => pi,
+            None => {
+                let opts = self.opts_for("alt_tab");
+                let mut p: Box<dyn Panel> = Box::new(widgets::alttab::AltTabPanel::new());
+                for k in p.keys() {
+                    if let Some(v) = store.get(*k) {
+                        p.data(k, v);
+                    }
+                }
+                self.panels.push(PanelBox { p, opts, content: (0.0, 0.0), w: 0.0, h: 0.0, shift: 0.0, align: Align::Center, drawn: None, cascade: None });
+                self.alt_panel = Some(self.panels.len() - 1);
+                self.panels.len() - 1
+            }
+        };
+        let mid = self.layout.width / 2.0;
+        let centre = |d: &Drop| ((d.x + d.width / 2.0) - mid).abs();
+        let Some(di) = (0..self.drops.len()).filter(|&i| self.drops[i].notch.is_some()).min_by(|&a, &b| centre(&self.drops[a]).total_cmp(&centre(&self.drops[b]))) else {
+            return;
+        };
+        self.close_all();
+        let d = &mut self.drops[di];
+        if self.alt.is_none() {
+            self.alt = Some((di, d.active, d.has_panel));
+        }
+        d.active = Some(pi);
+        d.has_panel = true;
+        d.spring.target = 1.0;
+        self.changed(gfx);
+        self.kick();
+    }
+
+    /// Alt + Tab: the choice moved.
+    pub fn alt_tab_changed(&mut self, gfx: &Gfx) {
+        self.redraw(gfx);
+    }
+
+    /// Alt + Tab: done (it goes back into the notch).
+    pub fn alt_tab_close(&mut self) {
+        if let Some((di, _, _)) = self.alt {
+            self.drops[di].spring.target = 0.0;
+            self.kick();
+        }
+    }
+
     pub fn has_tasks(&self) -> bool {
         self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "tasks")
     }
@@ -2317,6 +2397,23 @@ impl Surface {
         self.pop.osd.snap();
         self.pop.peek.snap();
         // Posed open: any cascade has long finished.
+        for pb in &mut self.panels {
+            pb.cascade = Some(Instant::now() - std::time::Duration::from_secs(10));
+        }
+        self.animating = false;
+    }
+
+    /// Snapshots: everything moving jumps to where it's going (panels opened by hand).
+    pub fn settle(&mut self) {
+        for s in [&mut self.expand, &mut self.spread, &mut self.nudge] {
+            s.snap();
+        }
+        for d in &mut self.drops {
+            d.spring.snap();
+            for s in [d.xs.as_mut(), d.ws.as_mut(), d.shown.as_mut()].into_iter().flatten() {
+                s.snap();
+            }
+        }
         for pb in &mut self.panels {
             pb.cascade = Some(Instant::now() - std::time::Duration::from_secs(10));
         }

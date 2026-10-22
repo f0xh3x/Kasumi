@@ -64,6 +64,7 @@ fn main() {
             osd::start(app.handle());
             keyhook::start(osd::volume_key);
             keyhook::on_win_digit(native::win_key);
+            keyhook::on_alt_tab(native::alt_tab);
             autostart::refresh();
             updater::start(app.handle());
             settings::startup(app.handle(), first_run);

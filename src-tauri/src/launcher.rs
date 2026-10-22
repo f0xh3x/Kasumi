@@ -167,6 +167,9 @@ pub async fn launcher_user() -> Value {
 /// [launcher] start_menu: the keyboard helper (keyhook.rs) presses this hotkey on
 /// a lone Windows key press.
 const START_HOTKEY_ID: i32 = 2;
+/// [alt_tab]: the keyboard helper presses this hotkey when Alt is let go of while
+/// Kasumi's switcher shows (getting a hotkey lets us bring the window up).
+const ALT_TAB_HOTKEY_ID: i32 = 3;
 
 /// Keeps the configured hotkey registered and opens / closes the launcher on it
 /// (and on the Windows key, with `start_menu`).
@@ -182,8 +185,13 @@ pub fn start(app: &AppHandle) {
             SetTimer(None, 0, 500, None);
             let mut registered: Option<String> = None;
             let mut start_registered = false;
+            let mut alt_tab_registered = false;
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.message == WM_HOTKEY && msg.wParam.0 as i32 == ALT_TAB_HOTKEY_ID {
+                    crate::native::alt_tab(crate::keyhook::AltTabKey::Commit);
+                    continue;
+                }
                 if msg.message == WM_HOTKEY {
                     crate::engine::launcher_toggle(&app, None, None, true);
                     continue;
@@ -209,6 +217,20 @@ pub fn start(app: &AppHandle) {
                         let win_keys = crate::native::active()
                             && cfg.widgets.get("tasks").and_then(|t| t.get("win_keys")).and_then(|v| v.as_bool()) != Some(false);
                         crate::keyhook::set_win_keys(win_keys);
+                        // Kasumi's Alt + Tab (native bars).
+                        let alt_tab = crate::native::active() && cfg.alt_tab.enabled;
+                        if alt_tab != alt_tab_registered {
+                            alt_tab_registered = alt_tab;
+                            if alt_tab {
+                                let (mods, vk) = crate::keyhook::ALT_TAB_HOTKEY;
+                                if let Err(e) = RegisterHotKey(None, ALT_TAB_HOTKEY_ID, mods | MOD_NOREPEAT, vk.0 as u32) {
+                                    eprintln!("[kasumi] Alt + Tab switcher unavailable: {e}");
+                                }
+                            } else {
+                                let _ = UnregisterHotKey(None, ALT_TAB_HOTKEY_ID);
+                            }
+                        }
+                        crate::keyhook::set_alt_tab(alt_tab);
                         let hotkey = cfg.launcher.hotkey.trim();
                         (cfg.launcher.enabled && !hotkey.is_empty()).then(|| hotkey.to_string())
                     };

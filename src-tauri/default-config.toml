@@ -30,6 +30,12 @@ hotkey = "Win+Alt+Space"
 start_menu = false
 fullscreen = "launcher"   # the Windows key over a fullscreen app: launcher | notches (shown a few seconds)
 
+[alt_tab]
+enabled = true            # Kasumi's own Alt + Tab, out of the top bar's notch (native Kasumi)
+monitors = "current"      # current (the monitor you're working on) | all
+previews = true           # live previews of the windows
+labels = "both"           # under each window: both | icons | titles | none (none: previews only)
+
 [theme]
 background = "#000000"
 opacity = 100             # percent: bars, notches and panels (text stays solid)
