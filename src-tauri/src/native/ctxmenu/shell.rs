@@ -79,8 +79,9 @@ pub struct Entry {
     pub key: String,
     /// A Windows submenu's layout (its entries arranged when it opens).
     pub rules: Vec<crate::config::MenuNode>,
-    /// Asks for a second click ("Confirm?") before it runs.
+    /// Asks for a second click ("Confirm?") before it runs; clicked once (red, waiting).
     pub confirm: bool,
+    pub armed: bool,
 }
 
 impl Entry {
@@ -110,6 +111,7 @@ impl Entry {
             key: String::new(),
             rules: Vec::new(),
             confirm: false,
+            armed: false,
         }
     }
 
@@ -474,6 +476,7 @@ unsafe fn read_menu(cm: &IContextMenu, hmenu: HMENU) -> Vec<Entry> {
             key,
             rules: Vec::new(),
             confirm: false,
+            armed: false,
             text,
             keys,
             accel,

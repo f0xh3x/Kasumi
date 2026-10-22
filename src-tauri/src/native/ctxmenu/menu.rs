@@ -477,8 +477,11 @@ impl Level {
                     gfx.fill_rect(rect(ox + PAD + LEAD, oy + (y + rh / 2.0).floor(), self.bw - 2.0 * (PAD + LEAD), 1.0 / self.scale), with_alpha(fg, 0.12 * ra));
                     continue;
                 }
-                let sel = self.hover == Some(i);
-                if sel {
+                // Clicked once, waiting for the second (Confirm?): red, as the menu widget's.
+                let sel = self.hover == Some(i) && !en.armed;
+                if en.armed {
+                    gfx.fill_round(rect(ox + PAD, oy + y, self.bw - 2.0 * PAD, rh), ROW_R, rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.22 * ra));
+                } else if sel {
                     let hl = if en.disabled { with_alpha(fg, 0.08) } else { accent };
                     gfx.fill_round(rect(ox + PAD, oy + y, self.bw - 2.0 * PAD, rh), ROW_R, with_alpha(hl, ra));
                 }

@@ -625,6 +625,7 @@ fn choose(u: &mut Ui, li: usize, row: usize) -> Option<(Open, Run)> {
     if confirm && o.armed != Some((li, row)) {
         o.armed = Some((li, row));
         o.levels[li].entries[row].text = "Confirm?".into();
+        o.levels[li].entries[row].armed = true;
         let _ = o.levels[li].draw(&u.gfx);
         return None;
     }
