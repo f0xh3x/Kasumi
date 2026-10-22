@@ -1287,19 +1287,18 @@ export const pages: Page[] = [
     ],
   },
   {
-    id: "alt-tab",
-    label: "Alt + Tab",
+    id: "switchers",
+    label: "Switchers",
     icon: 0xe7c4,
     sections: [
       {
-        title: "Alt + Tab",
-        help: "Kasumi's own window switcher. Tab / Shift + Tab or the arrow keys move, letting go of Alt switches, Esc cancels. Native Kasumi only (Settings › About).",
+        title: "Switchers",
+        help: "Kasumi's own pop-ups for switching windows and keyboard languages, in place of Windows' ones. Native Kasumi only (Settings › About).",
         fields: [
-          { kind: "toggle", label: "Kasumi's Alt + Tab", help: "Off: the Windows switcher, as usual.", path: ["alt_tab", "enabled"], default: true },
           {
             kind: "select",
             label: "Position",
-            help: "Without a bar there (no dock on that monitor, say), it shows in the middle.",
+            help: "Where they show (a switcher can have its own below). Without a bar there (no dock on that monitor, say), in the middle.",
             path: ["alt_tab", "position"],
             default: "top",
             options: [
@@ -1308,6 +1307,13 @@ export const pages: Page[] = [
               { value: "bottom", label: "Out of the dock's notch" },
             ],
           },
+        ],
+      },
+      {
+        title: "Alt + Tab",
+        help: "Switch windows. Tab / Shift + Tab or the arrow keys move, letting go of Alt switches, Esc cancels.",
+        fields: [
+          { kind: "toggle", label: "Kasumi's Alt + Tab", help: "Off: the Windows switcher, as usual.", path: ["alt_tab", "enabled"], default: true },
           {
             kind: "toggle",
             label: "Replace the tasks widget",
@@ -1349,6 +1355,37 @@ export const pages: Page[] = [
               { value: "off", label: "Off" },
               { value: "first", label: "First in the list" },
               { value: "last", label: "Last in the list" },
+            ],
+          },
+        ],
+      },
+      {
+        title: "Languages (Win + Space)",
+        help: "Switch keyboard languages. Hold Win and press Space: Space / Shift + Space move, letting go of Win switches, Esc cancels.",
+        fields: [
+          { kind: "toggle", label: "Kasumi's language picker", help: "Off: Windows' picker, as usual.", path: ["lang_switch", "enabled"], default: true },
+          {
+            kind: "select",
+            label: "Position",
+            help: "Out of the language widget: from its notch, when there's one on that monitor (else the default).",
+            path: ["lang_switch", "position"],
+            default: "default",
+            options: [
+              { value: "default", label: "Default (the position above)" },
+              { value: "widget", label: "Out of the language widget" },
+              { value: "top", label: "Out of the top bar's notch" },
+              { value: "center", label: "In the middle of the screen" },
+              { value: "bottom", label: "Out of the dock's notch" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Each language",
+            path: ["lang_switch", "labels"],
+            default: "both",
+            options: [
+              { value: "both", label: "Code and name" },
+              { value: "codes", label: "Code" },
             ],
           },
         ],

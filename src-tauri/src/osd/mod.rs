@@ -110,11 +110,24 @@ impl KeyboardWatch {
             let cfg = cfg.read().unwrap();
             cfg.osd.enabled && cfg.osd.keyboard
         };
-        if same_window && enabled {
+        let quiet = now_ms() < QUIET_LAYOUT.load(std::sync::atomic::Ordering::Relaxed);
+        if same_window && enabled && !quiet {
             // At the language widget (the peek), or out of a notch like the other pop-ups.
             emit(app, "keyboard", "notch://keyboard", data);
         }
     }
+}
+
+/// Until when (ms since the epoch) a layout change makes no pop-up: the language
+/// picker just switched it (it showed the choice already).
+static QUIET_LAYOUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+pub fn quiet_layout() {
+    QUIET_LAYOUT.store(now_ms() + 1500, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Language widget click: cycle the foreground window to the next layout.

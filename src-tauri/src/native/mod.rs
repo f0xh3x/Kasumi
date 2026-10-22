@@ -114,11 +114,17 @@ pub enum Msg {
     WinKey(u8),
     /// Alt + Tab's keys (Kasumi's switcher).
     AltTab(crate::keyhook::AltTabKey),
+    Lang(crate::keyhook::AltTabKey),
 }
 
 /// Alt + Tab's keys from the keyboard helper (and the commit hotkey).
 pub fn alt_tab(key: crate::keyhook::AltTabKey) {
     post(Msg::AltTab(key));
+}
+
+/// The language picker's keys from the keyboard helper (Win + Space).
+pub fn lang_switch(key: crate::keyhook::AltTabKey) {
+    post(Msg::Lang(key));
 }
 
 /// Where each app's icon is in the native bars and docks (screen px): the surface, its
@@ -425,7 +431,8 @@ impl Native {
                     s.set_click_through(ignore);
                 }
             }
-            Msg::AltTab(key) => self.alt_tab(key),
+            Msg::AltTab(key) => self.switcher(widgets::alttab::Kind::Windows, key),
+            Msg::Lang(key) => self.switcher(widgets::alttab::Kind::Languages, key),
             Msg::WinKey(n) => {
                 // The bar on the cursor's monitor if it has a tasks widget, else the first that does.
                 let at = crate::win::cursor_pos();
@@ -440,14 +447,18 @@ impl Native {
 
     /// Alt + Tab's keys: open the switcher (Tab / Shift + Tab), move its choice, switch
     /// (Alt let go) or cancel (Esc).
-    fn alt_tab(&mut self, key: crate::keyhook::AltTabKey) {
+    fn switcher(&mut self, kind: widgets::alttab::Kind, key: crate::keyhook::AltTabKey) {
         use crate::keyhook::AltTabKey as K;
-        use widgets::alttab;
-        let open = alttab::with(|s| s.open);
+        use widgets::alttab::{self, Kind};
+        let (open, showing) = alttab::with(|s| (s.open, s.kind));
+        // The other switcher is showing: these keys aren't for it.
+        if open && showing != kind {
+            return;
+        }
         match key {
             K::Next | K::Prev if open => {
                 let label = alttab::with(|s| {
-                    let n = s.list.len();
+                    let n = s.len();
                     if n > 0 {
                         s.sel = if matches!(key, K::Next) { (s.sel + 1) % n } else { (s.sel + n - 1) % n };
                     }
@@ -459,11 +470,12 @@ impl Native {
                     s.alt_tab_changed(&self.gfx);
                 }
             }
+            K::Next | K::Prev if kind == Kind::Languages => self.lang_open(matches!(key, K::Prev)),
             K::Next | K::Prev => self.alt_tab_open(matches!(key, K::Prev)),
             K::Commit | K::Cancel if open => {
-                let (label, hwnd) = alttab::with(|s| {
+                let (label, hwnd, hkl) = alttab::with(|s| {
                     s.open = false;
-                    (s.label.clone(), s.list.get(s.sel).map(|e| e.hwnd as isize))
+                    (s.label.clone(), s.list.get(s.sel).map(|e| e.hwnd as isize), s.langs.get(s.sel).map(|l| l.hkl))
                 });
                 if label.starts_with("@center:") {
                     if let Some(f) = self.alt_float.as_mut() {
@@ -472,7 +484,14 @@ impl Native {
                 } else if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
                     s.alt_tab_close();
                 }
-                if let (K::Commit, Some(0)) = (key, hwnd) {
+                if kind == Kind::Languages {
+                    if let (K::Commit, Some(h)) = (key, hkl) {
+                        std::thread::spawn(move || {
+                            crate::osd::quiet_layout();
+                            crate::win::set_keyboard_layout(h);
+                        });
+                    }
+                } else if let (K::Commit, Some(0)) = (key, hwnd) {
                     crate::win::toggle_desktop();
                 } else if let (K::Commit, Some(h)) = (key, hwnd) {
                     run_act(
@@ -544,6 +563,7 @@ impl Native {
         let label = if bar.is_some() { self.surfaces[i].label.clone() } else { format!("@center:{}", self.surfaces[i].label) };
         alttab::with(|st| {
             st.open = true;
+            st.kind = alttab::Kind::Windows;
             st.list = list;
             st.sel = sel;
             st.label = label;
@@ -551,7 +571,78 @@ impl Native {
             st.labels = cfg.labels.clone();
         });
         if bar.is_some() {
-            self.surfaces[i].alt_tab_open(&self.gfx, &self.store, cfg.replace_tasks);
+            self.surfaces[i].alt_tab_open(&self.gfx, &self.store, cfg.replace_tasks, None);
+        } else {
+            self.alt_center_draw();
+        }
+    }
+
+    /// The language picker (Win + Space): the installed languages, the next one (or the
+    /// previous) chosen, out of the notch its position asks for on the monitor you're
+    /// working on.
+    fn lang_open(&mut self, back: bool) {
+        use widgets::alttab::{self, Kind, Lang};
+        let Some(app) = self.app.clone() else { return };
+        let (cfg, shared) = {
+            let c = tauri::Manager::state::<crate::providers::SharedConfig>(&app);
+            let c = c.read().unwrap();
+            (c.lang_switch.clone(), c.alt_tab.position.clone())
+        };
+        let hkls = crate::win::keyboard_layouts();
+        let n = hkls.len();
+        if n < 2 {
+            return;
+        }
+        let i = crate::win::foreground_hkl().and_then(|c| hkls.iter().position(|&h| h == c)).unwrap_or(0);
+        let sel = if back { (i + n - 1) % n } else { (i + 1) % n };
+        let langs: Vec<Lang> = hkls
+            .iter()
+            .map(|&h| {
+                let lang = (h as usize & 0xffff) as u16;
+                Lang { hkl: h, code: crate::win::language_names(lang).0, name: crate::win::language_display_name(lang) }
+            })
+            .collect();
+        // The monitor you're working on: the window in front's, else the cursor's.
+        let front = self
+            .store
+            .get("tasks")
+            .and_then(|t| t.get("windows"))
+            .and_then(|w| w.as_array())
+            .and_then(|ws| ws.iter().find(|w| w.get("active").and_then(|a| a.as_bool()) == Some(true)))
+            .and_then(|w| w.get("monitor").and_then(|m| m.as_str()))
+            .filter(|m| !m.is_empty())
+            .map(String::from);
+        let cursor = crate::win::cursor_pos();
+        let mon = front.or_else(|| self.surfaces.iter().find(|s| cursor.is_some_and(|(x, y)| s.on_monitor(x, y))).map(|s| s.device().to_string()));
+        let on = |s: &Surface| mon.as_deref().is_none_or(|m| s.device() == m);
+        let pick = |p: &str| match p {
+            "center" => None,
+            "bottom" => self.surfaces.iter().position(|s| !s.is_top() && on(s)),
+            _ => self.surfaces.iter().position(|s| s.is_top() && on(s)),
+        };
+        let pos = if cfg.position == "default" { shared.as_str() } else { cfg.position.as_str() };
+        let (bar, at) = if pos == "widget" {
+            match self.surfaces.iter().position(|s| on(s) && s.lang_drop().is_some()) {
+                Some(i) => (Some(i), self.surfaces[i].lang_drop()),
+                None => (pick(&shared), None),
+            }
+        } else {
+            (pick(pos), None)
+        };
+        let Some(i) = bar.or_else(|| self.surfaces.iter().position(|s| on(s))).or(if self.surfaces.is_empty() { None } else { Some(0) }) else {
+            return;
+        };
+        let label = if bar.is_some() { self.surfaces[i].label.clone() } else { format!("@center:{}", self.surfaces[i].label) };
+        alttab::with(|st| {
+            st.open = true;
+            st.kind = Kind::Languages;
+            st.langs = langs;
+            st.sel = sel;
+            st.label = label;
+            st.lang_labels = cfg.labels.clone();
+        });
+        if bar.is_some() {
+            self.surfaces[i].alt_tab_open(&self.gfx, &self.store, false, at);
         } else {
             self.alt_center_draw();
         }

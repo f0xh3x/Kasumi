@@ -734,6 +734,70 @@ pub fn next_keyboard_layout() -> Result<(), String> {
     }
 }
 
+/// The installed keyboard layouts (HKLs), in Windows' order.
+pub fn keyboard_layouts() -> Vec<isize> {
+    unsafe {
+        let count = GetKeyboardLayoutList(None).max(0) as usize;
+        let mut list = vec![HKL::default(); count];
+        let n = GetKeyboardLayoutList(Some(&mut list)).max(0) as usize;
+        list.truncate(n);
+        list.into_iter().map(|h| h.0 as isize).collect()
+    }
+}
+
+/// The window in front's keyboard layout (HKL).
+pub fn foreground_hkl() -> Option<isize> {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_invalid() {
+            return None;
+        }
+        Some(GetKeyboardLayout(GetWindowThreadProcessId(fg, None)).0 as isize)
+    }
+}
+
+/// A language's English display name, e.g. "English (United States)".
+pub fn language_display_name(langid: u16) -> String {
+    const LOCALE_SENGLISHDISPLAYNAME: u32 = 0x72;
+    let mut buf = [0u16; 128];
+    let n = unsafe { GetLocaleInfoW(langid as u32, LOCALE_SENGLISHDISPLAYNAME, Some(&mut buf)) } as usize;
+    let name = String::from_utf16_lossy(&buf[..n.saturating_sub(1)]);
+    if name.is_empty() {
+        language_names(langid).2
+    } else {
+        name
+    }
+}
+
+/// Switches the window in front to this keyboard layout (HKL): asks its focused
+/// control; if nothing there takes it, presses the layout hotkey until it's there.
+pub fn set_keyboard_layout(target: isize) {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_invalid() {
+            return;
+        }
+        let tid = GetWindowThreadProcessId(fg, None);
+        let current = GetKeyboardLayout(tid);
+        if current.0 as isize == target {
+            return;
+        }
+        let mut gui = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+        let to = if GetGUIThreadInfo(tid, &mut gui).is_ok() && !gui.hwndFocus.is_invalid() { gui.hwndFocus } else { fg };
+        let _ = PostMessageW(Some(to), WM_INPUTLANGCHANGEREQUEST, WPARAM(0), LPARAM(target));
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        if GetKeyboardLayout(tid) == current {
+            let list = keyboard_layouts();
+            let n = list.len();
+            let (Some(i), Some(j)) = (list.iter().position(|&h| h == current.0 as isize), list.iter().position(|&h| h == target)) else { return };
+            for _ in 0..(j + n - i) % n {
+                press_layout_hotkey();
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+        }
+    }
+}
+
 /// Windows 11 rounded corners for a frameless window.
 pub fn round_corners(h: isize) {
     use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};

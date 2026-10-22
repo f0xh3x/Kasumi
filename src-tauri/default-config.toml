@@ -39,6 +39,11 @@ previews = true           # live previews of the windows
 labels = "both"           # under each window: both | icons | titles | none (none: previews only)
 desktop = "off"           # "Show desktop" as a choice: off | first | last
 
+[lang_switch]
+enabled = true            # Kasumi's keyboard language picker: hold Win, press Space (native Kasumi)
+position = "default"      # default (where the switchers show: [alt_tab] position) | widget (out of the language widget) | top | center | bottom
+labels = "both"           # each language: both (code and name) | codes
+
 [theme]
 background = "#000000"
 opacity = 100             # percent: bars, notches and panels (text stays solid)

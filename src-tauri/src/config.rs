@@ -46,6 +46,8 @@ pub struct Config {
     #[serde(default)]
     pub alt_tab: AltTabCfg,
     #[serde(default)]
+    pub lang_switch: LangSwitchCfg,
+    #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
     pub osd: Osd,
@@ -230,6 +232,25 @@ impl Default for General {
 pub struct Shell {
     /// Hide the Windows taskbar while Kasumi runs (restored when it quits).
     pub hide_taskbar: bool,
+}
+
+/// `[lang_switch]`: Kasumi's keyboard language picker (Win + Space held; native bars).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LangSwitchCfg {
+    pub enabled: bool,
+    /// Where it shows: "default" (where the switchers show: [alt_tab] position),
+    /// "widget" (out of the language widget's notch; else the default), "top",
+    /// "center" or "bottom".
+    pub position: String,
+    /// Each language: "both" (its code and name) or "codes".
+    pub labels: String,
+}
+
+impl Default for LangSwitchCfg {
+    fn default() -> Self {
+        Self { enabled: true, position: "default".into(), labels: "both".into() }
+    }
 }
 
 /// `[alt_tab]`: Kasumi's own Alt + Tab switcher (native bars), out of the top bar's notch.

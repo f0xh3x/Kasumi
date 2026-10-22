@@ -71,6 +71,9 @@ struct Events {
     /// Alt + Tab on (switch), and its signals: next, previous, cancel.
     alt_tab: HANDLE,
     alt_tab_keys: [HANDLE; 3],
+    /// The language picker on (switch), and its signals: next, previous, cancel, commit.
+    lang: HANDLE,
+    lang_keys: [HANDLE; 4],
 }
 unsafe impl Send for Events {}
 unsafe impl Sync for Events {}
@@ -90,6 +93,8 @@ fn events() -> &'static Events {
             digits: std::array::from_fn(|i| make(&format!("WinDigit{}", i + 1), false)),
             alt_tab: make("AltTab", true),
             alt_tab_keys: [make("AltTabNext", false), make("AltTabPrev", false), make("AltTabCancel", false)],
+            lang: make("Lang", true),
+            lang_keys: [make("LangNext", false), make("LangPrev", false), make("LangCancel", false), make("LangCommit", false)],
         }
     })
 }
@@ -151,6 +156,25 @@ pub fn on_win_digit(on_digit: fn(u8)) {
         .expect("spawn win key thread");
 }
 
+/// Hands the language picker's next / previous / cancel / commit to `on_key`.
+pub fn on_lang(on_key: fn(AltTabKey)) {
+    let keys = events().lang_keys.map(|h| h.0 as isize);
+    std::thread::Builder::new()
+        .name("kasumi-lang".into())
+        .spawn(move || loop {
+            let handles = keys.map(|h| HANDLE(h as *mut _));
+            let r = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
+            match r.0.wrapping_sub(WAIT_OBJECT_0.0) {
+                0 => on_key(AltTabKey::Next),
+                1 => on_key(AltTabKey::Prev),
+                2 => on_key(AltTabKey::Cancel),
+                3 => on_key(AltTabKey::Commit),
+                _ => return,
+            }
+        })
+        .expect("spawn language picker thread");
+}
+
 /// Hands Alt + Tab's next / previous / cancel to `on_key` (the commit comes as
 /// ALT_TAB_HOTKEY, to the app's hotkey thread).
 pub fn on_alt_tab(on_key: fn(AltTabKey)) {
@@ -173,6 +197,11 @@ pub fn on_alt_tab(on_key: fn(AltTabKey)) {
 /// Whether Alt + Tab shows Kasumi's switcher.
 pub fn set_alt_tab(on: bool) {
     set(events().alt_tab, on);
+}
+
+/// Whether Win + Space opens Kasumi's language picker.
+pub fn set_lang(on: bool) {
+    set(events().lang, on);
 }
 
 /// Whether Win + 1..9 open the tasks widget's apps.
@@ -200,6 +229,55 @@ static WIN_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 static WIN_USED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Kasumi's switcher is showing (Alt + Tab, Alt still held).
 static SWITCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Kasumi's language picker is showing (Win + Space, Win still held).
+static LANG_SWITCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Win + Space with the language picker on: Space / Shift + Space go to it (Windows'
+/// picker never sees them), Esc cancels, letting go of Win picks. True: swallowed.
+fn lang_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
+    let ev = events();
+    let vk = VIRTUAL_KEY(info.vkCode as u16);
+    let switching = LANG_SWITCHING.load(Ordering::Relaxed);
+    let held = WIN_HELD.load(Ordering::Relaxed);
+    let win = held != 0 || WIN_DOWN.load(Ordering::Relaxed);
+    if vk == windows::Win32::UI::Input::KeyboardAndMouse::VK_SPACE && (switching || (win && is_set(ev.lang))) {
+        if down {
+            if !switching {
+                LANG_SWITCHING.store(true, Ordering::Relaxed);
+                if held == 0 {
+                    // Windows saw Win go down: a key in between keeps its release from
+                    // opening Start.
+                    crate::win::send_keys(&[KeyEvent::key(VIRTUAL_KEY(0xE8), false), KeyEvent::key(VIRTUAL_KEY(0xE8), true)], OURS);
+                } else {
+                    WIN_USED.store(true, Ordering::Relaxed);
+                }
+            }
+            let shift = unsafe { GetAsyncKeyState(VK_SHIFT.0 as i32) } < 0;
+            set(ev.lang_keys[if shift { 1 } else { 0 }], true);
+        }
+        return true;
+    }
+    if !switching {
+        return false;
+    }
+    match vk {
+        VK_ESCAPE => {
+            if down {
+                LANG_SWITCHING.store(false, Ordering::Relaxed);
+                set(ev.lang_keys[2], true);
+            }
+            true
+        }
+        // Win let go: pick (its release goes on as usual: no Start, see on_key).
+        VK_LWIN | VK_RWIN if !down => {
+            LANG_SWITCHING.store(false, Ordering::Relaxed);
+            set(ev.lang_keys[3], true);
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Set in a key event's flags while Alt is held (KBDLLHOOKSTRUCT).
 const LLKHF_ALTDOWN: u32 = 0x20;
 
@@ -274,7 +352,7 @@ fn on_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
     if info.dwExtraInfo == OURS {
         return false;
     }
-    if alt_tab_key(info, down) {
+    if alt_tab_key(info, down) || lang_key(info, down) {
         return true;
     }
     let ev = events();
@@ -343,6 +421,8 @@ fn on_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
     }
     // A shortcut: Win first, then this key, as they were pressed.
     WIN_HELD.store(0, Ordering::Relaxed);
+    // Windows sees Win down now (Win + Shift + Space then still reaches the picker).
+    WIN_DOWN.store(true, Ordering::Relaxed);
     let key = KeyEvent { vk, scan: info.scanCode as u16, up: false, extended: info.flags.0 & LLKHF_EXTENDED.0 != 0 };
     crate::win::send_keys(&[KeyEvent::key(VIRTUAL_KEY(held), false), key], OURS);
     true

@@ -2295,8 +2295,14 @@ impl Surface {
         self.opts_for("alt_tab")
     }
 
-    /// Alt + Tab: its panel out of this bar's centre notch (whatever else was open goes).
-    pub fn alt_tab_open(&mut self, gfx: &Gfx, store: &HashMap<String, Value>, replace_tasks: bool) {
+    /// The notch holding the language widget, if one does.
+    pub fn lang_drop(&self) -> Option<usize> {
+        self.widgets.iter().find(|w| widgets::widget_type(&w.name) == "language").and_then(|w| w.notch)
+    }
+
+    /// A switcher (Alt + Tab, the language picker): its panel out of this bar's centre
+    /// notch, or `at` (whatever else was open goes).
+    pub fn alt_tab_open(&mut self, gfx: &Gfx, store: &HashMap<String, Value>, replace_tasks: bool, at: Option<usize>) {
         let pi = match self.alt_panel {
             Some(pi) => pi,
             None => {
@@ -2314,7 +2320,10 @@ impl Surface {
         };
         let mid = self.layout.width / 2.0;
         let centre = |d: &Drop| ((d.x + d.width / 2.0) - mid).abs();
-        let Some(di) = (0..self.drops.len()).filter(|&i| self.drops[i].notch.is_some()).min_by(|&a, &b| centre(&self.drops[a]).total_cmp(&centre(&self.drops[b]))) else {
+        let Some(di) = at
+            .filter(|&i| i < self.drops.len() && self.drops[i].notch.is_some())
+            .or_else(|| (0..self.drops.len()).filter(|&i| self.drops[i].notch.is_some()).min_by(|&a, &b| centre(&self.drops[a]).total_cmp(&centre(&self.drops[b]))))
+        else {
             return;
         };
         self.close_all();

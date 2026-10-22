@@ -30,16 +30,46 @@ pub struct Entry {
     pub app: String,
 }
 
-/// The switcher: showing or not, its windows (most recent first), the chosen one,
-/// the bar it shows on, and how its cards look ([alt_tab] previews / labels).
+/// A keyboard language to switch to: its layout, code and name.
+#[derive(Clone)]
+pub struct Lang {
+    pub hkl: isize,
+    pub code: String,
+    pub name: String,
+}
+
+/// What the switcher switches: windows (Alt + Tab) or keyboard languages (Win + Space).
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
+pub enum Kind {
+    #[default]
+    Windows,
+    Languages,
+}
+
+/// The switcher: showing or not, what it switches, its windows (most recent first) or
+/// languages, the chosen one, the bar it shows on, and how its cards look ([alt_tab]
+/// previews / labels, [lang_switch] labels).
 #[derive(Default)]
 pub struct State {
     pub open: bool,
+    pub kind: Kind,
     pub list: Vec<Entry>,
+    pub langs: Vec<Lang>,
     pub sel: usize,
     pub label: String,
     pub previews: bool,
     pub labels: String,
+    pub lang_labels: String,
+}
+
+impl State {
+    /// How many choices it has.
+    pub fn len(&self) -> usize {
+        match self.kind {
+            Kind::Windows => self.list.len(),
+            Kind::Languages => self.langs.len(),
+        }
+    }
 }
 
 thread_local! {
@@ -85,6 +115,50 @@ impl AltTabPanel {
     fn hit(&self, p: (f32, f32)) -> Option<usize> {
         self.cards.iter().position(|(x, y, w, h)| p.0 >= *x && p.0 < x + w && p.1 >= *y && p.1 < y + h)
     }
+
+    /// Languages: a row each (code, then name), or a row of codes.
+    fn lang_size(&mut self, cx: &Ctx) -> (f32, f32) {
+        let g = cx.gfx;
+        let (langs, labels) = with(|s| (s.langs.clone(), s.lang_labels.clone()));
+        let n = langs.len().max(1) as f32;
+        let fc = cx.main(13.0);
+        let code_w = langs.iter().map(|l| g.measure(&l.code, &fc)).fold(0.0, f32::max);
+        if labels == "codes" {
+            let (w, h) = ((code_w + 28.0).max(52.0), 40.0);
+            self.cards = (0..langs.len()).map(|i| (i as f32 * (w + GAP), 0.0, w, h)).collect();
+            return (n * w + (n - 1.0) * GAP, h);
+        }
+        let fname = cx.secondary(12.0);
+        let name_w = langs.iter().map(|l| g.measure(&l.name, &fname)).fold(0.0, f32::max);
+        let (w, h, gap) = ((14.0 + code_w + 14.0 + name_w + 16.0).clamp(200.0, 420.0), 36.0, 2.0);
+        self.cards = (0..langs.len()).map(|i| (0.0, i as f32 * (h + gap), w, h)).collect();
+        (w, n * h + (n - 1.0) * gap)
+    }
+
+    fn lang_draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (langs, sel, labels) = with(|s| (s.langs.clone(), s.sel, s.lang_labels.clone()));
+        let (fc, fname) = (cx.main(13.0), cx.secondary(12.0));
+        let code_w = langs.iter().map(|l| g.measure(&l.code, &fc)).fold(0.0, f32::max);
+        for (i, (l, card)) in langs.iter().zip(&self.cards).enumerate() {
+            let (left, top, w, h) = (x + card.0, y + card.1, card.2, card.3);
+            if i == sel {
+                g.fill_round(rect(left, top, w, h), 10.0, with_alpha(cx.hover_bg(0.16), alpha));
+            } else if self.hovered == Some(i) {
+                g.fill_round(rect(left, top, w, h), 10.0, with_alpha(cx.hover_bg(0.08), alpha));
+            }
+            let fg = with_alpha(if i == sel { cx.look.fg } else { cx.look.dimmed() }, alpha);
+            let cy = top + h / 2.0;
+            if labels == "codes" {
+                let tw = g.measure(&l.code, &fc);
+                g.text_at(&l.code, &fc, left + (w - tw) / 2.0, cy, fg);
+            } else {
+                g.text_at(&l.code, &fc, left + 14.0, cy, fg);
+                let name = fit_text(g, &l.name, &fname, w - code_w - 44.0);
+                g.text_at(&name, &fname, left + 14.0 + code_w + 14.0, cy, fg);
+            }
+        }
+    }
 }
 
 impl Panel for AltTabPanel {
@@ -103,6 +177,9 @@ impl Panel for AltTabPanel {
         true
     }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
+        if with(|s| s.kind == Kind::Languages) {
+            return self.lang_size(cx);
+        }
         let g = cx.gfx;
         let (n, apps, previews, labels) = with(|s| (s.list.len(), s.list.iter().map(|e| e.app.clone()).collect::<Vec<_>>(), s.previews, s.labels.clone()));
         for app in apps {
@@ -131,6 +208,9 @@ impl Panel for AltTabPanel {
         (per_row as f32 * w + (per_row as f32 - 1.0) * GAP, rows * h + (rows - 1.0) * GAP)
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        if with(|s| s.kind == Kind::Languages) {
+            return self.lang_draw(cx, x, y, alpha);
+        }
         let g = cx.gfx;
         let (list, sel, previews, labels) = with(|s| (s.list.clone(), s.sel, s.previews, s.labels.clone()));
         let (show_icon, show_title) = shows(previews, &labels);
@@ -204,6 +284,19 @@ impl Panel for AltTabPanel {
             return Reply::None;
         }
         let Some(i) = self.hit(at) else { return Reply::None };
+        if with(|s| s.kind == Kind::Languages) {
+            let hkl = with(|s| {
+                s.open = false;
+                s.langs.get(i).map(|l| l.hkl)
+            });
+            return match hkl {
+                Some(h) => Reply::CloseAnd(Act::call(move |_| {
+                    crate::osd::quiet_layout();
+                    crate::win::set_keyboard_layout(h);
+                })),
+                None => Reply::None,
+            };
+        }
         let hwnd = with(|s| {
             s.open = false;
             s.list.get(i).map(|e| e.hwnd as isize)
@@ -223,6 +316,9 @@ impl Panel for AltTabPanel {
         self.cards.clone()
     }
     fn thumbs(&self) -> Vec<(isize, (f32, f32, f32, f32))> {
+        if with(|s| s.kind == Kind::Languages) {
+            return Vec::new();
+        }
         let (list, previews) = with(|s| (s.list.iter().map(|e| e.hwnd).collect::<Vec<_>>(), s.previews));
         if !previews {
             return Vec::new();

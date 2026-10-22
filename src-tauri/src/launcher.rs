@@ -231,6 +231,8 @@ pub fn start(app: &AppHandle) {
                             }
                         }
                         crate::keyhook::set_alt_tab(alt_tab);
+                        // Kasumi's language picker (native bars).
+                        crate::keyhook::set_lang(crate::native::active() && cfg.lang_switch.enabled);
                         let hotkey = cfg.launcher.hotkey.trim();
                         (cfg.launcher.enabled && !hotkey.is_empty()).then(|| hotkey.to_string())
                     };
