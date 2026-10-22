@@ -1154,7 +1154,7 @@ export const pages: Page[] = [
             ],
           },
           { kind: "slider", label: "Pill width", path: ["osd", "width"], default: 230, min: 160, max: 400, step: 5, unit: "px" },
-          { kind: "slider", label: "Pill height", path: ["osd", "height"], default: 34, min: 24, max: 48, step: 1, unit: "px" },
+          { kind: "slider", label: "Pill height", help: "0: as tall as the open bar.", path: ["osd", "height"], default: 0, min: 0, max: 48, step: 1, unit: "px" },
         ],
       },
       {

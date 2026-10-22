@@ -419,7 +419,7 @@ impl Default for Osd {
             notification_screen: String::new(),
             notification_spot: String::new(),
             width: 230.0,
-            height: 34.0,
+            height: 0.0,
             duration_ms: 1500,
             open_bar: "inline".into(),
             volume_step: 2.0,

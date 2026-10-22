@@ -886,7 +886,14 @@ pub fn layout_for(
         },
         notches,
         widgets: frontend_widgets(&cfg.widgets),
-        osd: cfg.osd.clone(),
+        osd: {
+            // [osd] height 0: as tall as the open bar (so it lines up with it when the bar opens).
+            let mut osd = cfg.osd.clone();
+            if osd.height <= 0.0 {
+                osd.height = cfg.geometry.expanded_height;
+            }
+            osd
+        },
         theme: {
             let mut t = cfg.theme.clone();
             if t.accent_sync {
