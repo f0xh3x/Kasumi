@@ -319,6 +319,19 @@ pub async fn notifications_windows_on() -> bool {
     crate::win::reg_dword(HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled") != Some(0)
 }
 
+/// Windows' taskbar on every display, with each window's button on its own monitor
+/// (Settings > Personalization > Taskbar > Taskbar behaviors): Explorer's taskbars are
+/// hidden, but Windows still animates a minimizing window towards its button there, so
+/// without these it flies to the main monitor. For the settings guide.
+#[tauri::command]
+pub async fn taskbar_all_displays() -> serde_json::Value {
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+    let key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    let all = crate::win::reg_dword(HKEY_CURRENT_USER, key, "MMTaskbarEnabled") == Some(1);
+    let where_open = crate::win::reg_dword(HKEY_CURRENT_USER, key, "MMTaskbarMode") == Some(2);
+    serde_json::json!({ "all": all, "whereOpen": where_open })
+}
+
 /// Dismisses notifications from Kasumi's list (`ids`; none: all of them).
 /// Windows' own notification center isn't touched.
 #[tauri::command]

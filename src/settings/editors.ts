@@ -1549,6 +1549,44 @@ const windowsGuide: Editor = () => {
   );
 };
 
+/**
+ * More than one monitor: Windows' taskbar on every display, each window's button on its
+ * own monitor. Kasumi hides those taskbars, but a minimizing window still animates
+ * towards its button there (else it flies to the main monitor). Nothing visible changes.
+ */
+export const taskbarGuide: Editor = () => {
+  const all = $("span", "guide-status", "…");
+  const where = $("span", "guide-status", "…");
+  invoke<{ all: boolean; whereOpen: boolean }>("taskbar_all_displays")
+    .then((s) => {
+      all.textContent = s.all ? "On" : "Off: turn on";
+      all.classList.toggle("bad", !s.all);
+      where.textContent = s.whereOpen ? "Set" : "Not set";
+      where.classList.toggle("bad", !s.whereOpen);
+    })
+    .catch(() => {
+      all.remove();
+      where.remove();
+    });
+  const step = (n: string, title: string, text: string, ...extra: HTMLElement[]) =>
+    $("div", "guide-step", $("span", "guide-num", n), $("div", "guide-text", $("div", "guide-title", title, ...extra), $("div", "guide-help", text)));
+  const open = $("button", "button", glyph(0xe713), "Open Windows taskbar settings");
+  open.addEventListener("click", () => invoke("run_action", { action: "open", target: "ms-settings:taskbar" }).catch(console.error));
+  return $(
+    "div",
+    "guide",
+    $("div", "guide-head", glyph(0xe946), $("span", "", "More than one monitor? Set up Windows for this")),
+    $(
+      "div",
+      "guide-help",
+      "Kasumi hides Windows' taskbars, but a minimizing window still flies towards its taskbar button. With these, it stays on its own monitor. Nothing you see changes. Settings › Personalization › Taskbar › Taskbar behaviors:",
+    ),
+    step("1", "Show my taskbar on all displays", "Turn it on.", all),
+    step("2", "Show my taskbar apps on: Taskbar where window is open", "So each window's button is on its own monitor.", where),
+    $("div", "button-row", open),
+  );
+};
+
 // --- OSD: where each pop-up appears ------------------------------------------------------
 
 const OSD_SPOTS: [string, string][] = [
@@ -1780,6 +1818,7 @@ export const editors: Record<string, Editor> = {
   osdPlace,
   osdSpot,
   windowsGuide,
+  taskbarGuide,
   animWidget,
   accentWidget,
   fontPicker,

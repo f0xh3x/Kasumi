@@ -144,6 +144,7 @@ export const pages: Page[] = [
             path: ["shell", "hide_taskbar"],
             default: false,
           },
+          { kind: "custom", editor: "taskbarGuide" },
         ],
       },
       {

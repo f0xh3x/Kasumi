@@ -25,6 +25,7 @@ use windows::Win32::UI::Shell::{
     IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
+    WM_SYSCOMMAND, SC_MINIMIZE, SC_RESTORE,
     DispatchMessageW, EnumWindows, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW,
     GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
     SetForegroundWindow, SetTimer, ShowWindow, BringWindowToTop, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE,
@@ -621,7 +622,21 @@ fn activate(h: HWND) {
     };
     unsafe {
         if IsIconic(h).as_bool() {
-            let _ = ShowWindow(h, SW_RESTORE);
+            // As the window's own restore does (its animation from where the shell says);
+            // else directly (a busy or elevated window).
+            let mut result = 0usize;
+            let sent = windows::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW(
+                h,
+                WM_SYSCOMMAND,
+                WPARAM(SC_RESTORE as usize),
+                LPARAM(0),
+                windows::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG,
+                300,
+                Some(&mut result),
+            );
+            if sent.0 == 0 || IsIconic(h).as_bool() {
+                let _ = ShowWindow(h, SW_RESTORE);
+            }
         }
         // Windows only lets the app in front hand the foreground over: borrow its
         // input queue for the switch (this thread needs a message queue for that).
@@ -658,7 +673,11 @@ pub async fn task_activate(hwnd_id: isize, toggle: bool) -> Result<(), String> {
             return Err("window is gone".into());
         }
         if toggle && GetForegroundWindow() == h && !IsIconic(h).as_bool() {
-            let _ = ShowWindow(h, SW_MINIMIZE);
+            // As its own minimize button does (its animation goes where the shell says;
+            // ShowWindow from here flew to the top of the screen); else directly.
+            if PostMessageW(Some(h), WM_SYSCOMMAND, WPARAM(SC_MINIMIZE as usize), LPARAM(0)).is_err() {
+                let _ = ShowWindow(h, SW_MINIMIZE);
+            }
         } else {
             activate(h);
             if GetForegroundWindow() != h {

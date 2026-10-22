@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { kasumiLogo } from "../quick-tiles";
 import { $, glyph, toggleSwitch } from "./dom";
-import { CHIP_LEGEND, placementHide, scope, type Op } from "./editors";
+import { CHIP_LEGEND, placementHide, scope, taskbarGuide, type Op } from "./editors";
 import { renderMarkdown } from "./markdown";
 import type { Cfg, Field } from "./schema";
 import bottomAlways from "./previews/bottom-always.svg";
@@ -308,6 +308,7 @@ function done(): HTMLElement {
     logo,
     $("h1", "setup-title", "Your Kasumi is set up"),
     $("p", "setup-sub", "There's much more to tweak in Settings: every widget, the look, animations. You can run this setup again from Settings › About."),
+    taskbarGuide({} as never),
   );
 }
 
