@@ -1603,8 +1603,15 @@ impl Surface {
             // The notch's own content cross-fades with a pop-up growing out of it.
             let osd_here = self.osd_drop() == Some(di) && !self.osd_below(false);
             let alpha = shown * fits * if osd_here { 1.0 - clamp01(self.pop.osd.value * 1.8) as f32 } else { 1.0 };
-            // The switcher in this notch's place: its own row steps aside.
-            let alpha = if self.alt_replace && self.alt.is_some_and(|a| a.0 == di) { alpha * (1.0 - clamp01(d.spring.value * 2.5) as f32) } else { alpha };
+            // The switcher in this notch's place: its own row steps aside, and comes back
+            // only once the switcher's cards are gone (closing: the last 30% of the way).
+            let alpha = if self.alt_replace && self.alt.is_some_and(|a| a.0 == di) {
+                let v = d.spring.value;
+                let gone = if d.spring.target > 0.5 { clamp01(v * 2.5) } else { clamp01(v / 0.3) };
+                alpha * (1.0 - gone as f32)
+            } else {
+                alpha
+            };
             let cy = y(row / 2.0);
             // Docks lay the slot out at its current (morphing) size.
             let kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| self.widgets[wi].width > 0.0 && !self.covered(d, wi) && !self.aside(di, wi)).collect();
@@ -1754,6 +1761,9 @@ impl Surface {
             let near = bumps[i].panel_top.unwrap_or(h_bar);
             let (pad_near, pad_far, pad_x) = pb.p.pad();
             let alpha = if l.animation.panel_content == "fade" { clamp01(p * 1.6 - 0.5) as f32 } else { 1.0 };
+            // Alt + Tab closing: its cards fade out over the first part of the way, before
+            // what it replaced comes back.
+            let alpha = if self.alt.is_some_and(|a| a.0 == di) && d.spring.target < 0.5 { alpha * clamp01((p - 0.35) / 0.35) as f32 } else { alpha };
             let free = pb.w as f32 - pb.content.0 - 2.0 * pad_x - pb.shift;
             let left = bf.panel_x as f32
                 + pad_x
