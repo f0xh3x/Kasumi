@@ -6,6 +6,7 @@
 
 pub mod geometry;
 mod drop;
+mod floating;
 mod gfx;
 mod icons;
 mod popup;
@@ -196,6 +197,8 @@ pub(crate) struct Native {
     /// Every published value (all keys: a surface built later catches up from here).
     store: HashMap<String, Value>,
     app: Option<AppHandle>,
+    /// Alt + Tab in the middle of the screen (made the first time).
+    alt_float: Option<floating::Floating>,
 }
 
 thread_local! {
@@ -245,7 +248,7 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
         return;
     };
     WAKE.store(wake.0 as isize, Ordering::Relaxed);
-    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app }));
+    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None }));
     INBOX.with(|i| *i.borrow_mut() = Some(rx));
     let _ = ready.send(());
     eprintln!("[kasumi] native renderer started");
@@ -381,6 +384,9 @@ impl Native {
                 for s in &mut self.surfaces {
                     s.data(&self.gfx, &key, &value);
                 }
+                if let (Some(f), true) = (self.alt_float.as_mut(), key == "taskIcons") {
+                    widgets::Panel::data(&mut f.panel, &key, &value);
+                }
                 self.store.insert(key, value);
             }
             Msg::Entries(key, entries) => {
@@ -431,7 +437,9 @@ impl Native {
                     }
                     s.label.clone()
                 });
-                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                if label.starts_with("@center:") {
+                    self.alt_center_draw();
+                } else if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
                     s.alt_tab_changed(&self.gfx);
                 }
             }
@@ -441,7 +449,11 @@ impl Native {
                     s.open = false;
                     (s.label.clone(), s.list.get(s.sel).map(|e| e.hwnd as isize))
                 });
-                if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                if label.starts_with("@center:") {
+                    if let Some(f) = self.alt_float.as_mut() {
+                        f.hide();
+                    }
+                } else if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
                     s.alt_tab_close();
                 }
                 if let (K::Commit, Some(h)) = (key, hwnd) {
@@ -486,19 +498,19 @@ impl Native {
         let n = list.len();
         let first_in_front = wins.iter().find(|w| all || mon.as_ref().is_none_or(|m| s(w, "monitor") == *m)).is_some_and(|w| active(w));
         let sel = if back { n - 1 } else if first_in_front && n > 1 { 1 } else { 0 };
-        // The top bar there (all monitors: where the cursor is); else any bar there, else the first.
+        // Out of the top bar's notch or the dock's on that monitor (all monitors: where the
+        // cursor is); in the middle without one there, or when asked to.
         let at = if all { cursor_mon.or(mon) } else { mon };
         let on = |s: &Surface| at.as_deref().is_none_or(|m| s.device() == m);
-        let Some(i) = self
-            .surfaces
-            .iter()
-            .position(|s| s.is_top() && on(s))
-            .or_else(|| self.surfaces.iter().position(|s| on(s)))
-            .or(if self.surfaces.is_empty() { None } else { Some(0) })
-        else {
+        let bar = match cfg.position.as_str() {
+            "center" => None,
+            "bottom" => self.surfaces.iter().position(|s| !s.is_top() && on(s)),
+            _ => self.surfaces.iter().position(|s| s.is_top() && on(s)),
+        };
+        let Some(i) = bar.or_else(|| self.surfaces.iter().position(|s| on(s))).or(if self.surfaces.is_empty() { None } else { Some(0) }) else {
             return;
         };
-        let label = self.surfaces[i].label.clone();
+        let label = if bar.is_some() { self.surfaces[i].label.clone() } else { format!("@center:{}", self.surfaces[i].label) };
         alttab::with(|st| {
             st.open = true;
             st.list = list;
@@ -507,7 +519,30 @@ impl Native {
             st.previews = cfg.previews;
             st.labels = cfg.labels.clone();
         });
-        self.surfaces[i].alt_tab_open(&self.gfx, &self.store);
+        if bar.is_some() {
+            self.surfaces[i].alt_tab_open(&self.gfx, &self.store);
+        } else {
+            self.alt_center_draw();
+        }
+    }
+
+    /// Alt + Tab in the middle of the screen: drawn (again), with the look of the bar on
+    /// that monitor.
+    fn alt_center_draw(&mut self) {
+        let label = widgets::alttab::with(|s| s.label.trim_start_matches("@center:").to_string());
+        let Some(s) = self.surfaces.iter().find(|s| s.label == label) else { return };
+        let (look, opts, mon) = (s.look().clone(), s.alt_opts(), s.monitor().clone());
+        let store = &self.store;
+        let f = self.alt_float.get_or_insert_with(|| {
+            let mut f = floating::Floating::new();
+            if let Some(v) = store.get("taskIcons") {
+                widgets::Panel::data(&mut f.panel, "taskIcons", v);
+            }
+            f
+        });
+        if let Err(e) = f.show(&self.gfx, &look, &opts, &mon) {
+            eprintln!("[kasumi] alt tab: {e}");
+        }
     }
 
     /// Widgets' timers: run the due ones, then sleep until the next.
@@ -649,6 +684,8 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                         s.click(gfx, button, (x, y))
                     }
                 });
+                // Alt + Tab in the middle of the screen: a card picked.
+                let act = act.or_else(|| n.alt_float.as_mut().filter(|f| f.hwnd == Some(hwnd)).and_then(|f| f.click(button, (x, y))));
                 report(n);
                 act.map(|a| (a, n.app.clone()))
             })

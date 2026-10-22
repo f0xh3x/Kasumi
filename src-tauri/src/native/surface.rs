@@ -2115,6 +2115,19 @@ impl Surface {
         !self.bottom()
     }
 
+    pub fn look(&self) -> &Look {
+        &self.look
+    }
+
+    pub fn monitor(&self) -> &Monitor {
+        &self.monitor
+    }
+
+    /// The switcher's options (the accent and fonts of [widgets.alt_tab], if any).
+    pub fn alt_opts(&self) -> Opts {
+        self.opts_for("alt_tab")
+    }
+
     /// Alt + Tab: its panel out of this bar's centre notch (whatever else was open goes).
     pub fn alt_tab_open(&mut self, gfx: &Gfx, store: &HashMap<String, Value>) {
         let pi = match self.alt_panel {

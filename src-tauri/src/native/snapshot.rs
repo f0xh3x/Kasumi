@@ -130,8 +130,8 @@ pub fn run(args: &[String]) {
                 ("osd-caps", "notch://osd", serde_json::json!({ "kind": "caps", "level": 0, "muted": false, "text": "Caps Lock on" })),
                 ("osd-note", "notch://notification", serde_json::json!({ "app": "Discord", "aumid": "", "title": "Kip", "body": "are you coming tonight?" })),
             ];
-            // Alt + Tab out of a top bar's notch (sample windows; previews are Windows').
-            if surface.is_top() {
+            // Alt + Tab out of a bar's or dock's notch (sample windows; previews are Windows').
+            {
                 surface.pose(&gfx, false, None, 0.0);
                 for (state, previews, labels) in [("alttab", true, "both"), ("alttab-icons", false, "both")] {
                     super::widgets::alttab::with(|st| {

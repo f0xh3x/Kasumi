@@ -237,6 +237,9 @@ pub struct Shell {
 #[serde(default)]
 pub struct AltTabCfg {
     pub enabled: bool,
+    /// Where it shows: "top" (out of the top bar's notch), "center" (a panel in the
+    /// middle of the screen) or "bottom" (out of the dock's notch).
+    pub position: String,
     /// "current": the windows on the monitor you're working on; "all": every monitor's.
     pub monitors: String,
     /// Live previews of the windows.
@@ -248,7 +251,7 @@ pub struct AltTabCfg {
 
 impl Default for AltTabCfg {
     fn default() -> Self {
-        Self { enabled: true, monitors: "current".into(), previews: true, labels: "both".into() }
+        Self { enabled: true, position: "top".into(), monitors: "current".into(), previews: true, labels: "both".into() }
     }
 }
 

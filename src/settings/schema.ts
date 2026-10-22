@@ -1271,9 +1271,21 @@ export const pages: Page[] = [
     sections: [
       {
         title: "Alt + Tab",
-        help: "Kasumi's own window switcher: Alt + Tab drops it out of the top bar's notch. Tab / Shift + Tab or the arrow keys move, letting go of Alt switches, Esc cancels. Native Kasumi only (Settings › About).",
+        help: "Kasumi's own window switcher. Tab / Shift + Tab or the arrow keys move, letting go of Alt switches, Esc cancels. Native Kasumi only (Settings › About).",
         fields: [
           { kind: "toggle", label: "Kasumi's Alt + Tab", help: "Off: the Windows switcher, as usual.", path: ["alt_tab", "enabled"], default: true },
+          {
+            kind: "select",
+            label: "Position",
+            help: "Without a bar there (no dock on that monitor, say), it shows in the middle.",
+            path: ["alt_tab", "position"],
+            default: "top",
+            options: [
+              { value: "top", label: "Out of the top bar's notch" },
+              { value: "center", label: "In the middle of the screen" },
+              { value: "bottom", label: "Out of the dock's notch" },
+            ],
+          },
           {
             kind: "select",
             label: "Windows from",
