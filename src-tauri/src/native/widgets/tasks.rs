@@ -127,13 +127,15 @@ pub struct Tasks {
     drag_hover: Option<(usize, Instant, bool)>,
     /// What a tick decided to do (bring up the app files are held over).
     pending: Option<Act>,
-    /// Scrolling through an app's windows: which app, its windows front to back as the
-    /// scrolling left them, when (the backend's order lags a switch).
-    cycle: Option<(String, Vec<i64>, Instant)>,
+    /// Scrolling through an app's windows: which app, the window it went to, when (the
+    /// backend's "in front" lags a switch, so quick scrolls go on from here).
+    cycle: Option<(String, i64, Instant)>,
     drag: Option<Drag>,
     /// The order the user dragged apps into, until the backend's catches up; every app's key.
     local_order: Option<Vec<String>>,
     all_keys: Vec<String>,
+    /// Every app's windows on every monitor (scrolling goes through them, as its list shows them).
+    every: Vec<(String, Win)>,
     /// The pin list as written in the config (app keys / dropped files' paths).
     pins: Vec<String>,
     /// Magnify: each icon's scale now (eased toward the cursor's), and when last stepped.
@@ -166,6 +168,7 @@ impl Tasks {
             drag: None,
             local_order: None,
             all_keys: Vec::new(),
+            every: Vec::new(),
             pins: Vec::new(),
             scales: Cell::new([1.0; 64]),
             stepped: Cell::new(None),
@@ -285,33 +288,27 @@ impl Widget for Tasks {
                     }
                 }))
             }
-            // Its windows in turn, as Alt+Tab stacks them: down brings the one furthest
-            // back to the front, up sends the front one to the back.
+            // Its windows in turn, in the order its window list shows them (every monitor):
+            // down the next, up the one before, round at the ends.
             "windows" if !a.wins.is_empty() => {
-                let mut live: Vec<&Win> = a.wins.iter().collect();
-                live.sort_by_key(|w| w.z);
-                let live: Vec<i64> = live.iter().map(|w| w.hwnd).collect();
-                let kept = self
-                    .cycle
-                    .as_ref()
-                    .filter(|(k, o, t)| *k == a.key && t.elapsed().as_secs_f32() < 3.0 && o.len() == live.len() && o.iter().all(|h| live.contains(h)))
-                    .map(|c| c.1.clone());
-                let order = match kept {
-                    Some(o) => {
-                        let mut o = o;
-                        if notches < 0.0 { o.rotate_right(1) } else { o.rotate_left(1) }
-                        o
-                    }
-                    // Another app in front: the first scroll brings this one's front window.
-                    None if !a.wins.iter().any(|w| w.active) => live,
-                    None => {
-                        let mut o = live;
-                        if notches < 0.0 { o.rotate_right(1) } else { o.rotate_left(1) }
-                        o
-                    }
+                let list: Vec<i64> = self.every.iter().filter(|(k, _)| *k == a.key).map(|(_, w)| w.hwnd).collect();
+                let n = list.len() as i64;
+                if n == 0 {
+                    return None;
+                }
+                // Where it is: the window it last went to (the backend's "in front" lags a
+                // switch), else the one in front.
+                let recent = self.cycle.as_ref().filter(|(k, _, t)| *k == a.key && t.elapsed().as_secs_f32() < 3.0).map(|c| c.1);
+                let front = self.every.iter().find(|(k, w)| *k == a.key && w.active).map(|(_, w)| w.hwnd);
+                let at = recent.or(front).and_then(|h| list.iter().position(|x| *x == h)).map(|k| k as i64);
+                let down = notches < 0.0;
+                let next = match at {
+                    Some(k) => (k + if down { 1 } else { -1 }).rem_euclid(n),
+                    None if down => 0,
+                    None => n - 1,
                 };
-                let hwnd = order[0] as isize;
-                self.cycle = Some((a.key.clone(), order, Instant::now()));
+                let hwnd = list[next as usize] as isize;
+                self.cycle = Some((a.key.clone(), hwnd as i64, Instant::now()));
                 Some(Act::call(move |_| {
                     let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(hwnd, false));
                 }))
@@ -370,6 +367,7 @@ impl Widget for Tasks {
                     .collect()
             })
             .unwrap_or_default();
+        self.every = wins.iter().map(|(k, w, _)| (k.clone(), w.clone())).collect();
         let mine: Vec<&(String, Win, String)> = wins.iter().filter(|(_, _, m)| !own || device.is_empty() || *m == device).collect();
         let apps: Vec<App> = v
             .get("apps")
