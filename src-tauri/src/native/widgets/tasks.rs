@@ -127,9 +127,9 @@ pub struct Tasks {
     drag_hover: Option<(usize, Instant, bool)>,
     /// What a tick decided to do (bring up the app files are held over).
     pending: Option<Act>,
-    /// Scrolling through an app's windows: which app, the window it went to, when (the
-    /// backend's "in front" lags a switch, so quick scrolls go on from here).
-    cycle: Option<(String, i64, Instant)>,
+    /// Scrolling through an app's windows: which app, its windows front to back as the
+    /// scrolling left them, when (the backend's order lags a switch).
+    cycle: Option<(String, Vec<i64>, Instant)>,
     drag: Option<Drag>,
     /// The order the user dragged apps into, until the backend's catches up; every app's key.
     local_order: Option<Vec<String>>,
@@ -285,20 +285,33 @@ impl Widget for Tasks {
                     }
                 }))
             }
-            // Its windows in turn: down the next, up the one before.
+            // Its windows in turn, as Alt+Tab stacks them: down brings the one furthest
+            // back to the front, up sends the front one to the back.
             "windows" if !a.wins.is_empty() => {
-                let mut wins: Vec<&Win> = a.wins.iter().collect();
-                wins.sort_by_key(|w| w.hwnd);
-                let n = wins.len() as i64;
-                let recent = self.cycle.as_ref().filter(|(k, _, t)| *k == a.key && t.elapsed().as_secs_f32() < 2.0).map(|c| c.1);
-                let at = match recent {
-                    Some(h) => wins.iter().position(|w| w.hwnd == h).map_or(-1, |k| k as i64),
-                    None => wins.iter().position(|w| w.active).map_or(-1, |k| k as i64),
+                let mut live: Vec<&Win> = a.wins.iter().collect();
+                live.sort_by_key(|w| w.z);
+                let live: Vec<i64> = live.iter().map(|w| w.hwnd).collect();
+                let kept = self
+                    .cycle
+                    .as_ref()
+                    .filter(|(k, o, t)| *k == a.key && t.elapsed().as_secs_f32() < 3.0 && o.len() == live.len() && o.iter().all(|h| live.contains(h)))
+                    .map(|c| c.1.clone());
+                let order = match kept {
+                    Some(o) => {
+                        let mut o = o;
+                        if notches < 0.0 { o.rotate_right(1) } else { o.rotate_left(1) }
+                        o
+                    }
+                    // Another app in front: the first scroll brings this one's front window.
+                    None if !a.wins.iter().any(|w| w.active) => live,
+                    None => {
+                        let mut o = live;
+                        if notches < 0.0 { o.rotate_right(1) } else { o.rotate_left(1) }
+                        o
+                    }
                 };
-                let step = if notches < 0.0 { 1 } else { -1 };
-                let next = if at < 0 { if step > 0 { 0 } else { n - 1 } } else { (at + step).rem_euclid(n) };
-                let hwnd = wins[next as usize].hwnd as isize;
-                self.cycle = Some((a.key.clone(), hwnd as i64, Instant::now()));
+                let hwnd = order[0] as isize;
+                self.cycle = Some((a.key.clone(), order, Instant::now()));
                 Some(Act::call(move |_| {
                     let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(hwnd, false));
                 }))
