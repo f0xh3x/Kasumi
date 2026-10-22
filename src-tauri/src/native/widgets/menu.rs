@@ -93,12 +93,12 @@ impl Menu {
             .collect()
     }
 
+    /// An item's text; armed, a short "Confirm?" (a longer ask widened the menu).
     fn label(&self, i: usize) -> String {
-        let it = &self.items[i];
         if self.armed.is_some_and(|(a, _)| a == i) {
-            format!("Click again to {}", it.label.to_lowercase())
+            "Confirm?".to_string()
         } else {
-            it.label.clone()
+            self.items[i].label.clone()
         }
     }
 

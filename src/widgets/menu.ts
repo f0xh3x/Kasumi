@@ -39,7 +39,7 @@ export function menu(opts: Record<string, unknown>, ctx: PanelContext): Widget {
           invoke("run_action", { action: item.action, target: item.target ?? null }).catch((e) => console.error("run_action", e));
           ctx.close();
         },
-        (on) => (label.textContent = on ? `Click again to ${(item.label ?? "confirm").toLowerCase()}` : (item.label ?? "")),
+        (on) => (label.textContent = on ? "Confirm?" : (item.label ?? "")),
       ),
     );
     el.append(row);
