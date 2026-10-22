@@ -1,10 +1,10 @@
 //! The app launcher's backend: an index of installed apps (the Apps folder, which
-//! has desktop and Store apps alike), their icons on demand, launching, and the
-//! global hotkey (`[launcher] hotkey`) that opens it on the monitor under the
+//! has desktop and Store apps alike) plus Control Panel items such as Device
+//! Manager, their icons on demand, launching, and the global hotkey (`[launcher] hotkey`) that opens it on the monitor under the
 //! cursor. The UI is a panel in a bar or dock (see engine::launcher_toggle).
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -14,7 +14,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
 };
 use windows::Win32::UI::Shell::{
-    BHID_EnumItems, IEnumShellItems, IShellItem, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING,
+    BHID_EnumItems, IEnumShellItems, IShellItem, SHCreateItemFromParsingName, SIGDN, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY,
+    SIGDN_PARENTRELATIVEPARSING,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, SetTimer, MSG, WM_HOTKEY, WM_TIMER,
@@ -37,7 +38,7 @@ fn sta() {
     }
 }
 
-fn display(item: &IShellItem, kind: windows::Win32::UI::Shell::SIGDN) -> Option<String> {
+fn display(item: &IShellItem, kind: SIGDN) -> Option<String> {
     unsafe {
         let p = item.GetDisplayName(kind).ok()?;
         let s = p.to_string().ok();
@@ -46,12 +47,25 @@ fn display(item: &IShellItem, kind: windows::Win32::UI::Shell::SIGDN) -> Option<
     }
 }
 
-/// (id, name) of every app in the Apps folder; `id` is its AppsFolder parsing name.
-fn enumerate() -> Vec<(String, String)> {
-    sta();
+/// Control Panel in its icon view: one entry per applet (the category view and
+/// "All Control Panel items" also list every task inside each one).
+const CONTROL_PANEL: &str = r"shell:::{26EE0668-A00A-44D7-9371-BEB064C98683}\0";
+
+/// The shell path an id opens: Control Panel ids are absolute ("::{...}"), app ids
+/// are AppsFolder parsing names.
+fn shell_path(id: &str) -> String {
+    if id.starts_with("::") {
+        format!("shell:{id}")
+    } else {
+        format!("shell:AppsFolder\\{id}")
+    }
+}
+
+/// (id, name) of every item in a shell folder, the id read as `id_kind`.
+fn items(folder: &str, id_kind: SIGDN) -> Vec<(String, String)> {
     let mut out = Vec::new();
     unsafe {
-        let Ok(folder) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from("shell:AppsFolder"), None) else {
+        let Ok(folder) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(folder), None) else {
             return out;
         };
         let Ok(items) = folder.BindToHandler::<_, IEnumShellItems>(None, &BHID_EnumItems) else { return out };
@@ -62,21 +76,35 @@ fn enumerate() -> Vec<(String, String)> {
                 break;
             }
             for item in batch.iter().take(n as usize).flatten() {
-                let (Some(id), Some(name)) = (display(item, SIGDN_PARENTRELATIVEPARSING), display(item, SIGDN_NORMALDISPLAY)) else {
-                    continue;
-                };
-                // Uninstallers and documents are in there too; they aren't apps to launch.
-                let lower = name.to_lowercase();
-                let doc = [".txt", ".url", ".htm", ".html", ".chm", ".pdf", ".rtf", ".ini"].iter().any(|e| id.to_lowercase().ends_with(e));
-                if lower.starts_with("uninstall") || doc || name.is_empty() {
-                    continue;
+                if let (Some(id), Some(name)) = (display(item, id_kind), display(item, SIGDN_NORMALDISPLAY)) {
+                    if !name.is_empty() {
+                        out.push((id, name));
+                    }
                 }
-                out.push((id, name));
             }
         }
     }
     out.sort_by_key(|(_, name)| name.to_lowercase());
     out.dedup_by(|a, b| a.0 == b.0);
+    out
+}
+
+/// What the launcher searches: apps first (they win a tie), then the Control
+/// Panel items (Device Manager, Sound...) no app has the name of.
+fn enumerate() -> Vec<(String, String)> {
+    sta();
+    // Uninstallers and documents are in the Apps folder too; they aren't apps to launch.
+    let mut out: Vec<(String, String)> = items("shell:AppsFolder", SIGDN_PARENTRELATIVEPARSING)
+        .into_iter()
+        .filter(|(id, name)| {
+            let id = id.to_lowercase();
+            let doc = [".txt", ".url", ".htm", ".html", ".chm", ".pdf", ".rtf", ".ini"].iter().any(|e| id.ends_with(e));
+            !doc && !name.to_lowercase().starts_with("uninstall")
+        })
+        .collect();
+    let names: HashSet<String> = out.iter().map(|(_, name)| name.to_lowercase()).collect();
+    let panel = items(CONTROL_PANEL, SIGDN_DESKTOPABSOLUTEPARSING);
+    out.extend(panel.into_iter().filter(|(_, name)| !names.contains(&name.to_lowercase())));
     out
 }
 
@@ -104,7 +132,7 @@ pub async fn launcher_icon(id: String) -> Result<Value, String> {
     let key = id.clone();
     let icon = tauri::async_runtime::spawn_blocking(move || {
         sta();
-        let item = unsafe { SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(format!("shell:AppsFolder\\{key}")), None) }.ok()?;
+        let item = unsafe { SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(shell_path(&key)), None) }.ok()?;
         crate::providers::tasks::item_icon(&item)
     })
     .await
@@ -120,7 +148,7 @@ pub async fn launcher_icon(id: String) -> Result<Value, String> {
 pub async fn launcher_launch(id: String) -> Result<(), String> {
     crate::win::allow_foreground();
     std::process::Command::new("explorer.exe")
-        .arg(format!("shell:AppsFolder\\{id}"))
+        .arg(shell_path(&id))
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
