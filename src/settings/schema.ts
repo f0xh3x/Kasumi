@@ -1402,8 +1402,8 @@ export const pages: Page[] = [
         ],
       },
       {
-        title: "Native Kasumi (experimental)",
-        help: "Draws the bars and docks with Windows' own graphics instead of a browser engine: the same look, a fraction of the memory and CPU. It's new: some things may not work yet or behave differently, and more bugs could occur. Turn it off to go back.",
+        title: "Native Kasumi",
+        help: "Kasumi draws its bars and docks with Windows' own graphics: a fraction of the memory and CPU of the browser engine it used before. If something doesn't work right, turn this off to go back to the browser engine for now (it will be removed in a later version), and let us know.",
         fields: [
           {
             kind: "toggle",

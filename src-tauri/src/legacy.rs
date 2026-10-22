@@ -72,3 +72,42 @@ pub fn report() {
         eprintln!("[kasumi] moved over from StatusNotch (settings and/or autostart)");
     }
 }
+
+/// 0.6: native Kasumi is Kasumi. A config from before says the old default, "web":
+/// switched to native once (a marker remembers it, so switching back sticks).
+pub fn native_once() {
+    let dir = crate::config::dir();
+    let marker = dir.join(".native");
+    if marker.exists() {
+        return;
+    }
+    let path = crate::config::path();
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let mut done = false;
+        let out: Vec<String> = text
+            .lines()
+            .map(|l| {
+                let t = l.trim_start();
+                if !done && t.starts_with("renderer") && t.contains("\"web\"") {
+                    done = true;
+                    l.replacen("\"web\"", "\"native\"", 1)
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect();
+        if done {
+            let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
+            let mut joined = out.join(nl);
+            if text.ends_with('\n') {
+                joined.push_str(nl);
+            }
+            if std::fs::write(&path, joined).is_err() {
+                return;
+            }
+        }
+    }
+    if dir.is_dir() {
+        let _ = std::fs::write(&marker, "");
+    }
+}

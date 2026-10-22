@@ -37,6 +37,7 @@ fn main() {
         return;
     }
     legacy::migrate();
+    legacy::native_once();
     logfile::init();
     legacy::report();
     instance::claim();
