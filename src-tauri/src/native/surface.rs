@@ -261,6 +261,9 @@ pub struct Surface {
     tip_want: Option<(String, (i32, i32))>,
     tip_since: Option<Instant>,
     tip_blocked: Option<String>,
+    /// A notification pop-up clicked ([osd] notification_click = "panel") while the bar
+    /// was closed: its panel opens as the bar does (it's being hovered), until then.
+    notes_pending: Option<Instant>,
     /// Alt + Tab: its panel (made the first time), and the notch it took over with that
     /// notch's own panel state (given back once it's shut).
     alt_panel: Option<usize>,
@@ -352,6 +355,7 @@ impl Surface {
             tip_want: None,
             tip_since: None,
             tip_blocked: None,
+            notes_pending: None,
             alt_panel: None,
             alt: None,
             alt_replace: false,
@@ -626,6 +630,12 @@ impl Surface {
         if self.dock() {
             let key = if expanded { self.launcher_isle().or_else(|| self.isle_under_cursor()) } else { None };
             self.open_isle(key);
+        }
+        // A notification pop-up clicked a moment ago: its panel, now the bar is open.
+        if expanded && self.notes_pending.take().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(3)) {
+            if let Some(wi) = self.widgets.iter().position(|w| widgets::widget_type(&w.name) == "notifications") {
+                self.panel_of(gfx, wi, Some(true));
+            }
         }
         self.layout_bar(gfx);
         self.kick();
@@ -2153,6 +2163,11 @@ impl Surface {
     /// A click (released) at a physical client point. Returns an action to run.
     pub fn click(&mut self, gfx: &Gfx, button: Button, at: (i32, i32)) -> Option<Act> {
         let (x, y) = self.logical(at);
+        if button == Button::Left {
+            if let Some(act) = self.note_click(gfx, x, y) {
+                return act;
+            }
+        }
         let reply = if let Some((_, pi, local)) = self.panel_at(x, y) {
             // A tray click's point, local to the panel's content: on screen, in device px.
             let origin = self.panels[pi].drawn.unwrap_or((0.0, 0.0));
@@ -2313,6 +2328,43 @@ impl Surface {
         if let Some(act) = self.widgets.iter_mut().find_map(|w| w.w.win_key(n)) {
             self.pending.push(act);
         }
+    }
+
+    /// A click on a notification pop-up ([osd] notification_click). Some: it was on one
+    /// (with what to run, if anything).
+    fn note_click(&mut self, gfx: &Gfx, x: f32, y: f32) -> Option<Option<Act>> {
+        let aumid = self.pop.note()?;
+        let od = self.osd_drop()?;
+        let order = self.ordered();
+        let i = order.iter().position(|&di| di == od)?;
+        let (_, frame) = self.frame_of(&order, false);
+        let bf = &frame.bumps[i];
+        let h = self.size.cy as f32 / self.scale();
+        let depth = if self.bottom() { h - y } else { y };
+        if (x as f64) < bf.left || (x as f64) > bf.right || depth as f64 > bf.depth {
+            return None;
+        }
+        self.pop.dismiss();
+        self.kick();
+        let center = || Act::open("ms-actioncenter:");
+        Some(match self.layout.osd.notification_click.as_str() {
+            "dismiss" => None,
+            "center" => Some(center()),
+            "panel" => match self.widgets.iter().position(|w| widgets::widget_type(&w.name) == "notifications") {
+                Some(wi) if self.expanded => {
+                    self.panel_of(gfx, wi, Some(true));
+                    None
+                }
+                Some(_) => {
+                    self.notes_pending = Some(Instant::now());
+                    None
+                }
+                None => Some(center()),
+            },
+            // The app that sent it (by its id); without one, Windows' notification center.
+            _ if !aumid.is_empty() => Some(Act::open(&format!("shell:AppsFolder\\{aumid}"))),
+            _ => Some(center()),
+        })
     }
 
     /// What the hint should show (see `mouse_move`): after a moment, or right away when

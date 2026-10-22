@@ -136,6 +136,20 @@ impl Popups {
         self.until = Some(Instant::now() + Duration::from_millis(ms));
     }
 
+    /// A notification showing (its app's id, if it came with one), else None.
+    pub fn note(&self) -> Option<String> {
+        match &self.show {
+            Some(Show::Note { aumid, .. }) if self.osd.target > 0.5 => Some(aumid.clone()),
+            _ => None,
+        }
+    }
+
+    /// Puts the pop-up away now (it shrinks back into its notch).
+    pub fn dismiss(&mut self) {
+        self.until = None;
+        self.osd.target = 0.0;
+    }
+
     /// The keyboard peek with the layout's code, at the language widget (x: its centre).
     pub fn peek(&mut self, text: String, x: f64, ms: u64) {
         self.peek_text = text;

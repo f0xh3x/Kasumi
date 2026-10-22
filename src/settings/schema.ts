@@ -1251,6 +1251,19 @@ export const pages: Page[] = [
             unit: "ms",
           },
           {
+            kind: "select",
+            label: "Clicking it",
+            help: "Native Kasumi.",
+            path: (cfg) => (cfg.osd?.notifications === true ? ["osd", "notification_click"] : null),
+            default: "app",
+            options: [
+              { value: "app", label: "Opens the app that sent it" },
+              { value: "panel", label: "Opens Kasumi's notifications panel" },
+              { value: "center", label: "Opens Windows' notification center" },
+              { value: "dismiss", label: "Dismisses it" },
+            ],
+          },
+          {
             kind: "toggle",
             label: "Fit to the text",
             help: "As wide as the notification needs, up to the width below. Off: always that wide.",
@@ -1384,7 +1397,7 @@ export const pages: Page[] = [
             label: "Start Kasumi native",
             help: "Takes effect the next time Kasumi starts (quit it from the tray and start it again).",
             path: ["general", "renderer"],
-            default: "web",
+            default: "native",
             values: ["web", "native"],
           },
         ],

@@ -219,7 +219,7 @@ impl Default for General {
             check_updates: true,
             auto_update: false,
             update_notes: true,
-            renderer: "web".into(),
+            renderer: "native".into(),
         }
     }
 }
@@ -399,6 +399,10 @@ pub struct Osd {
     pub notification_ms: u64,
     /// The notification pop-up is as wide as its text (up to `notification_width`), else always that wide.
     pub notification_fit: bool,
+    /// Clicking a notification pop-up: "app" (opens the app that sent it), "panel"
+    /// (Kasumi's notifications panel), "center" (Windows' notification center) or
+    /// "dismiss" (puts it away).
+    pub notification_click: String,
     pub notification_width: f64,
 }
 
@@ -434,6 +438,7 @@ impl Default for Osd {
             notification_style: "line".into(),
             notification_ms: 5000,
             notification_fit: true,
+            notification_click: "app".into(),
             notification_width: 420.0,
         }
     }

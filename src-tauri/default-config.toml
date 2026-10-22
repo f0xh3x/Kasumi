@@ -16,7 +16,7 @@ tooltips = true           # hints when hovering widgets
 check_updates = true      # look for a new version when Kasumi starts (the notch says so)
 auto_update = false       # install new versions from GitHub by itself
 update_notes = true       # after an update, a window shows what's new
-renderer = "web"          # what draws the bars: web (WebView2) | native (Direct2D, much lighter); on restart
+renderer = "native"          # what draws the bars: web (WebView2) | native (Direct2D, much lighter); on restart
 
 [shell]
 hide_taskbar = true       # hide the Windows taskbar while Kasumi runs (restored on quit)
@@ -100,6 +100,7 @@ keyboard = true              # pop a small notch at the language widget when the
 keyboard_width = 120
 caps_lock = false            # pop the OSD when Caps Lock is switched on / off
 file_progress = false        # Explorer's file copies and moves: their progress as a pop-up
+notification_click = "app"   # clicking a notification pop-up: app (opens it) | panel (Kasumi's notifications) | center (Windows') | dismiss
 
 # Bar spacing (widgets in the open bar).
 [bar]
