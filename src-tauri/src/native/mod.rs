@@ -520,7 +520,7 @@ impl Native {
             st.labels = cfg.labels.clone();
         });
         if bar.is_some() {
-            self.surfaces[i].alt_tab_open(&self.gfx, &self.store);
+            self.surfaces[i].alt_tab_open(&self.gfx, &self.store, cfg.replace_tasks);
         } else {
             self.alt_center_draw();
         }

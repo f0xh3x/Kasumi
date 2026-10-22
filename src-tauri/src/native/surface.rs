@@ -254,6 +254,9 @@ pub struct Surface {
     /// notch's own panel state (given back once it's shut).
     alt_panel: Option<usize>,
     alt: Option<(usize, Option<usize>, bool)>,
+    /// The switcher took over a notch with the tasks widget ([alt_tab] replace_tasks):
+    /// it fills the notch from the edge and the notch's own row steps aside.
+    alt_replace: bool,
     /// Live window previews shown on a panel: window, DWM thumbnail, its box (device px).
     thumbs: Vec<(isize, isize, [i32; 4])>,
     /// What the engine was last told, and what's waiting to be told.
@@ -339,6 +342,7 @@ impl Surface {
             tip_blocked: None,
             alt_panel: None,
             alt: None,
+            alt_replace: false,
             thumbs: Vec::new(),
             sent_widths: String::new(),
             sent_regions: String::new(),
@@ -1391,8 +1395,13 @@ impl Surface {
                     width += 10.0 * nudged;
                     height += 4.0 * nudged;
                 }
-                if !dock && self.alt.is_some_and(|a| a.0 == di) && val(&self.expand) < 0.5 {
-                    panel_top = Some(height);
+                if self.alt.is_some_and(|a| a.0 == di) {
+                    if self.alt_replace {
+                        // In the notch's place: from the edge, its row gone.
+                        panel_top = Some(0.0);
+                    } else if !dock && val(&self.expand) < 0.5 {
+                        panel_top = Some(height);
+                    }
                 }
                 if let Some(s) = &d.shown {
                     // Retracting (hidden under a window): shrink into the edge around the centre.
@@ -1458,6 +1467,7 @@ impl Surface {
                 d.active = prev;
                 d.has_panel = had;
                 self.alt = None;
+                self.alt_replace = false;
             }
         }
         for d in &self.drops {
@@ -1593,6 +1603,8 @@ impl Surface {
             // The notch's own content cross-fades with a pop-up growing out of it.
             let osd_here = self.osd_drop() == Some(di) && !self.osd_below(false);
             let alpha = shown * fits * if osd_here { 1.0 - clamp01(self.pop.osd.value * 1.8) as f32 } else { 1.0 };
+            // The switcher in this notch's place: its own row steps aside.
+            let alpha = if self.alt_replace && self.alt.is_some_and(|a| a.0 == di) { alpha * (1.0 - clamp01(d.spring.value * 2.5) as f32) } else { alpha };
             let cy = y(row / 2.0);
             // Docks lay the slot out at its current (morphing) size.
             let kids: Vec<usize> = d.slot.iter().copied().filter(|&wi| self.widgets[wi].width > 0.0 && !self.covered(d, wi) && !self.aside(di, wi)).collect();
@@ -2129,7 +2141,7 @@ impl Surface {
     }
 
     /// Alt + Tab: its panel out of this bar's centre notch (whatever else was open goes).
-    pub fn alt_tab_open(&mut self, gfx: &Gfx, store: &HashMap<String, Value>) {
+    pub fn alt_tab_open(&mut self, gfx: &Gfx, store: &HashMap<String, Value>, replace_tasks: bool) {
         let pi = match self.alt_panel {
             Some(pi) => pi,
             None => {
@@ -2151,6 +2163,7 @@ impl Surface {
             return;
         };
         self.close_all();
+        self.alt_replace = replace_tasks && self.drops[di].slot.iter().any(|&wi| widgets::widget_type(&self.widgets[wi].name) == "tasks");
         let d = &mut self.drops[di];
         if self.alt.is_none() {
             self.alt = Some((di, d.active, d.has_panel));

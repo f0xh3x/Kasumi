@@ -142,7 +142,7 @@ pub fn run(args: &[String]) {
                         st.previews = previews;
                         st.labels = labels.into();
                     });
-                    surface.alt_tab_open(&gfx, &HashMap::new());
+                    surface.alt_tab_open(&gfx, &HashMap::new(), true);
                     surface.settle();
                     let _ = surface.render(&gfx);
                     surface.settle();

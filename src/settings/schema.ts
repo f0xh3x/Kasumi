@@ -1287,6 +1287,13 @@ export const pages: Page[] = [
             ],
           },
           {
+            kind: "toggle",
+            label: "Replace the tasks widget",
+            help: "When that notch holds the tasks widget, the notch turns into the switcher (its apps step aside) instead of the switcher hanging under it.",
+            path: ["alt_tab", "replace_tasks"],
+            default: true,
+          },
+          {
             kind: "select",
             label: "Windows from",
             path: ["alt_tab", "monitors"],

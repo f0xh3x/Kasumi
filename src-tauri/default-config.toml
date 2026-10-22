@@ -33,6 +33,7 @@ fullscreen = "launcher"   # the Windows key over a fullscreen app: launcher | no
 [alt_tab]
 enabled = true            # Kasumi's own Alt + Tab (native Kasumi)
 position = "top"          # top (out of the top bar's notch) | center (middle of the screen) | bottom (out of the dock's notch)
+replace_tasks = true      # a notch with the tasks widget turns into the switcher (its apps step aside)
 monitors = "current"      # current (the monitor you're working on) | all
 previews = true           # live previews of the windows
 labels = "both"           # under each window: both | icons | titles | none (none: previews only)
