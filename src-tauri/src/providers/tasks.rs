@@ -405,8 +405,9 @@ fn monitor_of(h: HWND) -> String {
 }
 
 /// Alt+Tab rules: visible, titled, not a tool window, and unowned unless it asks
-/// for a taskbar button. (Cloaking is checked by the caller: see `scan`.)
-fn is_task(h: HWND, own_pid: u32) -> bool {
+/// for a taskbar button; Kasumi's own only for its app windows (`ours`: settings,
+/// setup, what's new), not its bars. (Cloaking is checked by the caller: see `scan`.)
+fn is_task(h: HWND, own_pid: u32, ours: &[isize]) -> bool {
     unsafe {
         if !IsWindowVisible(h).as_bool() || GetWindowTextLengthW(h) == 0 {
             return false;
@@ -421,7 +422,7 @@ fn is_task(h: HWND, own_pid: u32) -> bool {
         }
         let mut pid = 0u32;
         GetWindowThreadProcessId(h, Some(&mut pid));
-        if pid == own_pid {
+        if pid == own_pid && !ours.contains(&(h.0 as isize)) {
             return false;
         }
         !matches!(crate::win::class_name(h).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
@@ -448,6 +449,12 @@ fn scan(app: &AppHandle) {
         let _ = EnumWindows(Some(collect), LPARAM(&mut all as *mut _ as isize));
     }
     let own = unsafe { GetCurrentProcessId() };
+    let ours: Vec<isize> = ["settings", "setup", "notes"]
+        .iter()
+        .filter_map(|l| tauri::Manager::get_webview_window(app, l))
+        .filter_map(|w| w.hwnd().ok())
+        .map(|h| h.0 as isize)
+        .collect();
     let fg = unsafe { GetForegroundWindow() };
 
     let pinned = pins(app);
@@ -482,7 +489,7 @@ fn scan(app: &AppHandle) {
     let listed: Vec<HWND> = all
         .iter()
         .copied()
-        .filter(|&h| is_task(h, own))
+        .filter(|&h| is_task(h, own, &ours))
         .filter(|&h| {
             let id = h.0 as isize;
             if !is_cloaked(h) {

@@ -143,6 +143,13 @@ pub struct Animation {
     pub notification_nudge: bool,
     /// Springs may overshoot (as damped as set); off: never past where they head.
     pub bounce: bool,
+    /// Context menus (native/ctxmenu): how one opens ("expand": grows out of where it
+    /// opens, submenus sideways; "fade"; "none"), its entries one after another, its
+    /// spring.
+    pub menu_open: String,
+    pub menu_cascade: bool,
+    pub menu_stiffness: f64,
+    pub menu_damping: f64,
 }
 
 impl Default for Animation {
@@ -167,6 +174,10 @@ impl Default for Animation {
             marker_glide: false,
             notification_nudge: false,
             bounce: false,
+            menu_open: "expand".into(),
+            menu_cascade: true,
+            menu_stiffness: 775.0,
+            menu_damping: 43.0,
         }
     }
 }

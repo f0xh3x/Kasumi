@@ -1082,6 +1082,24 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Context menu",
+        help: "Kasumi's own right-click menu (Settings › Context menu).",
+        fields: [
+          {
+            kind: "select",
+            label: "Opening",
+            path: ["animation", "menu_open"],
+            default: "expand",
+            options: [
+              { value: "expand", label: "Grows out of where it opens (submenus sideways)" },
+              { value: "fade", label: "Fades in" },
+              { value: "none", label: "No animation" },
+            ],
+          },
+          { kind: "toggle", label: "Entries one by one", help: "Its entries come in one after another as it opens.", path: ["animation", "menu_cascade"], default: true },
+        ],
+      },
+      {
         title: "Springs",
         help: "Higher stiffness is faster. With Bounce on, lower damping is bouncier.",
         fields: [
@@ -1098,6 +1116,8 @@ export const pages: Page[] = [
           { kind: "slider", label: "Spread / slide damping", path: ["animation", "spread_damping"], default: 80, min: 10, max: 160, step: 1 },
           { kind: "slider", label: "Panel stiffness", path: ["animation", "panel_stiffness"], default: 775, min: 200, max: 6000, step: 20 },
           { kind: "slider", label: "Panel damping", path: ["animation", "panel_damping"], default: 43, min: 10, max: 160, step: 1 },
+          { kind: "slider", label: "Context menu stiffness", path: ["animation", "menu_stiffness"], default: 775, min: 200, max: 6000, step: 20 },
+          { kind: "slider", label: "Context menu damping", path: ["animation", "menu_damping"], default: 43, min: 10, max: 160, step: 1 },
         ],
       },
       ...ANIM_WIDGETS.map(([w, title, icon, effects]) => ({

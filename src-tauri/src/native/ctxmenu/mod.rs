@@ -10,8 +10,9 @@ mod menu;
 mod shell;
 
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -141,13 +142,13 @@ const MSG_KEY: u32 = WM_APP + 3;
 const MSG_FOREGROUND: u32 = WM_APP + 4;
 const TIMER_SWITCH: usize = 1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
-const TIMER_FADE: usize = 2;
+const TIMER_ANIM: usize = 2;
 
 struct Open {
     target: Target,
     built: Built,
     levels: Vec<Level>,
-    style: Style,
+    style: Rc<Style>,
     pt: POINT,
     mon: crate::win::Monitor,
     /// Hovered a moment: this level's row opens its submenu (or closes another).
@@ -157,6 +158,26 @@ struct Open {
 struct Ui {
     gfx: Gfx,
     open: Option<Open>,
+    /// Levels on their way out (closing as they opened).
+    closing: Vec<Level>,
+    /// The last animation frame (none while nothing moves).
+    last: Option<Instant>,
+}
+
+/// Draws frames while levels open or close.
+fn animate() {
+    unsafe {
+        SetTimer(Some(host()), TIMER_ANIM, 15, None);
+    }
+}
+
+/// Levels that go: they close as they opened, then they're gone.
+fn retire(closing: &mut Vec<Level>, gone: Vec<Level>) {
+    for mut l in gone {
+        l.retire();
+        closing.push(l);
+    }
+    animate();
 }
 
 thread_local! {
@@ -219,7 +240,7 @@ pub fn helper(app_pid: u32) {
                 return;
             }
         };
-        UI.with(|u| *u.borrow_mut() = Some(Ui { gfx, open: None }));
+        UI.with(|u| *u.borrow_mut() = Some(Ui { gfx, open: None, closing: Vec::new(), last: None }));
         SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(on_foreground), 0, 0, WINEVENT_OUTOFCONTEXT);
         std::thread::spawn(|| hooks());
         let mut msg = MSG::default();
@@ -359,7 +380,12 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 
 fn close() {
     OPEN.store(false, Ordering::Relaxed);
-    with_ui(|u| u.open = None);
+    with_ui(|u| {
+        if let Some(mut o) = u.open.take() {
+            let gone = std::mem::take(&mut o.levels);
+            retire(&mut u.closing, gone);
+        }
+    });
 }
 
 /// The theme's look (with Windows' accent, if it follows it).
@@ -394,6 +420,7 @@ fn request(defview: HWND, pt: POINT) {
     let cfg = crate::config::load().ok();
     let menu_cfg = cfg.as_ref().map(|c| c.context_menu.clone()).unwrap_or_default();
     let (look, icons) = (look(cfg.as_ref()), menu_cfg.icons);
+    let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
     remember(built.ctx.kind.name(), &built.entries);
     let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, &target);
     let mon = crate::win::monitors()
@@ -402,19 +429,17 @@ fn request(defview: HWND, pt: POINT) {
         .or_else(|| crate::win::monitors().into_iter().next());
     let Some(mon) = mon else { return };
     let shown = with_ui(|u| {
-        let style = Style::new(&u.gfx, look, icons);
-        let mut root = Level::new(&u.gfx, &style, entries, None, mon.scale as f32).ok()?;
+        let style = Style::new(&u.gfx, look, icons, anim);
+        let mut root = Level::new(&u.gfx, style.clone(), entries, None, mon.scale as f32).ok()?;
         root.place_root(pt, &mon);
-        root.draw(&u.gfx, &style).ok()?;
+        root.draw(&u.gfx).ok()?;
         u.open = Some(Open { target, built, levels: vec![root], style, pt, mon, switch: None });
         Some(())
     })
     .flatten();
     if shown.is_some() {
         OPEN.store(true, Ordering::Relaxed);
-        unsafe {
-            SetTimer(Some(host()), TIMER_FADE, 15, None);
-        }
+        animate();
     }
 }
 
@@ -422,7 +447,11 @@ fn request(defview: HWND, pt: POINT) {
 /// row chosen (opened with the keys).
 fn open_sub(u: &mut Ui, li: usize, row: usize, first: bool) {
     let Some(o) = u.open.as_mut() else { return };
-    o.levels.truncate(li + 1);
+    if o.levels.len() > li + 1 {
+        let gone = o.levels.split_off(li + 1);
+        retire(&mut u.closing, gone);
+        o.levels[li].reset_shape();
+    }
     let entry = &mut o.levels[li].entries[row];
     let items = match entry.sub.clone() {
         Some(Sub::Pending(h, pos)) => {
@@ -448,17 +477,16 @@ fn open_sub(u: &mut Ui, li: usize, row: usize, first: bool) {
         items
     };
     o.levels[li].hover = Some(row);
-    let Ok(mut lvl) = Level::new(&u.gfx, &o.style, items, Some(row), o.levels[li].scale) else { return };
+    let Ok(mut lvl) = Level::new(&u.gfx, o.style.clone(), items, Some(row), o.levels[li].scale) else { return };
     lvl.place_sub(&o.levels[li], row, &o.mon);
+    menu::join(&mut o.levels[li], &mut lvl);
     if first {
         lvl.hover = lvl.next_usable(None, 1);
     }
-    let _ = o.levels[li].draw(&u.gfx, &o.style);
-    let _ = lvl.draw(&u.gfx, &o.style);
+    let _ = o.levels[li].draw(&u.gfx);
+    let _ = lvl.draw(&u.gfx);
     o.levels.push(lvl);
-    unsafe {
-        SetTimer(Some(host()), TIMER_FADE, 15, None);
-    }
+    animate();
 }
 
 /// What a chosen row does once the menu is gone.
@@ -488,7 +516,8 @@ fn choose(u: &mut Ui, li: usize, row: usize) -> Option<(Open, Run)> {
     };
     OPEN.store(false, Ordering::Relaxed);
     let mut open = u.open.take()?;
-    open.levels.clear();
+    let gone = std::mem::take(&mut open.levels);
+    retire(&mut u.closing, gone);
     Some((open, run))
 }
 
@@ -538,7 +567,7 @@ fn hover(hwnd: HWND, x: i32, y: i32) {
         let row = o.levels[li].row_at(x, y);
         if o.levels[li].hover != row && row.is_some() {
             o.levels[li].hover = row;
-            let _ = o.levels[li].draw(gfx, &o.style);
+            let _ = o.levels[li].draw(gfx);
         }
         let Some(r) = row else { return };
         let child = o.levels.get(li + 1).map(|c| c.parent_row);
@@ -563,7 +592,7 @@ fn leave(hwnd: HWND) {
         let keep = o.levels.get(li + 1).and_then(|c| c.parent_row);
         if o.levels[li].hover != keep {
             o.levels[li].hover = keep;
-            let _ = o.levels[li].draw(gfx, &o.style);
+            let _ = o.levels[li].draw(gfx);
         }
     });
 }
@@ -580,18 +609,40 @@ fn timer(id: usize) {
                 if o.levels.get(li).is_none_or(|l| l.hover != Some(r)) {
                     return;
                 }
-                o.levels.truncate(li + 1);
+                if o.levels.len() > li + 1 {
+                    let gone = o.levels.split_off(li + 1);
+                    retire(&mut u.closing, gone);
+                    o.levels[li].reset_shape();
+                    let _ = o.levels[li].draw(&u.gfx);
+                }
                 if o.levels[li].entries[r].sub.is_some() && o.levels[li].entries[r].usable() {
                     open_sub(u, li, r, false);
                 }
             });
         }
-        TIMER_FADE => {
-            let more = with_ui(|u| u.open.as_mut().is_some_and(|o| o.levels.iter_mut().fold(false, |m, l| l.fade() || m))).unwrap_or(false);
-            if more {
-                unsafe {
-                    SetTimer(Some(host()), TIMER_FADE, 15, None);
+        TIMER_ANIM => {
+            let more = with_ui(|u| {
+                let now = Instant::now();
+                let dt = u.last.map_or(1.0 / 60.0, |t| now.duration_since(t).as_secs_f64().min(0.05));
+                u.last = Some(now);
+                let gfx = &u.gfx;
+                let mut more = false;
+                let open = u.open.as_mut().map(|o| o.levels.iter_mut()).into_iter().flatten();
+                for l in open.chain(u.closing.iter_mut()) {
+                    if l.tick(dt) {
+                        let _ = l.draw(gfx);
+                        more = true;
+                    }
                 }
+                u.closing.retain(|l| !l.gone());
+                if !more {
+                    u.last = None;
+                }
+                more || !u.closing.is_empty()
+            })
+            .unwrap_or(false);
+            if more {
+                animate();
             }
         }
         _ => {}
@@ -627,7 +678,7 @@ fn key(vk: VIRTUAL_KEY) {
                     VK_HOME => lvl.next_usable(None, 1),
                     _ => lvl.next_usable(None, -1),
                 };
-                let _ = lvl.draw(gfx, &o.style);
+                let _ = lvl.draw(gfx);
                 None
             }
             VK_RIGHT => {
@@ -638,17 +689,25 @@ fn key(vk: VIRTUAL_KEY) {
             }
             VK_LEFT | VK_ESCAPE => {
                 if d > 0 {
-                    o.levels.truncate(d);
-                    let _ = o.levels[d - 1].draw(gfx, &o.style);
+                    let gone = o.levels.split_off(d);
+                    retire(&mut u.closing, gone);
+                    o.levels[d - 1].reset_shape();
+                    let _ = o.levels[d - 1].draw(gfx);
                 } else if vk == VK_ESCAPE {
                     OPEN.store(false, Ordering::Relaxed);
-                    u.open = None;
+                    if let Some(mut o) = u.open.take() {
+                        let gone = std::mem::take(&mut o.levels);
+                        retire(&mut u.closing, gone);
+                    }
                 }
                 None
             }
             VK_APPS => {
                 OPEN.store(false, Ordering::Relaxed);
-                u.open = None;
+                if let Some(mut o) = u.open.take() {
+                    let gone = std::mem::take(&mut o.levels);
+                    retire(&mut u.closing, gone);
+                }
                 None
             }
             VK_RETURN | VK_SPACE => {
@@ -677,7 +736,7 @@ fn key(vk: VIRTUAL_KEY) {
                     }
                     many => {
                         lvl.hover = Some(many.iter().copied().find(|&i| cur.is_none_or(|c| i > c)).unwrap_or(many[0]));
-                        let _ = lvl.draw(gfx, &o.style);
+                        let _ = lvl.draw(gfx);
                         None
                     }
                 }

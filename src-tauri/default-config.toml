@@ -92,6 +92,11 @@ rolling = true           # numbers roll to their new value
 magnify = true           # dock icons grow under the cursor
 marker_glide = true      # the line under the app in front travels to the next one
 notification_nudge = true # the bell shakes for a new notification
+# Context menus (Kasumi's own, experimental):
+menu_open = "expand"      # expand (grows out of where it opens; submenus sideways) | fade | none
+menu_cascade = true       # its entries come in one after another
+menu_stiffness = 775
+menu_damping = 43
 
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]
