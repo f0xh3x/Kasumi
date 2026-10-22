@@ -128,7 +128,7 @@ fn remember(name: &str, entries: &[shell::Entry]) {
 pub async fn context_menu_info() -> serde_json::Value {
     let mut seen: serde_json::Value = std::fs::read_to_string(seen_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| serde_json::json!({}));
     // Kasumi's bar menu: all its entries (Power too), and its folders' own.
-    let bar = bar_entries(true, crate::presets::names_async().await);
+    let bar = bar_entries(crate::presets::names_async().await);
     seen["bar"] = serde_json::Value::Array(entries_json(&bar));
     for e in &bar {
         if let Some(Sub::Ready(items)) = &e.sub {
@@ -495,7 +495,17 @@ fn request(defview: HWND, pt: POINT) {
     let (look, icons) = (look(cfg.as_ref()), menu_cfg.icons);
     let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
     remember(built.ctx.kind.name(), &built.entries);
-    let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, Some(&target));
+    // A submenu's entries, for ones the layout lifts out of it (filled in now).
+    let children = |e: &shell::Entry| match &e.sub {
+        Some(Sub::Ready(v)) => Some(v.clone()),
+        Some(Sub::Pending(h, pos)) => {
+            let v = built.populate(*h, *pos);
+            remember(&format!("sub:{}", e.key), &v);
+            Some(v)
+        }
+        None => None,
+    };
+    let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, Some(&target), &children);
     show(entries, pt, Some((target, built)), None, None, look, icons, anim);
 }
 
@@ -883,17 +893,24 @@ pub fn bar_menu(app: tauri::AppHandle) {
     close();
     let Some((x, y)) = crate::win::cursor_pos() else { return };
     let cfg = crate::config::load().ok();
-    let power = cfg.as_ref().is_some_and(|c| c.bar_menu.power);
     let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
-    // Arranged by its layout ([bar_menu] layout; none: as Kasumi lists them).
+    // Arranged by its layout ([bar_menu] layout; none: as Kasumi lists them, Power
+    // hidden unless [bar_menu] power).
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     let shift = unsafe { GetAsyncKeyState(VK_SHIFT.0 as i32) } < 0;
     let ctx = layout::Ctx { kind: layout::Kind::Bar, paths: Vec::new(), dir: home.clone(), here: home, shift };
     let mut rules = cfg.as_ref().map(|c| c.bar_menu.layout.clone()).unwrap_or_default();
     if rules.is_empty() {
         rules.push(crate::config::MenuNode { rest: true, ..Default::default() });
+        if !cfg.as_ref().is_some_and(|c| c.bar_menu.power) {
+            rules.push(crate::config::MenuNode { r#match: vec!["verb:kasumi.power".into()], hide: true, ..Default::default() });
+        }
     }
-    let entries = layout::arrange_with(&rules, &[], bar_entries(power, crate::presets::names()), &ctx, None);
+    let children = |e: &shell::Entry| match &e.sub {
+        Some(Sub::Ready(v)) => Some(v.clone()),
+        _ => None,
+    };
+    let entries = layout::arrange_with(&rules, &[], bar_entries(crate::presets::names()), &ctx, None, &children);
     show(entries, POINT { x, y }, None, Some(app), Some(ctx), look(cfg.as_ref()), true, anim);
 }
 
@@ -914,7 +931,8 @@ fn app_folder(text: &str, id: &str, g: char, items: Vec<shell::Entry>) -> shell:
     named_as(e, id)
 }
 
-fn bar_entries(power: bool, presets: Vec<(String, bool)>) -> Vec<shell::Entry> {
+/// The bar menu's entries, all of them (its layout hides some: Power, at first).
+fn bar_entries(presets: Vec<(String, bool)>) -> Vec<shell::Entry> {
     let mut presets: Vec<shell::Entry> = presets
         .into_iter()
         .map(|(name, current)| {
@@ -948,7 +966,7 @@ fn bar_entries(power: bool, presets: Vec<(String, bool)>) -> Vec<shell::Entry> {
         ),
         shell::Entry::separator(),
     ];
-    if power {
+    {
         let confirm = |mut e: shell::Entry| {
             e.confirm = true;
             e

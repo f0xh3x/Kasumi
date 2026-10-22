@@ -81,6 +81,7 @@ for (const id of Object.keys(KASUMI)) (GROUPS[id.split(".")[0]] ??= []).push(id)
 
 /** `text:Pin to*` / `verb:copyaspath` against a Windows entry (as layout.rs does). */
 function matches(m: string, e: Seen): boolean {
+  if (m.startsWith("in:")) return false;
   const i = m.indexOf(":");
   const [kind, pat] = i < 0 ? ["text", m] : [m.slice(0, i), m.slice(i + 1)];
   const hay = (kind === "verb" ? e.verb : e.text).toLowerCase();
@@ -90,6 +91,13 @@ function matches(m: string, e: Seen): boolean {
 }
 
 const keyOf = (e: Seen) => (e.verb ? `verb:${e.verb}` : `text:${e.text}`);
+/** An entry lifted out of its submenu: `in:<submenu>|<entry>`. */
+const liftedOf = (n: MenuNode): [string, string] | null => {
+  const m = n.match?.[0];
+  if (!m?.startsWith("in:")) return null;
+  const i = m.indexOf("|");
+  return i < 0 ? null : [m.slice(3, i), m.slice(i + 1)];
+};
 const applies = (n: MenuNode, kind: string) => !n.where || n.where.split("|").some((w) => w.trim() === kind);
 const hexOf = (ch: string) => ch.codePointAt(0)!.toString(16).toUpperCase();
 
@@ -250,6 +258,10 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       } else if (n.kasumi) {
         const k = KASUMI[n.kasumi];
         if (!k?.kinds || k.kinds.includes(kind)) out.push({ node: n, list, depth, seen, owner, ownerKey, off });
+      } else if (liftedOf(n)) {
+        const [parent, child] = liftedOf(n)!;
+        const hits = (seenAll[`sub:${parent}`] ?? []).filter((e) => keyOf(e) === child);
+        if (hits.length) out.push({ node: n, list, hits, depth, seen, owner, ownerKey, off });
       } else if (n.match?.length) {
         const hits = seen.filter((e) => n.match!.some((m) => matches(m, e)));
         if (!hits.length) continue;
@@ -270,7 +282,18 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     if (!state.open.has(parentRow.parent)) return;
     const items = node?.items ?? [];
     const list = items.some((r) => r.rest) ? items : [...items, { rest: true }];
-    rows(list, subSeen, claimedIn(list, subSeen), depth, out, () => resolve(parentRow), keyOf(e));
+    // Ones lifted out of it (into the menu or a folder) aren't in it.
+    const used = claimedIn(list, subSeen);
+    const lifted = new Set<string>();
+    const walk = (l: MenuNode[]) =>
+      l.forEach((n) => {
+        const f = liftedOf(n);
+        if (f && f[0] === keyOf(e)) lifted.add(f[1]);
+        if (n.items) walk(n.items);
+      });
+    walk(layout);
+    subSeen.forEach((se, i) => lifted.has(keyOf(se)) && used.add(i));
+    rows(list, subSeen, used, depth, out, () => resolve(parentRow), keyOf(e));
   };
 
   // --- Editing ----------------------------------------------------------------------
@@ -296,13 +319,51 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
   };
   const canDrop = (src: Row | null, dst: Row, zone: Zone) => {
     if (!src || src === dst) return false;
-    // A Windows submenu's entries stay in it; nothing else goes in one.
-    if (src.ownerKey !== dst.ownerKey) return false;
+    // Out of a submenu (into the menu or a folder); back into its own one; nothing
+    // else goes into a submenu.
+    if (src.ownerKey !== dst.ownerKey) {
+      const out = !!src.ownerKey && !dst.ownerKey;
+      const back = !src.ownerKey && !!dst.ownerKey && liftedOf(src.node)?.[0] === dst.ownerKey;
+      if (!out && !back) return false;
+    }
     if (zone === "into" && (!dst.node.folder || dst.entry)) return false;
     if (!src.entry && !dst.entry && contains(src.node, dst.node)) return false;
     return true;
   };
   const drop = (src: Row, dst: Row, zone: Zone) => {
+    // Back into its submenu: it's one of its entries again.
+    const lifted = liftedOf(src.node);
+    if (!src.ownerKey && lifted && dst.ownerKey === lifted[0]) {
+      const s = resolve(src);
+      if (s) s[1].splice(s[1].indexOf(s[0]), 1);
+      commit();
+      return;
+    }
+    // Out of its submenu: taken out by name (`in:`), keeping its name and icon here.
+    if (src.ownerKey && !dst.ownerKey) {
+      const child = src.entry ? keyOf(src.entry) : src.node.match?.[0];
+      if (!child) return;
+      const node: MenuNode = { match: [`in:${src.ownerKey}|${child}`] };
+      if (!src.entry) {
+        const s = resolve(src);
+        if (s) {
+          if (s[0].name) node.name = s[0].name;
+          if (s[0].icon) node.icon = s[0].icon;
+          s[1].splice(s[1].indexOf(s[0]), 1);
+        }
+      }
+      const d = resolve(dst);
+      if (!d) return;
+      const [dn, dl] = d;
+      if (zone === "into") {
+        (dn.items ??= []).push(node);
+        if (dn.folder) state.open.add(`folder:${dn.folder}`);
+      } else {
+        dl.splice(dl.indexOf(dn) + (zone === "after" ? 1 : 0), 0, node);
+      }
+      commit();
+      return;
+    }
     const s = resolve(src);
     const d = resolve(dst);
     if (!s || !d) return;
@@ -535,7 +596,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
 
     const table = $("div", "cm-rows");
     if (state.kind === "bar") {
-      table.append($("p", "card-help", "The menu you get by right-clicking a bar's empty space. Power shows only with Power in the bar menu on (Settings › General)."));
+      table.append($("p", "card-help", "The menu you get by right-clicking a bar's empty space. Power is hidden at first: its eye shows it."));
     } else if (!seen.length) {
       table.append($("p", "card-help", "Kasumi hasn't seen this kind of menu yet: right-click one once (with Kasumi's menu on), then come back."));
     }
@@ -592,7 +653,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     seenAll = info.seen ?? {};
     const cm = (ctx.cfg as any).context_menu ?? {};
     const bm = (ctx.cfg as any).bar_menu ?? {};
-    barLayout = structuredClone(bm.layout?.length ? bm.layout : [{ rest: true }]);
+    barLayout = structuredClone(bm.layout?.length ? bm.layout : bm.power ? [{ rest: true }] : [{ rest: true }, { match: ["verb:kasumi.power"], hide: true }]);
     layout = mainLayout = structuredClone(cm.layout?.length ? cm.layout : info.default);
     // Your own entries (`custom`) become part of the layout where it said `custom`.
     const custom: MenuNode[] = structuredClone(cm.custom ?? []);

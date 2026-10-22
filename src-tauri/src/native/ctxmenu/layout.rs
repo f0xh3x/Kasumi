@@ -179,8 +179,12 @@ pub fn default_layout() -> Vec<MenuNode> {
     toml::from_str::<DefaultLayout>(DEFAULT).map(|d| d.layout).unwrap_or_default()
 }
 
-/// `text:Pin to*` / `verb:copyaspath`: does a Windows entry match?
+/// `text:Pin to*` / `verb:copyaspath`: does a Windows entry match? (`in:<submenu>|<entry>`:
+/// one lifted out of its submenu, by that name.)
 fn matches(m: &str, e: &Entry) -> bool {
+    if m.starts_with("in:") {
+        return e.key == m;
+    }
     let (kind, pat) = m.split_once(':').unwrap_or(("text", m));
     let hay = if kind == "verb" { e.verb.as_str() } else { e.text.as_str() };
     if hay.is_empty() {
@@ -234,13 +238,59 @@ fn glyph(hex: &str) -> Option<Icon> {
 
 /// The menu: Windows' entries arranged by the layout (Kasumi's default unless the
 /// config has its own), with the config's own entries where it says `custom`.
-pub fn arrange(cfg: &crate::config::ContextMenuCfg, windows: Vec<Entry>, ctx: &Ctx, t: Option<&Target>) -> Vec<Entry> {
+pub fn arrange(cfg: &crate::config::ContextMenuCfg, windows: Vec<Entry>, ctx: &Ctx, t: Option<&Target>, children: &dyn Fn(&Entry) -> Option<Vec<Entry>>) -> Vec<Entry> {
     let layout = if cfg.layout.is_empty() { default_layout() } else { cfg.layout.clone() };
-    arrange_with(&layout, &cfg.custom, windows, ctx, t)
+    arrange_with(&layout, &cfg.custom, windows, ctx, t, children)
 }
 
-/// Entries arranged by a layout (`custom`: where it says so).
-pub fn arrange_with(layout: &[MenuNode], custom: &[MenuNode], windows: Vec<Entry>, ctx: &Ctx, t: Option<&Target>) -> Vec<Entry> {
+/// The `in:<submenu>|<entry>` names a layout lifts out of submenus.
+fn lifted_refs(nodes: &[MenuNode], out: &mut Vec<String>) {
+    for n in nodes {
+        out.extend(n.r#match.iter().filter(|m| m.starts_with("in:")).cloned());
+        lifted_refs(&n.items, out);
+    }
+}
+
+/// Entries the layout takes out of their submenus: each submenu named is filled in
+/// now (`children`), its entries taken out join the others (by their `in:` name),
+/// and its submenu leaves them out.
+fn lift(refs: &[String], windows: &mut Vec<Entry>, children: &dyn Fn(&Entry) -> Option<Vec<Entry>>) {
+    let mut lifted = Vec::new();
+    let mut parents: Vec<&str> = refs.iter().filter_map(|r| r[3..].split_once('|').map(|(p, _)| p)).collect();
+    parents.dedup();
+    for parent in parents {
+        let Some(pi) = windows.iter().position(|e| e.key == parent && e.sub.is_some()) else { continue };
+        let Some(items) = children(&windows[pi]) else { continue };
+        for r in refs.iter().filter(|r| r[3..].starts_with(&format!("{parent}|"))) {
+            let child = &r[3 + parent.len() + 1..];
+            if let Some(c) = items.iter().find(|e| e.key == child) {
+                let mut c = c.clone();
+                c.key = r.clone();
+                lifted.push(c);
+                windows[pi].rules.push(MenuNode { r#match: vec![child.to_string()], hide: true, ..Default::default() });
+            }
+        }
+        windows[pi].sub = Some(Sub::Ready(items));
+    }
+    windows.extend(lifted);
+}
+
+/// Entries arranged by a layout (`custom`: where it says so). `children`: a
+/// submenu's entries, for ones the layout lifts out.
+pub fn arrange_with(
+    layout: &[MenuNode],
+    custom: &[MenuNode],
+    mut windows: Vec<Entry>,
+    ctx: &Ctx,
+    t: Option<&Target>,
+    children: &dyn Fn(&Entry) -> Option<Vec<Entry>>,
+) -> Vec<Entry> {
+    let mut refs = Vec::new();
+    lifted_refs(layout, &mut refs);
+    lifted_refs(custom, &mut refs);
+    if !refs.is_empty() {
+        lift(&refs, &mut windows, children);
+    }
     let mut used = vec![false; windows.len()];
     claimed(layout, &windows, &mut used);
     claimed(custom, &windows, &mut used);
@@ -293,7 +343,7 @@ fn place(nodes: &[MenuNode], windows: &[Entry], used: &[bool], ctx: &Ctx, t: Opt
                     e.icon = glyph(&n.icon);
                 }
                 if e.sub.is_some() {
-                    e.rules = n.items.clone();
+                    e.rules.extend(n.items.iter().cloned());
                 }
                 out.push(e);
             }

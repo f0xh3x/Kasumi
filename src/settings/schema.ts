@@ -145,13 +145,6 @@ export const pages: Page[] = [
             default: false,
           },
           { kind: "custom", editor: "taskbarGuide" },
-          {
-            kind: "toggle",
-            label: "Power in the bar menu",
-            help: "Right-clicking a bar's empty space opens Kasumi's menu (settings, presets, hiding the bars...). This adds Lock, Sleep, Restart and Shut down to it; all but Lock ask for a second click.",
-            path: ["bar_menu", "power"],
-            default: false,
-          },
         ],
       },
       {

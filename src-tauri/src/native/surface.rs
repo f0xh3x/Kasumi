@@ -249,6 +249,8 @@ pub struct Surface {
     pub animating: bool,
     shown: bool,
     click_through: bool,
+    /// What the engine asked for (see set_click_through).
+    want_through: bool,
     offscreen: bool,
     /// The window's size and position as last drawn (physical).
     size: SIZE,
@@ -351,6 +353,7 @@ impl Surface {
             animating: false,
             shown: true,
             click_through: true,
+            want_through: true,
             offscreen,
             size: SIZE { cx: w, cy: 1 },
             pos: POINT::default(),
@@ -982,7 +985,16 @@ impl Surface {
         }
     }
 
+    /// The engine's wish: clicks through this window (the bar closed) or not. Not while
+    /// a switcher shows out of a notch (Alt + Tab): the mouse picks on it.
     pub fn set_click_through(&mut self, ignore: bool) {
+        self.want_through = ignore;
+        self.apply_click_through();
+    }
+
+    fn apply_click_through(&mut self) {
+        let switcher = self.alt.is_some_and(|(di, _, _)| self.drops.get(di).is_some_and(|d| d.spring.target > 0.5));
+        let ignore = self.want_through && !switcher;
         if ignore == self.click_through {
             return;
         }
@@ -2344,6 +2356,7 @@ impl Surface {
         d.active = Some(pi);
         d.has_panel = true;
         d.spring.target = 1.0;
+        self.apply_click_through();
         self.changed(gfx);
         self.kick();
     }
@@ -2357,6 +2370,7 @@ impl Surface {
     pub fn alt_tab_close(&mut self) {
         if let Some((di, _, _)) = self.alt {
             self.drops[di].spring.target = 0.0;
+            self.apply_click_through();
             self.kick();
         }
     }
