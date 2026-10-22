@@ -341,12 +341,15 @@ pub fn compute(g: &Geometry, w: f64, corner_radius: f64, combine: bool, t: f64, 
         };
         let dl = depth_at(true);
         let dr = depth_at(false);
-        // SVG "A R R 0 0 1" from the edge to R along it, as one cubic arc.
-        corners.push(Cmd::M(Pt(0.0, dl)));
+        // SVG "A R R 0 0 1" from the edge to R along it, as one cubic arc. Each reaches
+        // 1 px into what it hangs from, so no anti-aliased seam shows between them.
+        corners.push(Cmd::M(Pt(0.0, dl - 1.0)));
         corners.push(Cmd::L(Pt(0.0, dl + rr)));
         corners.push(Cmd::C(Pt(0.0, dl + rr - K * rr), Pt(rr - K * rr, dl), Pt(rr, dl)));
+        corners.push(Cmd::L(Pt(rr, dl - 1.0)));
         corners.push(Cmd::Z);
-        corners.push(Cmd::M(Pt(w, dr)));
+        corners.push(Cmd::M(Pt(w, dr - 1.0)));
+        corners.push(Cmd::L(Pt(w - rr, dr - 1.0)));
         corners.push(Cmd::L(Pt(w - rr, dr)));
         corners.push(Cmd::C(Pt(w - rr + K * rr, dr), Pt(w, dr + rr - K * rr), Pt(w, dr + rr)));
         corners.push(Cmd::Z);

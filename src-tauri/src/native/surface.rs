@@ -1672,9 +1672,10 @@ impl Surface {
         let shape = gfx.path(&frame.path, flip)?;
         unsafe {
             gfx.brush.SetColor(&fill);
-            gfx.rt.FillGeometry(&shape, &gfx.brush, None::<&ID2D1Brush>);
-            if !frame.corners.is_empty() {
-                gfx.rt.FillGeometry(&gfx.path(&frame.corners, flip)?, &gfx.brush, None::<&ID2D1Brush>);
+            if frame.corners.is_empty() {
+                gfx.rt.FillGeometry(&shape, &gfx.brush, None::<&ID2D1Brush>);
+            } else {
+                gfx.fill_union(&shape, &gfx.path(&frame.corners, flip)?);
             }
             // Content is clipped by the shape, as the page's content is by its clip path.
             let params = D2D1_LAYER_PARAMETERS {

@@ -43,10 +43,12 @@ static ATTENTION: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new(
 static WINDOW_APPS: std::sync::Mutex<Vec<(isize, String)>> = std::sync::Mutex::new(Vec::new());
 
 /// HSHELL_GETMINRECT's lParam: the window, and where its minimize animation should go.
+/// Documented as a RECT, but Windows reads it as 16-bit left, top, right, bottom (as
+/// it fills it in; 32-bit values sent the animation to the top of the screen).
 #[repr(C)]
 struct ShellHookInfo {
     hwnd: HWND,
-    rc: windows::Win32::Foundation::RECT,
+    rc: [i16; 4],
 }
 
 /// The shell hook's message (RegisterWindowMessage "SHELLHOOK").
@@ -62,7 +64,7 @@ unsafe extern "system" fn hook_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -
         let info = &mut *(lp.0 as *mut ShellHookInfo);
         let key = WINDOW_APPS.lock().unwrap().iter().find(|(h, _)| *h == info.hwnd.0 as isize).map(|e| e.1.clone());
         if let Some(r) = key.and_then(|k| crate::native::icon_rect(&monitor_of(info.hwnd), &k)) {
-            info.rc = windows::Win32::Foundation::RECT { left: r[0], top: r[1], right: r[2], bottom: r[3] };
+            info.rc = r.map(|v| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
             return windows::Win32::Foundation::LRESULT(1);
         }
     }

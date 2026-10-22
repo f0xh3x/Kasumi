@@ -540,6 +540,24 @@ impl Gfx {
         }
     }
 
+    /// Fills two shapes as one (their union): where they meet, no seam of two
+    /// anti-aliased edges, and no doubled alpha where they overlap.
+    pub fn fill_union(&self, a: &ID2D1PathGeometry, b: &ID2D1PathGeometry) {
+        use windows::Win32::Graphics::Direct2D::*;
+        unsafe {
+            if let Ok(path) = self.d2d.CreatePathGeometry() {
+                if let Ok(sink) = path.Open() {
+                    if a.CombineWithGeometry(b, D2D1_COMBINE_MODE_UNION, None, 0.25, &sink).is_ok() && sink.Close().is_ok() {
+                        self.rt.FillGeometry(&path, &self.brush, None::<&ID2D1Brush>);
+                        return;
+                    }
+                }
+            }
+            self.rt.FillGeometry(a, &self.brush, None::<&ID2D1Brush>);
+            self.rt.FillGeometry(b, &self.brush, None::<&ID2D1Brush>);
+        }
+    }
+
     /// Clips what's drawn next to `keep` minus the `cut` rectangles, until `pop_fade`
     /// (a closing panel's content stays out from under the panel opening over it).
     pub fn push_clip_minus(&self, keep: D2D_RECT_F, cut: &[D2D_RECT_F]) {
