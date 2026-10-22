@@ -680,3 +680,24 @@ body.view-setup #toast, body.view-notes #toast { bottom: 76px; }
 .notes-preview::-webkit-scrollbar-thumb { background: #262626; border-radius: 4px; }
 .notes-preview-title { font-weight: 600; margin-bottom: 8px; }
 .notes-preview .notes-body h2, .notes-preview .notes-body h3 { margin-top: 12px; }
+
+/* Context menu editor */
+.cm-editor { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+.cm-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.cm-tab { background: var(--raised); color: var(--dim); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.cm-tab:hover { color: var(--fg); }
+.cm-tab.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.cm-tab.small { padding: 3px 9px; font-size: 11px; }
+.cm-rows { display: flex; flex-direction: column; gap: 4px; }
+.cm-item { display: flex; flex-direction: column; gap: 4px; }
+.cm-row { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.cm-row .input { flex: 1; min-width: 120px; }
+.cm-row .select { width: 150px; }
+.cm-row .sep-line { flex: 1; height: 1px; background: var(--line); }
+.cm-row.hidden-row > :not(.menu-row-actions) { opacity: 0.4; }
+.cm-row.folder-row .input { font-weight: 600; }
+.cm-tag { font-size: 11px; color: var(--faint); white-space: nowrap; }
+.cm-details { display: flex; flex-direction: column; gap: 6px; padding: 6px 0 8px 34px; }
+.cm-details[hidden] { display: none; }
+.cm-where { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cm-where .input { flex: 1; min-width: 160px; }

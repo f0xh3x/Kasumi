@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { POWER_ACTIONS } from "../power-actions";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES, kasumiLogo } from "../quick-tiles";
 import { $, glyph, iconButton, input, row, select, toggleSwitch } from "./dom";
+import { contextMenuEditor } from "./ctxmenu-editor";
 import { renderMarkdown } from "./markdown";
 import type { Cfg, Path } from "./schema";
 
@@ -997,7 +998,7 @@ const ICONS: [number, string][] = [
  * Returns the button and the grid; the grid goes right after the row it belongs
  * to (inline, so a collapsible section can't clip it).
  */
-function iconPicker(current: string, onPick: (glyph: string) => void): [HTMLElement, HTMLElement] {
+export function iconPicker(current: string, onPick: (glyph: string) => void): [HTMLElement, HTMLElement] {
   const btn = $("button", "icon-picker", $("span", "icon", current || String.fromCharCode(0xe8b7)));
   btn.title = "Choose an icon";
   const grid = $("div", "icon-grid");
@@ -1819,6 +1820,7 @@ export const editors: Record<string, Editor> = {
   osdSpot,
   windowsGuide,
   taskbarGuide,
+  contextMenuEditor,
   animWidget,
   accentWidget,
   fontPicker,

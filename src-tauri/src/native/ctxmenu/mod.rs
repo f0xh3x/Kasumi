@@ -62,6 +62,51 @@ pub fn watch(app: tauri::AppHandle) {
     });
 }
 
+// --- For the editor (settings) --------------------------------------------------------
+
+/// Windows' entries seen in menus so far, per kind of click (the editor lists them).
+fn seen_path() -> std::path::PathBuf {
+    crate::config::dir().join("menu-seen.json")
+}
+
+/// Remembers a menu's entries for its kind of click: this time's first, in Windows'
+/// order, then ones seen before but not now (another file type's, say).
+fn remember(kind: layout::Kind, entries: &[shell::Entry]) {
+    use serde_json::{json, Map, Value};
+    let path = seen_path();
+    let mut all: Map<String, Value> = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let key = |v: &Value| {
+        let verb = v.get("verb").and_then(|x| x.as_str()).unwrap_or("");
+        if verb.is_empty() {
+            format!("text:{}", v.get("text").and_then(|x| x.as_str()).unwrap_or(""))
+        } else {
+            format!("verb:{verb}")
+        }
+    };
+    let mut merged: Vec<Value> = entries.iter().filter(|e| !e.separator).map(|e| json!({ "text": e.text, "verb": e.verb, "sub": e.sub.is_some() })).collect();
+    if let Some(Value::Array(old)) = all.get(kind.name()) {
+        for o in old {
+            if !merged.iter().any(|m| key(m) == key(o)) {
+                merged.push(o.clone());
+            }
+        }
+    }
+    merged.truncate(300);
+    let changed = all.get(kind.name()) != Some(&Value::Array(merged.clone()));
+    if changed {
+        all.insert(kind.name().into(), Value::Array(merged));
+        let _ = std::fs::write(&path, Value::Object(all).to_string());
+    }
+}
+
+/// For the settings' context menu editor: the entries seen per kind of click, and
+/// Kasumi's default layout (what the editor starts from without one of your own).
+#[tauri::command]
+pub async fn context_menu_info() -> serde_json::Value {
+    let seen: serde_json::Value = std::fs::read_to_string(seen_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| serde_json::json!({}));
+    serde_json::json!({ "seen": seen, "default": layout::default_layout() })
+}
+
 // --- The helper ----------------------------------------------------------------------
 
 /// The helper's message window, which the hooks post to.
@@ -333,6 +378,7 @@ fn request(defview: HWND, pt: POINT) {
     let cfg = crate::config::load().ok();
     let menu_cfg = cfg.as_ref().map(|c| c.context_menu.clone()).unwrap_or_default();
     let (look, icons) = (look(cfg.as_ref()), menu_cfg.icons);
+    remember(built.ctx.kind, &built.entries);
     let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, &target);
     let mon = crate::win::monitors()
         .into_iter()

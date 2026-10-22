@@ -1299,6 +1299,11 @@ export const pages: Page[] = [
           { kind: "toggle", label: "Icons", help: "An icon beside each entry that has one.", path: ["context_menu", "icons"], default: false },
         ],
       },
+      {
+        title: "Entries",
+        help: "Reorder, hide, rename and group the menu's entries, for each kind of click, and add your own folders and commands. Kasumi starts from a tidy layout: Pin/Unpin and More options folders, Terminal, File manage, Go to.",
+        fields: [{ kind: "custom", editor: "contextMenuEditor" }],
+      },
     ],
   },
   {
