@@ -474,6 +474,19 @@ pub trait Widget {
     fn dropped(&mut self, _paths: &[String]) -> Option<Act> {
         None
     }
+    /// Files being dragged over it (its own px; None: they're gone). True: redraw.
+    fn drag_over(&mut self, _at: Option<(f32, f32)>) -> bool {
+        false
+    }
+    /// Files dropped right on it (its own px): something to do with them there, before
+    /// the bar-wide `dropped` (the tasks widget opens them with the app under them).
+    fn drop_on(&mut self, _at: (f32, f32), _paths: &[String]) -> Option<Act> {
+        None
+    }
+    /// Something it decided to do in a tick (asked after its ticks).
+    fn act(&mut self) -> Option<Act> {
+        None
+    }
     /// It wants its panel open now (the tasks widget, hovered a moment over an app
     /// with several windows). Asked after its ticks.
     fn wants_panel(&mut self) -> bool {

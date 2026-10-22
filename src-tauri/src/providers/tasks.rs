@@ -606,6 +606,33 @@ pub async fn task_activate(hwnd_id: isize, toggle: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Files dropped on an app: opened with it, through its exe (or its taskbar shortcut)
+/// with the paths as arguments; apps already running mostly hand them to their open
+/// window. Store apps have no exe to give them to: they're only brought up.
+pub fn task_open_with(app_key: &str, paths: &[String]) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let a = state().lock().unwrap().apps.get(app_key).cloned().ok_or("unknown app")?;
+    let packaged = a.exe.to_lowercase().contains("\\windowsapps\\");
+    let target = if !a.exe.is_empty() && !packaged {
+        a.exe.clone()
+    } else if let Some(lnk) = &a.lnk {
+        lnk.clone()
+    } else {
+        return Err("no program to open files with".into());
+    };
+    let args = paths.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(" ");
+    crate::win::allow_foreground();
+    let (file, params) = (HSTRING::from(target.as_str()), HSTRING::from(args.as_str()));
+    let r = unsafe { ShellExecuteW(None, &HSTRING::from("open"), &file, &params, PCWSTR::null(), SW_SHOWNORMAL) };
+    if r.0 as isize > 32 {
+        Ok(())
+    } else {
+        Err(format!("ShellExecute failed ({})", r.0 as isize))
+    }
+}
+
 /// The user dragged an app to a new place: `keys` is the new order.
 #[tauri::command]
 pub async fn task_reorder(keys: Vec<String>) -> Result<(), String> {

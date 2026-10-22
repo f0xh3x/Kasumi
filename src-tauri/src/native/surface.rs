@@ -599,10 +599,24 @@ impl Surface {
             "notch://osd" => self.pop.osd(gfx, &self.look, &self.layout, payload),
             "notch://notification" => self.pop.notification(gfx, &self.look, &self.layout, payload),
             "notch://keyboard" => self.keyboard(gfx, payload),
-            // Files dropped on the bar: the first widget that takes them (tasks pins them).
+            // Files dragged over the bar: the widget under them hears where.
+            "notch://drag-over" => {
+                let under = self.screen_widget(gfx, payload);
+                let mut redraw = false;
+                for (wi, p) in self.widgets.iter_mut().enumerate() {
+                    redraw |= p.w.drag_over(under.filter(|u| u.0 == wi).map(|u| u.1));
+                }
+                if redraw {
+                    self.redraw(gfx);
+                }
+                return;
+            }
+            // Files dropped on the bar: the widget under them, else the first that takes
+            // them (tasks pins them).
             "notch://drop" => {
                 let paths: Vec<String> = payload.get("paths").and_then(|p| p.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-                if let Some(act) = self.widgets.iter_mut().find_map(|w| w.w.dropped(&paths)) {
+                let on = self.screen_widget(gfx, payload).and_then(|(wi, at)| self.widgets[wi].w.drop_on(at, &paths));
+                if let Some(act) = on.or_else(|| self.widgets.iter_mut().find_map(|w| w.w.dropped(&paths))) {
                     self.pending.push(act);
                 }
                 return;
@@ -737,6 +751,7 @@ impl Surface {
     /// What panels asked for in their ticks.
     pub fn take_acts(&mut self) -> Vec<Act> {
         let mut acts: Vec<Act> = self.panels.iter_mut().filter_map(|p| p.p.act()).collect();
+        acts.extend(self.widgets.iter_mut().filter_map(|p| p.w.act()));
         acts.extend(self.pop.pending.take());
         acts.append(&mut self.pending);
         acts
@@ -1698,6 +1713,18 @@ impl Surface {
     /// Physical client px → logical window px.
     fn logical(&self, p: (i32, i32)) -> (f32, f32) {
         (p.0 as f32 / self.scale(), p.1 as f32 / self.scale())
+    }
+
+    /// The widget under a screen point given as {x, y} (physical px), with the point
+    /// in its own terms.
+    fn screen_widget(&self, gfx: &Gfx, at: &Value) -> Option<(usize, (f32, f32))> {
+        let (x, y) = (at.get("x")?.as_i64()? as i32, at.get("y")?.as_i64()? as i32);
+        let mut pt = POINT { x, y };
+        unsafe {
+            let _ = windows::Win32::Graphics::Gdi::ScreenToClient(self.hwnd, &mut pt);
+        }
+        let (lx, ly) = self.logical((pt.x, pt.y));
+        self.widget_at(gfx, lx, ly)
     }
 
     /// The widget under a point (window px, logical), with the point in its own terms.

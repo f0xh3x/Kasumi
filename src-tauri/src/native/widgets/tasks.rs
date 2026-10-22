@@ -35,6 +35,9 @@ struct Win {
     z: i64,
 }
 
+/// How long files are held over a running app before its window comes up.
+const DRAG_RAISE_MS: u64 = 600;
+
 #[derive(Clone, Debug)]
 struct App {
     key: String,
@@ -90,6 +93,11 @@ pub struct Tasks {
     /// Hovering an app with several windows: which, since when (its windows pop up after 450 ms).
     hover_since: Option<(usize, Instant)>,
     open_request: bool,
+    /// Files dragged over an app: which, since when, and whether it's been brought up
+    /// yet (after a moment, like the Windows taskbar).
+    drag_hover: Option<(usize, Instant, bool)>,
+    /// What a tick decided to do (bring up the app files are held over).
+    pending: Option<Act>,
     drag: Option<Drag>,
     /// The order the user dragged apps into, until the backend's catches up; every app's key.
     local_order: Option<Vec<String>>,
@@ -120,6 +128,8 @@ impl Tasks {
             cursor: None,
             hover_since: None,
             open_request: false,
+            drag_hover: None,
+            pending: None,
             drag: None,
             local_order: None,
             all_keys: Vec::new(),
@@ -412,7 +422,9 @@ impl Widget for Tasks {
     }
 
     fn wake(&self) -> Option<Instant> {
-        self.hover_since.map(|(_, t)| t + std::time::Duration::from_millis(450))
+        let menu = self.hover_since.map(|(_, t)| t + std::time::Duration::from_millis(450));
+        let raise = self.drag_hover.filter(|d| !d.2).map(|(_, t, _)| t + std::time::Duration::from_millis(DRAG_RAISE_MS));
+        [menu, raise].into_iter().flatten().min()
     }
 
     fn tick(&mut self, now: Instant) -> bool {
@@ -423,7 +435,47 @@ impl Widget for Tasks {
             }
             self.hover_since = None;
         }
+        // Files held over a running app: bring its window up to drop them into.
+        if let Some((k, t, false)) = self.drag_hover {
+            if now >= t + std::time::Duration::from_millis(DRAG_RAISE_MS) {
+                self.drag_hover = Some((k, t, true));
+                if let Some(w) = self.apps.get(k).and_then(|a| a.wins.iter().min_by_key(|w| w.z)) {
+                    let hwnd = w.hwnd as isize;
+                    self.pending = Some(Act::call(move |_| {
+                        let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(hwnd, false));
+                    }));
+                }
+            }
+        }
         false
+    }
+
+    fn act(&mut self) -> Option<Act> {
+        self.pending.take()
+    }
+
+    fn drag_over(&mut self, at: Option<(f32, f32)>) -> bool {
+        let i = at.and_then(|(x, _)| self.boxes.iter().position(|(_, bx, bw)| x >= *bx && x < bx + bw));
+        if i != self.drag_hover.map(|d| d.0) {
+            self.drag_hover = i.map(|k| (k, Instant::now(), false));
+        }
+        // Shown as hovered (and magnified) as under the cursor, without the windows menu.
+        let changed = self.hover(at);
+        self.hover_since = None;
+        changed
+    }
+
+    fn drop_on(&mut self, at: (f32, f32), paths: &[String]) -> Option<Act> {
+        self.drag_hover = None;
+        let i = self.boxes.iter().position(|(_, bx, bw)| at.0 >= *bx && at.0 < bx + bw)?;
+        let key = self.apps.get(i)?.key.clone();
+        let paths = paths.to_vec();
+        eprintln!("[kasumi] tasks: opening {paths:?} with {key}");
+        Some(Act::call(move |_| {
+            if let Err(e) = crate::providers::tasks::task_open_with(&key, &paths) {
+                eprintln!("[kasumi] tasks: couldn't open with {key}: {e}");
+            }
+        }))
     }
 
     fn wants_panel(&mut self) -> bool {

@@ -1,6 +1,8 @@
-//! Files dropped on a native bar (to pin them to the tasks widget): an OLE drop
-//! target on each surface's window. What the pages did through WebView2
-//! (dropzone.rs): the paths go to the surface as `notch://drop`.
+//! Files dragged onto a native bar: an OLE drop target on each surface's window.
+//! Where they're dragged goes to the surface as `notch://drag-over` (screen px,
+//! null when they leave), the drop as `notch://drop` with its paths and point: on
+//! an app in the tasks widget it opens them with that app, elsewhere it pins them
+//! (what the pages did through WebView2, dropzone.rs).
 
 use std::cell::Cell;
 
@@ -41,29 +43,52 @@ fn paths(d: &IDataObject) -> Vec<String> {
 struct Target {
     label: String,
     files: Cell<bool>,
+    /// The point last reported (OLE repeats DragOver while the cursor rests).
+    last: Cell<Option<(i32, i32)>>,
+}
+
+impl Target {
+    /// Tells the surface where files are being dragged (screen px), or that they left.
+    fn over(&self, pt: Option<&POINTL>) {
+        let at = pt.map(|p| (p.x, p.y));
+        if at == self.last.get() {
+            return;
+        }
+        self.last.set(at);
+        let payload = at.map_or(serde_json::Value::Null, |(x, y)| serde_json::json!({ "x": x, "y": y }));
+        super::post(super::Msg::Event(self.label.clone(), "notch://drag-over".into(), payload));
+    }
 }
 
 impl IDropTarget_Impl for Target_Impl {
-    fn DragEnter(&self, data: Ref<'_, IDataObject>, _keys: MODIFIERKEYS_FLAGS, _pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragEnter(&self, data: Ref<'_, IDataObject>, _keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         let ok = data.as_ref().is_some_and(has_files);
         self.files.set(ok);
         unsafe { *effect = if ok { DROPEFFECT_LINK } else { DROPEFFECT_NONE } };
+        if ok {
+            self.over(Some(pt));
+        }
         Ok(())
     }
-    fn DragOver(&self, _keys: MODIFIERKEYS_FLAGS, _pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn DragOver(&self, _keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         unsafe { *effect = if self.files.get() { DROPEFFECT_LINK } else { DROPEFFECT_NONE } };
+        if self.files.get() {
+            self.over(Some(pt));
+        }
         Ok(())
     }
     fn DragLeave(&self) -> Result<()> {
+        self.over(None);
         Ok(())
     }
-    fn Drop(&self, data: Ref<'_, IDataObject>, _keys: MODIFIERKEYS_FLAGS, _pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
+    fn Drop(&self, data: Ref<'_, IDataObject>, _keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> Result<()> {
         let list = data.as_ref().map(paths).unwrap_or_default();
         unsafe { *effect = if list.is_empty() { DROPEFFECT_NONE } else { DROPEFFECT_LINK } };
+        self.over(None);
         if !list.is_empty() {
             eprintln!("[kasumi] {}: dropped {list:?}", self.label);
             // Through the inbox: the native state may be in use right now.
-            super::post(super::Msg::Event(self.label.clone(), "notch://drop".into(), serde_json::json!({ "paths": list })));
+            super::post(super::Msg::Event(self.label.clone(), "notch://drop".into(), serde_json::json!({ "paths": list, "x": pt.x, "y": pt.y })));
         }
         Ok(())
     }
@@ -71,7 +96,7 @@ impl IDropTarget_Impl for Target_Impl {
 
 /// Takes files dropped on a surface's window (the thread must have OLE initialized).
 pub fn register(hwnd: HWND, label: &str) {
-    let target: IDropTarget = Target { label: label.to_string(), files: Cell::new(false) }.into();
+    let target: IDropTarget = Target { label: label.to_string(), files: Cell::new(false), last: Cell::new(None) }.into();
     if let Err(e) = unsafe { RegisterDragDrop(hwnd, &target) } {
         eprintln!("[kasumi] {label}: no file drops ({e})");
     }
