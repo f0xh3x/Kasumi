@@ -9,7 +9,7 @@
 //! window drawing its own part in a margin around its body.
 
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, SIZE};
@@ -51,6 +51,11 @@ const MIN_W: f32 = 120.0;
 const MAX_W: f32 = 480.0;
 /// Cubic Bézier circle-arc constant.
 const K: f64 = 0.5523;
+/// The menu's animations run this much faster than the springs and cascade they
+/// share their feel with (menus are quick).
+const SPEED: f64 = 2.0;
+/// Closing level by level: each waits this long after the one it opened.
+pub const CLOSE_STAGGER_MS: u64 = 60;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -147,10 +152,31 @@ fn fillet_path(x: f32, y: f32, sx: f32, sy: f32, r: f32) -> Vec<Cmd> {
     ]
 }
 
-/// How long `n` rows take to come in, one after another (as a panel's cascade).
-fn cascade_ms(n: usize) -> f32 {
+/// A row's delay after the one before, and its own fade-in (ms), for `n` rows: a
+/// panel's cascade, at the menu's speed.
+fn cascade_step(n: usize) -> (f32, f32) {
     let n = n.max(1) as f32;
-    (n - 1.0) * (240.0 / n).min(25.0) + 160.0
+    ((240.0 / n).min(25.0) / SPEED as f32, 160.0 / SPEED as f32)
+}
+
+/// How long `n` rows take to come in, one after another.
+fn cascade_ms(n: usize) -> f32 {
+    let (step, fade) = cascade_step(n);
+    (n.max(1) as f32 - 1.0) * step + fade
+}
+
+/// Where a level joins another: corner radii (top left, top right, bottom right,
+/// bottom left) and concave corners (x, y in the body; directions; radius).
+#[derive(Clone)]
+struct Shape {
+    corners: [f32; 4],
+    fillets: Vec<(f32, f32, f32, f32, f32)>,
+}
+
+impl Default for Shape {
+    fn default() -> Shape {
+        Shape { corners: [RADIUS; 4], fillets: Vec::new() }
+    }
 }
 
 pub struct Level {
@@ -173,16 +199,16 @@ pub struct Level {
     pub hover: Option<usize>,
     /// The row of the level before that this one opened from.
     pub parent_row: Option<usize>,
-    /// Corner radii (top left, top right, bottom right, bottom left) and concave
-    /// corners (x, y in the body; directions; radius): where a submenu joins.
-    corners: [f32; 4],
-    fillets: Vec<(f32, f32, f32, f32, f32)>,
+    /// Joined to its menu (as a submenu), and to its own submenu (as a menu).
+    as_sub: Shape,
+    as_menu: Shape,
     pub grow: Grow,
     open: Spring,
     born: Instant,
-    /// Moving (drawing frames); on its way out.
+    /// Moving (drawing frames); on its way out, from when.
     active: bool,
     closing: bool,
+    close_at: Instant,
 }
 
 impl Drop for Level {
@@ -221,6 +247,8 @@ impl Level {
         let a = &style.anim;
         let mut open = Spring::new(0.0, a.menu_stiffness, a.menu_damping);
         open.configure(a.menu_stiffness, a.menu_damping, a);
+        open.open *= SPEED;
+        open.close *= SPEED;
         open.target = 1.0;
         if style.mode == Mode::None {
             open.snap();
@@ -242,13 +270,14 @@ impl Level {
             scale,
             hover: None,
             parent_row,
-            corners: [RADIUS; 4],
-            fillets: Vec::new(),
+            as_sub: Shape::default(),
+            as_menu: Shape::default(),
             grow: Grow::Down,
             open,
             born: Instant::now(),
             active: true,
             closing: false,
+            close_at: Instant::now(),
         };
         l.layout(gfx);
         Ok(l)
@@ -310,15 +339,16 @@ impl Level {
         self.body = POINT { x, y: y.clamp(mon.top, (mon.bottom - h).max(mon.top)) };
     }
 
-    /// Back to its own corners (its submenu closed).
+    /// Its submenu closed: back to its own corners on that side (its join to its own
+    /// menu stays).
     pub fn reset_shape(&mut self) {
-        self.corners = [RADIUS; 4];
-        self.fillets.clear();
+        self.as_menu = Shape::default();
     }
 
-    fn add_fillet(&mut self, x: i32, y: i32, sx: f32, sy: f32, r_px: f32) {
+    /// A concave corner at (x, y) on screen, in this level's body.
+    fn fillet_at(&self, x: i32, y: i32, sx: f32, sy: f32, r_px: f32) -> (f32, f32, f32, f32, f32) {
         let s = self.scale;
-        self.fillets.push(((x - self.body.x) as f32 / s, (y - self.body.y) as f32 / s, sx, sy, r_px / s));
+        ((x - self.body.x) as f32 / s, (y - self.body.y) as f32 / s, sx, sy, r_px / s)
     }
 
     /// The row at a point in the window (device px), if it's one that can be pointed at.
@@ -340,6 +370,13 @@ impl Level {
         if !self.active {
             return false;
         }
+        // Closing waits its turn (the submenus after it close first).
+        if self.closing {
+            if Instant::now() < self.close_at {
+                return false;
+            }
+            self.open.target = 0.0;
+        }
         self.open.step(dt);
         let cascading = !self.closing && self.style.cascade && self.born.elapsed().as_secs_f32() * 1000.0 < cascade_ms(self.rows.len());
         if self.open.settled() && !cascading {
@@ -349,10 +386,14 @@ impl Level {
         true
     }
 
-    /// On its way out: closing as it opened, letting clicks through.
-    pub fn retire(&mut self) {
+    /// On its way out (after `wait`): closing as it opened, letting clicks through.
+    /// Submenus close quicker still.
+    pub fn retire(&mut self, wait: Duration) {
         self.closing = true;
-        self.open.target = 0.0;
+        self.close_at = Instant::now() + wait;
+        if self.parent_row.is_some() {
+            self.open.close *= 1.5;
+        }
         self.active = self.style.mode != Mode::None;
         unsafe {
             let ex = GetWindowLongW(self.hwnd, GWL_EXSTYLE);
@@ -362,7 +403,7 @@ impl Level {
 
     /// Closed (it can go).
     pub fn gone(&self) -> bool {
-        self.closing && (!self.active || self.open.value <= 0.02)
+        self.closing && Instant::now() >= self.close_at && (!self.active || self.open.value <= 0.02)
     }
 
     pub fn draw(&mut self, gfx: &Gfx) -> Result<()> {
@@ -388,8 +429,10 @@ impl Level {
         };
         gfx.begin(dc, w_px, h_px, self.scale)?;
         if vw > 0.5 && vh > 0.5 {
-            let mut shape = body_path(m + vx, m + vy, vw, vh, self.corners);
-            for &(fx, fy, sx, sy, r) in &self.fillets {
+            // Its own corners, squared (or rounded less) where it joins either neighbour.
+            let corners: [f32; 4] = std::array::from_fn(|i| self.as_sub.corners[i].min(self.as_menu.corners[i]));
+            let mut shape = body_path(m + vx, m + vy, vw, vh, corners);
+            for &(fx, fy, sx, sy, r) in self.as_sub.fillets.iter().chain(&self.as_menu.fillets) {
                 let r = r.min(vw).min(vh);
                 if r > 0.5 {
                     shape.extend(fillet_path(m + fx, m + fy, sx, sy, r));
@@ -403,12 +446,11 @@ impl Level {
             }
             gfx.clip(rect(m + vx, m + vy, vw, vh));
             let t = self.born.elapsed().as_secs_f32() * 1000.0;
-            let n = self.rows.len().max(1) as f32;
-            let step = (240.0 / n).min(25.0);
+            let (step, fade) = cascade_step(self.rows.len());
             for (i, (en, &(y, rh))) in self.entries.iter().zip(&self.rows).enumerate() {
                 // One after another: each fades in and slides a little into place.
                 let (ra, dx, dy) = if style.cascade && !self.closing {
-                    let k = ((t - i as f32 * step) / 160.0).clamp(0.0, 1.0);
+                    let k = ((t - i as f32 * step) / fade).clamp(0.0, 1.0);
                     let k = 1.0 - (1.0 - k).powi(3);
                     let off = (1.0 - k) * 6.0;
                     match self.grow {
@@ -506,8 +548,7 @@ impl Level {
 /// runs past the other's, a concave corner turns into it (drawn by the one whose side
 /// it's on), and the corner beside it rounds only as far as there's room.
 pub fn join(p: &mut Level, c: &mut Level) {
-    p.reset_shape();
-    c.reset_shape();
+    let (mut ps, mut cs) = (Shape::default(), Shape::default());
     let s = c.scale;
     let right = c.grow == Grow::Right;
     let x = if right { p.body.x + p.body_px.cx } else { p.body.x };
@@ -522,43 +563,45 @@ pub fn join(p: &mut Level, c: &mut Level) {
 
     let d = (ct - pt) as f32;
     if d.abs() < 1.0 {
-        p.corners[p_top] = 0.0;
-        c.corners[c_top] = 0.0;
+        ps.corners[p_top] = 0.0;
+        cs.corners[c_top] = 0.0;
     } else if d > 0.0 {
         // The submenu starts lower: a corner turns from the menu's side into its top.
-        c.corners[c_top] = 0.0;
+        cs.corners[c_top] = 0.0;
         let f = rf.min(d);
-        c.add_fillet(x, ct, side, -1.0, f);
+        cs.fillets.push(c.fillet_at(x, ct, side, -1.0, f));
         if d < rr + f {
-            p.corners[p_top] = room(d, f);
+            ps.corners[p_top] = room(d, f);
         }
     } else {
-        p.corners[p_top] = 0.0;
+        ps.corners[p_top] = 0.0;
         let f = rf.min(-d);
-        p.add_fillet(x, pt, -side, -1.0, f);
+        ps.fillets.push(p.fillet_at(x, pt, -side, -1.0, f));
         if -d < rr + f {
-            c.corners[c_top] = room(-d, f);
+            cs.corners[c_top] = room(-d, f);
         }
     }
 
     let d = (pb - cb) as f32;
     if d.abs() < 1.0 {
-        p.corners[p_bot] = 0.0;
-        c.corners[c_bot] = 0.0;
+        ps.corners[p_bot] = 0.0;
+        cs.corners[c_bot] = 0.0;
     } else if d > 0.0 {
         // The submenu ends higher: a corner turns from the menu's side into its bottom.
-        c.corners[c_bot] = 0.0;
+        cs.corners[c_bot] = 0.0;
         let f = rf.min(d);
-        c.add_fillet(x, cb, side, 1.0, f);
+        cs.fillets.push(c.fillet_at(x, cb, side, 1.0, f));
         if d < rr + f {
-            p.corners[p_bot] = room(d, f);
+            ps.corners[p_bot] = room(d, f);
         }
     } else {
-        p.corners[p_bot] = 0.0;
+        ps.corners[p_bot] = 0.0;
         let f = rf.min(-d);
-        p.add_fillet(x, pb, -side, 1.0, f);
+        ps.fillets.push(p.fillet_at(x, pb, -side, 1.0, f));
         if -d < rr + f {
-            c.corners[c_bot] = room(-d, f);
+            cs.corners[c_bot] = room(-d, f);
         }
     }
+    p.as_menu = ps;
+    c.as_sub = cs;
 }

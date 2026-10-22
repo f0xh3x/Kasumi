@@ -171,10 +171,12 @@ fn animate() {
     }
 }
 
-/// Levels that go: they close as they opened, then they're gone.
+/// Levels that go (in order, the menu first): they close as they opened, the last
+/// one first and each before it a moment later, then they're gone.
 fn retire(closing: &mut Vec<Level>, gone: Vec<Level>) {
-    for mut l in gone {
-        l.retire();
+    let n = gone.len();
+    for (i, mut l) in gone.into_iter().enumerate() {
+        l.retire(Duration::from_millis((n - 1 - i) as u64 * menu::CLOSE_STAGGER_MS));
         closing.push(l);
     }
     animate();
