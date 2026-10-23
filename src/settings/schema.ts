@@ -660,6 +660,17 @@ export const pages: Page[] = [
         help: "Its panel has volume and brightness, battery and network, and shortcuts to Windows settings.",
         fields: [
           { kind: "custom", editor: "quickIcon" },
+          {
+            kind: "select",
+            label: "Battery shows",
+            help: "Beside its icon in the bar.",
+            path: (cfg) => (["auto", "battery", undefined].includes(cfg.widgets?.quick?.icon) ? ["widgets", "quick", "battery_style"] : null),
+            default: "percent",
+            options: [
+              { value: "percent", label: "Its percentage" },
+              { value: "bar", label: "A bar" },
+            ],
+          },
           { kind: "toggle", label: "Volume slider", help: "Off if you set the volume elsewhere (an audio interface's knob...).", path: ["widgets", "quick", "volume"], default: true },
           {
             kind: "toggle",

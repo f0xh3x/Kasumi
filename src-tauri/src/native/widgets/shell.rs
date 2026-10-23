@@ -284,15 +284,24 @@ pub struct Quick {
     tip: String,
     glyph: String,
     value: Roll,
+    /// `battery_style = "bar"`: the battery's level as a bar instead of its percentage
+    /// (and low: 20% or less, not charging).
+    bar: Option<(f32, bool)>,
 }
+
+/// The battery bar's length (px).
+const BATTERY_BAR: f32 = 24.0;
 
 impl Quick {
     pub fn new(opts: Opts) -> Quick {
-        Quick { opts, tip: "Quick settings".into(), glyph: "\u{E713}".into(), value: Roll::default() }
+        Quick { opts, tip: "Quick settings".into(), glyph: "\u{E713}".into(), value: Roll::default(), bar: None }
     }
     fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
         let mut out = vec![Piece::glyph(self.glyph.clone(), 14.0, cx.look.fg)];
-        if !self.value.text.is_empty() {
+        if let Some((v, low)) = self.bar {
+            out.push(Piece::Gap(5.0));
+            out.push(Piece::Bar { len: BATTERY_BAR, v, fill: super::basic::meter_fill(cx, low) });
+        } else if !self.value.text.is_empty() {
             out.push(Piece::Gap(5.0));
             out.push(self.value.piece(cx.body(), cx.look.fg));
         }
@@ -312,12 +321,18 @@ impl Widget for Quick {
         let battery = s.get("battery").filter(|b| !b.is_null());
         let show = if mode == "auto" { if battery.is_some() { "battery" } else { "settings" } } else { mode };
         let mut text = String::new();
+        let mut bar = None;
         let glyph = match show {
             "battery" if battery.and_then(|b| b.get("percent")).and_then(|p| p.as_f64()).is_some() => {
                 let b = battery.unwrap();
                 let p = b.get("percent").and_then(|p| p.as_f64()).unwrap_or(0.0);
-                text = format!("{p}%");
-                battery_glyph(p, b.get("charging").and_then(|c| c.as_bool()).unwrap_or(false))
+                let charging = b.get("charging").and_then(|c| c.as_bool()).unwrap_or(false);
+                if self.opts.str("battery_style") == Some("bar") {
+                    bar = Some(((p / 100.0) as f32, p <= 20.0 && !charging));
+                } else {
+                    text = format!("{p}%");
+                }
+                battery_glyph(p, charging)
             }
             "volume" if s.get("volume").is_some_and(|v| !v.is_null()) => {
                 let v = &s["volume"];
@@ -337,8 +352,9 @@ impl Widget for Quick {
             _ => None,
         }
         .unwrap_or_else(|| "Quick settings".into());
-        let changed = glyph != self.glyph;
+        let changed = glyph != self.glyph || bar != self.bar;
         self.glyph = glyph;
+        self.bar = bar;
         self.value.set(text, self.opts.roll) || changed
     }
     fn width(&mut self, cx: &Ctx) -> f32 {

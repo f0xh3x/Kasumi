@@ -19,7 +19,7 @@ fn num(v: &Value) -> Option<f64> {
 }
 
 /// Meters' fill: the accent with accent details, else the text colour; past 90% the warning colour.
-fn meter_fill(cx: &Ctx, high: bool) -> Color {
+pub(super) fn meter_fill(cx: &Ctx, high: bool) -> Color {
     if high {
         cx.look.warn
     } else if cx.opts.accent {

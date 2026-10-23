@@ -386,6 +386,47 @@ pub fn window_process(hwnd: HWND) -> String {
         .unwrap_or_default()
 }
 
+/// Screen-capture tools: their overlay covers the screen while you pick an area.
+const CAPTURE_PROCESSES: &[&str] = &[
+    "snippingtool.exe",
+    "screenclippinghost.exe",
+    "sharex.exe",
+    "greenshot.exe",
+    "lightshot.exe",
+    "flameshot.exe",
+    "powertoys.textextractor.exe",
+    "powertoys.measuretoolui.exe",
+    "powertoys.colorpickerui.exe",
+];
+
+/// While a screen-capture tool's overlay is in front (Snipping Tool's Win+Shift+S...):
+/// the monitors it covers (one window over them all, or one per monitor).
+pub fn capture_overlay() -> Vec<RECT> {
+    unsafe extern "system" fn proc(h: HWND, data: LPARAM) -> BOOL {
+        let (pid, list) = &mut *(data.0 as *mut (u32, Vec<RECT>));
+        if window_pid(h) == *pid && IsWindowVisible(h).as_bool() {
+            let mut r = RECT::default();
+            if GetWindowRect(h, &mut r).is_ok() {
+                list.push(r);
+            }
+        }
+        BOOL(1)
+    }
+    let fg = unsafe { GetForegroundWindow() };
+    if fg.is_invalid() || !CAPTURE_PROCESSES.contains(&window_process(fg).as_str()) {
+        return Vec::new();
+    }
+    let mut state: (u32, Vec<RECT>) = (window_pid(fg), Vec::new());
+    unsafe {
+        let _ = EnumWindows(Some(proc), LPARAM(&mut state as *mut _ as isize));
+    }
+    monitors()
+        .into_iter()
+        .filter(|m| state.1.iter().any(|r| r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom))
+        .map(|m| RECT { left: m.left, top: m.top, right: m.right, bottom: m.bottom })
+        .collect()
+}
+
 /// If the foreground window is fullscreen (or a D3D exclusive / presentation app
 /// is running), returns the rect of the monitor it occupies.
 pub fn fullscreen_monitor(ours: &[isize]) -> Option<(RECT, String)> {

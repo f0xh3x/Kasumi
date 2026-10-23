@@ -930,6 +930,7 @@ impl Engine {
         let mut last_monitor_check = Instant::now();
         let mut last_accent = win::system_accent();
         let mut last_fullscreen_check = Instant::now();
+        let mut last_foreground = 0isize;
         let mut last_keyboard_check = Instant::now();
         let mut keyboard = crate::osd::KeyboardWatch::default();
         let mut reload_at: Option<Instant> = None;
@@ -989,7 +990,11 @@ impl Engine {
                 keyboard.tick(&self.app);
             }
 
-            if now - last_fullscreen_check >= Duration::from_millis(250) {
+            // At once when the foreground changes (a screen-capture overlay mustn't
+            // have the bars over it), else four times a second.
+            let fg = win::foreground();
+            if fg != last_foreground || now - last_fullscreen_check >= Duration::from_millis(250) {
+                last_foreground = fg;
                 last_fullscreen_check = now;
                 self.update_fullscreen();
             }
@@ -1241,6 +1246,9 @@ impl Engine {
             sh.overlays.values().filter_map(|o| o.hwnd).collect()
         };
         let fs = win::fullscreen_monitor(&ours);
+        // A screen-capture overlay: its monitors' bars hide at once, whatever the
+        // fullscreen settings (the picture it took still has them).
+        let capture = win::capture_overlay();
         self.update_docking(&ours);
         // Nothing should minimize an overlay (Win+D and friends); if it happens anyway, undo it.
         {
@@ -1279,7 +1287,9 @@ impl Engine {
                     o.peek_until = None;
                 }
                 let snoozed = SNOOZE.lock().unwrap().is_some_and(|t| Instant::now() < t);
+                let captured = capture.iter().any(|r| o.monitor.same_rect(r));
                 let hide = snoozed
+                    || captured
                     || (self.cfg.general.hide_in_fullscreen
                         && !o.pinned
                         && !peeking
@@ -1290,6 +1300,7 @@ impl Engine {
                     }
                     match (&fs, hide) {
                         (_, true) if snoozed => eprintln!("[kasumi] hiding {label}: for a while (bar menu)"),
+                        (_, true) if captured => eprintln!("[kasumi] hiding {label}: screen capture"),
                         (Some((_, why)), true) => eprintln!("[kasumi] hiding {label}: {why}"),
                         _ => eprintln!("[kasumi] showing {label}"),
                     }

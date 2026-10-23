@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES, kasumiLogo } from "../quick-tiles";
 import { subscribe, type SystemStatus } from "../data";
-import { iconUrl, g, el, icon, setText, type PanelContext, type Widget } from "./index";
+import { iconUrl, g, el, icon, meter, setText, type PanelContext, type Widget } from "./index";
 
 /**
  * Quick settings. The button shows the battery (on PCs that have one) or a
@@ -33,15 +33,25 @@ export function quick(opts: Record<string, unknown>): Widget {
   const mode = typeof opts.icon === "string" ? opts.icon : "auto";
   const glyph = icon(g(0xe713));
   const value = el("quick-value");
-  const root = el("widget quick", glyph, value);
+  // battery_style = "bar": the battery's level as a bar instead of its percentage.
+  const bar = meter("bar", 24);
+  bar.el.hidden = true;
+  const root = el("widget quick", glyph, value, bar.el);
   const off = subscribe("system", (s) => {
     const battery = s?.battery ?? null;
     const show = mode === "auto" ? (battery ? "battery" : "settings") : mode;
     let text = "";
+    let asBar = false;
     root.title = "Quick settings";
     if (show === "battery" && battery && battery.percent != null) {
       glyph.textContent = batteryGlyph(battery.percent, battery.charging);
-      text = `${battery.percent}%`;
+      asBar = opts.battery_style === "bar";
+      if (asBar) {
+        bar.set(battery.percent / 100);
+        root.classList.toggle("high", battery.percent <= 20 && !battery.charging);
+      } else {
+        text = `${battery.percent}%`;
+      }
       root.title = `Battery ${battery.percent}%${battery.charging ? ", charging" : ""}`;
     } else if (show === "volume" && s?.volume) {
       glyph.textContent = volumeGlyph(s.volume.level, s.volume.muted);
@@ -53,6 +63,9 @@ export function quick(opts: Record<string, unknown>): Widget {
     } else {
       glyph.textContent = g(0xe713);
     }
+    bar.el.hidden = !asBar;
+    value.hidden = asBar;
+    if (!asBar) root.classList.remove("high");
     setText(value, text, opts._roll === true);
   });
   return { el: root, dispose: off };
