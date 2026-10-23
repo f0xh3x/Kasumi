@@ -4,6 +4,10 @@
 //! asks Windows for the entries it would show (shell.rs) and draws them in Kasumi's
 //! look (menu.rs). Nothing is loaded into Explorer. If the helper fails, right-clicks
 //! go back to Explorer's own menu; Kasumi starts it again.
+//!
+//! Tray icons' menus ([context_menu] tray_apps): the app opens its Windows menu as
+//! usual; the helper reads it, moves it out of sight and shows Kasumi's in its place.
+//! The one chosen is chosen in the app's menu (which then runs it, as ever).
 
 mod layout;
 mod menu;
@@ -11,7 +15,7 @@ mod shell;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use windows::core::w;
@@ -46,6 +50,9 @@ pub fn watch(app: tauri::AppHandle) {
                     let _ = c.wait();
                     child = None;
                 }
+                if child.is_none() {
+                    HELPER_PID.store(0, Ordering::Relaxed);
+                }
             }
             if want && child.is_none() {
                 use std::os::windows::process::CommandExt;
@@ -54,13 +61,38 @@ pub fn watch(app: tauri::AppHandle) {
                     std::process::Command::new(exe).arg("--menu").arg(std::process::id().to_string()).creation_flags(CREATE_NO_WINDOW).spawn()
                 });
                 match spawn {
-                    Ok(c) => child = Some(c),
+                    Ok(c) => {
+                        HELPER_PID.store(c.id(), Ordering::Relaxed);
+                        child = Some(c);
+                    }
                     Err(e) => eprintln!("[kasumi] context menu helper didn't start: {e}"),
                 }
             }
             std::thread::sleep(Duration::from_secs(1));
         }
     });
+}
+
+/// The running helper's process (0: none).
+static HELPER_PID: AtomicU32 = AtomicU32::new(0);
+
+/// A click forwarded to a tray icon's app (systray.rs): the helper takes the menu
+/// that app opens next.
+pub fn tray_click(pid: u32) {
+    let helper = HELPER_PID.load(Ordering::Relaxed);
+    if helper == 0 {
+        return;
+    }
+    unsafe {
+        let mut after = None;
+        while let Ok(h) = FindWindowExW(Some(HWND_MESSAGE), after, w!("KasumiMenuHost"), None) {
+            if crate::win::window_pid(h) == helper {
+                let _ = PostMessageW(Some(h), MSG_TRAY, WPARAM(pid as usize), LPARAM(0));
+                return;
+            }
+            after = Some(h);
+        }
+    }
 }
 
 // --- For the editor (settings) --------------------------------------------------------
@@ -157,9 +189,57 @@ const MSG_REQUEST: u32 = WM_APP + 1;
 const MSG_OUTSIDE: u32 = WM_APP + 2;
 const MSG_KEY: u32 = WM_APP + 3;
 const MSG_FOREGROUND: u32 = WM_APP + 4;
+/// From Kasumi: a tray icon's app was clicked (wParam: its process).
+const MSG_TRAY: u32 = WM_APP + 5;
+/// A Windows menu came up (wParam: its window).
+const MSG_POPUP: u32 = WM_APP + 6;
+/// While a tray app's menu is ours: the mouse moved / was let go over Kasumi's menu
+/// (that app's menu has the mouse, so Kasumi's windows hear nothing themselves).
+const MSG_MOVE: u32 = WM_APP + 7;
+const MSG_CLICK: u32 = WM_APP + 8;
 const TIMER_SWITCH: usize = 1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const TIMER_ANIM: usize = 2;
+/// Checks that the tray app's menu is still there.
+const TIMER_TRAY: usize = 3;
+/// Gives up choosing in a tray app's submenu that never came.
+const TIMER_DRIVE: usize = 4;
+/// A Windows menu window's message: highlight the entry at a position (wParam).
+const MN_SELECTITEM: u32 = 0x01E5;
+
+/// A tray app's menu shows as Kasumi's (the mouse hook steers Kasumi's for it).
+static TRAY_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// A tray app's Windows menu, out of sight while Kasumi's shows.
+struct TrayMenu {
+    pid: u32,
+    root: HWND,
+    /// An entry was chosen: it's being chosen in the app's menu now.
+    chosen: bool,
+}
+
+/// Choosing a tray menu's entry in the app's menu: its submenus open (out of sight)
+/// on the way to it.
+struct Drive {
+    pid: u32,
+    /// The positions still to go, one per submenu.
+    rest: Vec<u32>,
+    windows: Vec<HWND>,
+}
+
+#[derive(Default)]
+struct Tray {
+    /// The app clicked last, and when (its menu is ours if it comes soon).
+    expect: Option<(u32, Instant)>,
+    open: Option<TrayMenu>,
+    drive: Option<Drive>,
+    /// The level under the mouse (its window).
+    hover: Option<isize>,
+}
+
+thread_local! {
+    static TRAY: RefCell<Tray> = RefCell::new(Tray::default());
+}
 
 struct Open {
     /// An Explorer menu: its view and Windows' menu (none: Kasumi's bar menu).
@@ -246,6 +326,9 @@ pub fn helper(app_pid: u32) {
     if !init_ui() {
         return;
     }
+    unsafe {
+        SetWinEventHook(EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUPOPUPSTART, None, Some(on_popup), 0, 0, WINEVENT_OUTOFCONTEXT);
+    }
     INTERCEPT.store(true, Ordering::Relaxed);
     std::thread::spawn(|| hooks());
     unsafe {
@@ -301,6 +384,9 @@ thread_local! {
 /// it come and go with it (the helper's run all the time).
 fn set_open(on: bool) {
     OPEN.store(on, Ordering::Relaxed);
+    if !on {
+        tray_closed();
+    }
     if INTERCEPT.load(Ordering::Relaxed) {
         return;
     }
@@ -363,6 +449,19 @@ fn file_view_at(pt: POINT) -> Option<HWND> {
 unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let info = &*(lp.0 as *const MSLLHOOKSTRUCT);
+        if info.dwExtraInfo != TAG && TRAY_OPEN.load(Ordering::Relaxed) && OPEN.load(Ordering::Relaxed) {
+            // A tray app's menu has the mouse: Kasumi's is steered from here, and
+            // clicks on it don't reach the app's (they'd close it).
+            match wp.0 as u32 {
+                WM_MOUSEMOVE => post(MSG_MOVE, 0, pack(info.pt)),
+                WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN if over_menu(info.pt) => return LRESULT(1),
+                WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP if over_menu(info.pt) => {
+                    post(MSG_CLICK, 0, pack(info.pt));
+                    return LRESULT(1);
+                }
+                _ => {}
+            }
+        }
         if info.dwExtraInfo != TAG {
             match wp.0 as u32 {
                 WM_RBUTTONDOWN => {
@@ -425,6 +524,18 @@ unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _:
     }
 }
 
+unsafe extern "system" fn on_popup(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
+    post(MSG_POPUP, hwnd.0 as usize, LPARAM(0));
+}
+
+/// One of Kasumi's menu windows under `pt` (the hooks' thread).
+fn over_menu(pt: POINT) -> bool {
+    unsafe {
+        let h = WindowFromPoint(pt);
+        !h.is_invalid() && class_name(GetAncestor(h, GA_ROOT)) == "KasumiMenu"
+    }
+}
+
 /// Gives the right-click back to Explorer (its own menu then shows): for what Kasumi
 /// can't make a menu of.
 fn hand_back() {
@@ -445,6 +556,10 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         MSG_OUTSIDE => outside(unpack(lp), wp.0 == 1),
         MSG_KEY => key(VIRTUAL_KEY(wp.0 as u16)),
         MSG_FOREGROUND => foreground(HWND(wp.0 as _)),
+        MSG_TRAY => TRAY.with(|t| t.borrow_mut().expect = Some((wp.0 as u32, Instant::now()))),
+        MSG_POPUP => popup(HWND(wp.0 as _)),
+        MSG_MOVE => tray_move(unpack(lp)),
+        MSG_CLICK => tray_click_at(unpack(lp)),
         WM_TIMER => timer(wp.0),
         _ => return DefWindowProcW(hwnd, msg, wp, lp),
     }
@@ -507,6 +622,171 @@ fn request(defview: HWND, pt: POINT) {
     };
     let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, Some(&target), &children);
     show(entries, pt, Some((target, built)), None, None, look, icons, anim);
+}
+
+// --- Tray icons' menus -----------------------------------------------------------------
+
+/// Presses a key in a Windows menu (its loop reads it as if typed).
+fn press(menu: HWND, vk: VIRTUAL_KEY) {
+    unsafe {
+        let scan = MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC) as isize;
+        let _ = PostMessageW(Some(menu), WM_KEYDOWN, WPARAM(vk.0 as usize), LPARAM(1 | (scan << 16)));
+    }
+}
+
+/// Moves a Windows menu out of sight (it stays open: the app waits on it).
+fn hide(menu: HWND) {
+    unsafe {
+        let _ = SetWindowPos(menu, None, -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
+/// A Windows menu came up: a tray app's just clicked shows as Kasumi's; a submenu
+/// Kasumi opened on the way to an entry goes out of sight and on to it.
+fn popup(hwnd: HWND) {
+    if class_name(hwnd) != "#32768" {
+        return;
+    }
+    let pid = crate::win::window_pid(hwnd);
+    let drive = TRAY.with(|t| {
+        let mut t = t.borrow_mut();
+        if t.drive.as_ref().is_some_and(|d| d.pid == pid) {
+            t.drive.take()
+        } else {
+            None
+        }
+    });
+    if let Some(mut d) = drive {
+        hide(hwnd);
+        d.windows.push(hwnd);
+        step(d);
+        return;
+    }
+    let clicked = TRAY.with(|t| {
+        let mut t = t.borrow_mut();
+        let ok = t.expect.is_some_and(|(p, at)| p == pid && at.elapsed() < Duration::from_secs(3));
+        if ok {
+            t.expect = None;
+        }
+        ok
+    });
+    if !clicked {
+        return;
+    }
+    let cfg = crate::config::load().ok();
+    if !cfg.as_ref().is_some_and(|c| c.context_menu.tray_apps) {
+        return;
+    }
+    let mut hmenu = 0usize;
+    let sent = unsafe { SendMessageTimeoutW(hwnd, MN_GETHMENU, WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG, 300, Some(&mut hmenu)) };
+    if sent.0 == 0 || hmenu == 0 {
+        eprintln!("[kasumi] tray menu: couldn't read it; the app's own");
+        return;
+    }
+    let entries = unsafe { shell::read_tray_menu(HMENU(hmenu as _), &[]) };
+    if !entries.iter().any(|e| e.usable()) {
+        eprintln!("[kasumi] tray menu: drawn by the app; its own");
+        return;
+    }
+    close();
+    let pt = crate::win::cursor_pos().map(|(x, y)| POINT { x, y }).unwrap_or_default();
+    let icons = cfg.as_ref().is_some_and(|c| c.context_menu.icons);
+    let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
+    show(entries, pt, None, None, None, look(cfg.as_ref()), icons, anim);
+    if !OPEN.load(Ordering::Relaxed) {
+        return; // Kasumi's didn't show: the app's stays
+    }
+    hide(hwnd);
+    TRAY.with(|t| t.borrow_mut().open = Some(TrayMenu { pid, root: hwnd, chosen: false }));
+    TRAY_OPEN.store(true, Ordering::Relaxed);
+    unsafe {
+        SetTimer(Some(host()), TIMER_TRAY, 100, None);
+    }
+}
+
+/// Kasumi's menu closed: a tray app's (unless an entry was chosen) closes too.
+fn tray_closed() {
+    let gone = TRAY.with(|t| {
+        let mut t = t.borrow_mut();
+        t.hover = None;
+        match t.open.take() {
+            Some(m) if m.chosen => {
+                t.open = Some(m);
+                None
+            }
+            other => other,
+        }
+    });
+    if let Some(m) = gone {
+        TRAY_OPEN.store(false, Ordering::Relaxed);
+        press(m.root, VK_ESCAPE);
+    }
+}
+
+/// The entry at `path` chosen in the tray app's menu.
+fn drive(path: Vec<u32>) {
+    let Some(m) = TRAY.with(|t| t.borrow_mut().open.take()) else { return };
+    TRAY_OPEN.store(false, Ordering::Relaxed);
+    step(Drive { pid: m.pid, rest: path, windows: vec![m.root] });
+}
+
+/// The next position highlighted and Enter pressed: the entry runs, or its submenu
+/// opens (`popup` goes on in it).
+fn step(mut d: Drive) {
+    let Some(&menu) = d.windows.last() else { return };
+    if d.rest.is_empty() {
+        return;
+    }
+    let i = d.rest.remove(0);
+    unsafe {
+        let mut r = 0usize;
+        let _ = SendMessageTimeoutW(menu, MN_SELECTITEM, WPARAM(i as usize), LPARAM(0), SMTO_ABORTIFHUNG, 300, Some(&mut r));
+    }
+    press(menu, VK_RETURN);
+    if !d.rest.is_empty() {
+        TRAY.with(|t| t.borrow_mut().drive = Some(d));
+        unsafe {
+            SetTimer(Some(host()), TIMER_DRIVE, 1500, None);
+        }
+    }
+}
+
+/// The level of Kasumi's menu under `pt` (the last one: submenus are on top).
+fn level_at(pt: POINT) -> Option<HWND> {
+    with_ui(|u| u.open.as_ref().and_then(|o| o.levels.iter().rev().find(|l| l.contains(pt)).map(|l| l.hwnd))).flatten()
+}
+
+fn client(h: HWND, pt: POINT) -> (i32, i32) {
+    let mut p = pt;
+    unsafe {
+        let _ = windows::Win32::Graphics::Gdi::ScreenToClient(h, &mut p);
+    }
+    (p.x, p.y)
+}
+
+fn tray_move(pt: POINT) {
+    let at = level_at(pt);
+    let before = TRAY.with(|t| std::mem::replace(&mut t.borrow_mut().hover, at.map(|h| h.0 as isize)));
+    if let Some(b) = before.filter(|&b| Some(b) != at.map(|h| h.0 as isize)) {
+        leave(HWND(b as _));
+    }
+    if let Some(h) = at {
+        let (x, y) = client(h, pt);
+        hover(h, x, y);
+    }
+}
+
+fn tray_click_at(pt: POINT) {
+    let Some(h) = level_at(pt) else { return };
+    let (x, y) = client(h, pt);
+    let chosen = with_ui(|u| {
+        let o = u.open.as_ref()?;
+        let li = level_of(o, h)?;
+        let row = o.levels[li].row_at(x, y)?;
+        choose(u, li, row)
+    })
+    .flatten();
+    run(chosen);
 }
 
 /// A menu at `pt` (the cursor): Explorer's (`shell`) or Kasumi's bar menu (`app`).
@@ -604,6 +884,7 @@ enum Run {
     View(shell::ViewCmd),
     Kasumi(layout::Cmd),
     App(String),
+    Tray(Vec<u32>),
 }
 
 /// Row `row` of level `li` chosen: its submenu opens; one that asks for a second
@@ -634,6 +915,11 @@ fn choose(u: &mut Ui, li: usize, row: usize) -> Option<(Open, Run)> {
         Action::View(cmd) => Run::View(cmd),
         Action::Kasumi(cmd) => Run::Kasumi(cmd),
         Action::App(id) => Run::App(id),
+        Action::Tray(path) => {
+            // Chosen in the app's menu next, so closing Kasumi's doesn't close it.
+            TRAY.with(|t| t.borrow_mut().open.as_mut().map(|m| m.chosen = true));
+            Run::Tray(path)
+        }
         Action::None => return None,
     };
     set_open(false);
@@ -655,6 +941,7 @@ fn run(chosen: Option<(Open, Run)>) {
             }
         }
         (Run::App(id), _, Some(app)) => run_app(app, &id),
+        (Run::Tray(path), _, _) => drive(path),
         _ => {}
     }
 }
@@ -731,6 +1018,27 @@ fn timer(id: usize) {
         let _ = KillTimer(Some(host()), id);
     }
     match id {
+        TIMER_TRAY => {
+            // The app closed its menu (or it went with a click elsewhere): Kasumi's too.
+            let alive = TRAY.with(|t| {
+                t.borrow().open.as_ref().filter(|m| !m.chosen).map(|m| unsafe { IsWindow(Some(m.root)).as_bool() && IsWindowVisible(m.root).as_bool() })
+            });
+            match alive {
+                Some(true) => unsafe {
+                    SetTimer(Some(host()), TIMER_TRAY, 100, None);
+                },
+                Some(false) => close(),
+                None => {}
+            }
+        }
+        TIMER_DRIVE => {
+            if let Some(d) = TRAY.with(|t| t.borrow_mut().drive.take()) {
+                eprintln!("[kasumi] tray menu: its submenu didn't open; closed");
+                for &w in d.windows.iter().rev() {
+                    press(w, VK_ESCAPE);
+                }
+            }
+        }
         TIMER_SWITCH => {
             with_ui(|u| {
                 let Some(o) = u.open.as_mut() else { return };
@@ -795,7 +1103,9 @@ fn outside(pt: POINT, force: bool) {
 }
 
 fn foreground(fg: HWND) {
-    let ours = with_ui(|u| u.open.as_ref().is_some_and(|o| o.shell.as_ref().is_some_and(|(t, _)| fg == t.root) || o.levels.iter().any(|l| l.hwnd == fg))).unwrap_or(true);
+    let ours = with_ui(|u| u.open.as_ref().is_some_and(|o| o.shell.as_ref().is_some_and(|(t, _)| fg == t.root) || o.levels.iter().any(|l| l.hwnd == fg))).unwrap_or(true)
+        // A tray app's menu: that app comes to the front for it.
+        || TRAY.with(|t| t.borrow().open.as_ref().is_some_and(|m| crate::win::window_pid(fg) == m.pid));
     if !ours {
         close();
     }

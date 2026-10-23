@@ -49,6 +49,8 @@ pub enum Action {
     Kasumi(super::layout::Cmd),
     /// Kasumi's bar menu: run by the app (mod.rs run_app).
     App(String),
+    /// A tray app's menu: the entry's place in it (a position per level).
+    Tray(Vec<u32>),
 }
 
 #[derive(Clone)]
@@ -489,6 +491,51 @@ unsafe fn read_menu(cm: &IContextMenu, hmenu: HMENU) -> Vec<Entry> {
             sub,
         });
     }
+    out
+}
+
+/// A tray app's menu (another app's, read through its handle) as entries, its
+/// submenus read in too. Its bitmaps belong to that app, so there are no icons.
+pub unsafe fn read_tray_menu(hmenu: HMENU, path: &[u32]) -> Vec<Entry> {
+    let mut out = Vec::new();
+    let n = GetMenuItemCount(Some(hmenu)).max(0) as u32;
+    for i in 0..n {
+        let mut buf = [0u16; 512];
+        let mut mii = MENUITEMINFOW {
+            cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_FTYPE | MIIM_STATE | MIIM_SUBMENU | MIIM_STRING,
+            dwTypeData: PWSTR(buf.as_mut_ptr()),
+            cch: buf.len() as u32 - 1,
+            ..Default::default()
+        };
+        if GetMenuItemInfoW(hmenu, i, true, &mut mii).is_err() {
+            continue;
+        }
+        if mii.fType.0 & MFT_SEPARATOR.0 != 0 {
+            out.push(Entry::separator());
+            continue;
+        }
+        let raw = String::from_utf16_lossy(&buf[..(mii.cch as usize).min(buf.len())]);
+        let (text, keys, accel) = parse(&raw);
+        if text.is_empty() {
+            continue; // drawn by the app, with no text we could show
+        }
+        let mut place = path.to_vec();
+        place.push(i);
+        let mut e = Entry::item(&text, Action::Tray(place.clone()), None);
+        if !mii.hSubMenu.is_invalid() && path.len() < 4 {
+            e.action = Action::None;
+            e.sub = Some(Sub::Ready(read_tray_menu(mii.hSubMenu, &place)));
+        }
+        e.key = format!("text:{text}");
+        e.keys = keys;
+        e.accel = accel;
+        e.disabled = mii.fState.0 & (MFS_DISABLED.0 | MFS_GRAYED.0) != 0;
+        e.checked = mii.fState.0 & MFS_CHECKED.0 != 0;
+        e.radio = mii.fType.0 & MFT_RADIOCHECK.0 != 0;
+        out.push(e);
+    }
+    tidy(&mut out);
     out
 }
 

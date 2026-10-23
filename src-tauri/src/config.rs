@@ -267,6 +267,9 @@ pub struct ContextMenuCfg {
     pub enabled: bool,
     /// Icons beside the entries.
     pub icons: bool,
+    /// Tray icons' menus in Kasumi's look too (the apps' own Windows menus).
+    #[serde(default = "default_true")]
+    pub tray_apps: bool,
     /// How the menu is arranged (empty: Kasumi's default, native/ctxmenu/layout.rs).
     pub layout: Vec<MenuNode>,
     /// Your own entries and folders, where the layout says `custom = true`.

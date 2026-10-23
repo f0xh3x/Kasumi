@@ -1317,6 +1317,13 @@ export const pages: Page[] = [
         fields: [
           { kind: "toggle", label: "Kasumi's context menu", help: "Off: Windows' menu (or your own, like Nilesoft Shell), as usual.", path: ["context_menu", "enabled"], default: false },
           { kind: "toggle", label: "Icons", help: "An icon beside each entry that has one.", path: ["context_menu", "icons"], default: false },
+          {
+            kind: "toggle",
+            label: "Tray icons' menus",
+            help: "Right-clicking an icon in Kasumi's tray shows the app's menu in Kasumi's look too. Menus an app draws itself (not Windows' kind) stay as they are.",
+            path: (cfg) => (cfg.context_menu?.enabled ? ["context_menu", "tray_apps"] : null),
+            default: true,
+          },
         ],
       },
       {

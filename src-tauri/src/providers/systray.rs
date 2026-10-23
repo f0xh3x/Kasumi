@@ -479,6 +479,8 @@ pub fn click_at(id: &str, button: &str, sx: i32, sy: i32) -> Result<(), String> 
         GetWindowThreadProcessId(target, Some(&mut pid));
         // Let the app take the foreground for its window or context menu.
         let _ = AllowSetForegroundWindow(pid);
+        // The menu it may open now: Kasumi's context menu helper draws it.
+        crate::native::ctxmenu::tray_click(pid);
         let post = |m: u32| {
             let (wp, lp) = if icon.version >= 4 {
                 (make_long(sx as u32, sy as u32), make_long(m, icon.uid))
