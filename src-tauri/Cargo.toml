@@ -1,6 +1,6 @@
 [package]
 name = "kasumi"
-version = "0.6.4"
+version = "0.6.5"
 description = "Notch-style status bar for Windows"
 edition = "2021"
 
