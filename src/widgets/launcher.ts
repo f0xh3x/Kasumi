@@ -43,11 +43,14 @@ function score(name: string, q: string): number {
   return i >= 0 ? 60 - i * 0.1 : -1;
 }
 
+/** A program on the PATH (`run:` ids): found only by its whole name, as Start does. */
+const commandScore = (name: string, q: string) => (q.replace(/\.exe$/, "") === name ? 90 : -1);
+
 function search(): void {
   const q = S.query.trim().toLowerCase();
   S.results = q
     ? S.apps
-        .map((a) => [a, score(a.name, q)] as const)
+        .map((a) => [a, a.id.startsWith("run:") ? commandScore(a.name, q) : score(a.name, q)] as const)
         .filter(([, s]) => s >= 0)
         .sort((a, b) => b[1] - a[1])
         .slice(0, S.max)

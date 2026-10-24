@@ -51,14 +51,39 @@ fn display(item: &IShellItem, kind: SIGDN) -> Option<String> {
 /// "All Control Panel items" also list every task inside each one).
 const CONTROL_PANEL: &str = r"shell:::{26EE0668-A00A-44D7-9371-BEB064C98683}\0";
 
-/// The shell path an id opens: Control Panel ids are absolute ("::{...}"), app ids
-/// are AppsFolder parsing names.
+/// Programs on the PATH: `run:<path>` (searches match them only by their whole name).
+const RUN: &str = "run:";
+
+/// The shell path an id opens: Control Panel ids are absolute ("::{...}"), programs
+/// on the PATH their file, app ids are AppsFolder parsing names.
 fn shell_path(id: &str) -> String {
     if id.starts_with("::") {
         format!("shell:{id}")
+    } else if let Some(path) = id.strip_prefix(RUN) {
+        path.to_string()
     } else {
         format!("shell:AppsFolder\\{id}")
     }
+}
+
+/// Every program in the PATH's folders by its name (`notepad`, `regedit`, `cmd`),
+/// the first of each name: Start finds them when typed in full, shortcut or not.
+fn commands() -> Vec<(String, String)> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        let Ok(files) = std::fs::read_dir(&dir) else { continue };
+        for path in files.flatten().map(|f| f.path()) {
+            if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) {
+                continue;
+            }
+            let Some(name) = path.file_stem().and_then(|s| s.to_str()).map(str::to_lowercase) else { continue };
+            if seen.insert(name.clone()) {
+                out.push((format!("{RUN}{}", path.display()), name));
+            }
+        }
+    }
+    out
 }
 
 /// (id, name) of every item in a shell folder, the id read as `id_kind`.
@@ -90,7 +115,8 @@ fn items(folder: &str, id_kind: SIGDN) -> Vec<(String, String)> {
 }
 
 /// What the launcher searches: apps first (they win a tie), then the Control
-/// Panel items (Device Manager, Sound...) no app has the name of.
+/// Panel items (Device Manager, Sound...) and programs on the PATH no app has the
+/// name of.
 fn enumerate() -> Vec<(String, String)> {
     sta();
     // Uninstallers and documents are in the Apps folder too; they aren't apps to launch.
@@ -105,6 +131,7 @@ fn enumerate() -> Vec<(String, String)> {
     let names: HashSet<String> = out.iter().map(|(_, name)| name.to_lowercase()).collect();
     let panel = items(CONTROL_PANEL, SIGDN_DESKTOPABSOLUTEPARSING);
     out.extend(panel.into_iter().filter(|(_, name)| !names.contains(&name.to_lowercase())));
+    out.extend(commands().into_iter().filter(|(_, name)| !names.contains(name)));
     out
 }
 

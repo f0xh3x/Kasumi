@@ -45,9 +45,20 @@ fn score(name: &str, q: &str) -> f64 {
     n.find(q).map_or(-1.0, |i| 60.0 - i as f64 * 0.1)
 }
 
+/// A program on the PATH (launcher.rs `run:` ids): found only by its whole name
+/// (`notepad`, `notepad.exe`), as Start does, under any app that matches as well.
+fn command_score(name: &str, q: &str) -> f64 {
+    if q.strip_suffix(".exe").unwrap_or(q) == name {
+        90.0
+    } else {
+        -1.0
+    }
+}
+
 fn search(s: &mut State) {
     let q = s.query.trim().to_lowercase();
-    let mut found: Vec<(usize, f64)> = if q.is_empty() { Vec::new() } else { s.apps.iter().enumerate().map(|(i, a)| (i, score(&a.1, &q))).filter(|(_, sc)| *sc >= 0.0).collect() };
+    let rate = |a: &(String, String)| if a.0.starts_with("run:") { command_score(&a.1, &q) } else { score(&a.1, &q) };
+    let mut found: Vec<(usize, f64)> = if q.is_empty() { Vec::new() } else { s.apps.iter().enumerate().map(|(i, a)| (i, rate(a))).filter(|(_, sc)| *sc >= 0.0).collect() };
     found.sort_by(|a, b| b.1.total_cmp(&a.1));
     s.results = found.into_iter().take(s.max).map(|(i, _)| i).collect();
     s.selected = 0;
