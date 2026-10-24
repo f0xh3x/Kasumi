@@ -104,20 +104,36 @@ fn shows(previews: bool, labels: &str) -> (bool, bool) {
     }
 }
 
+/// The close button's glyph (on the card under the mouse).
+const CLOSE: &str = "\u{E8BB}";
+
 pub struct AltTabPanel {
     pixels: HashMap<String, Pixels>,
     icons: HashMap<String, AppIcon>,
     /// The cards as last laid out (content px).
     cards: Vec<(f32, f32, f32, f32)>,
+    /// Each card's close button (content px; none for Show desktop, or a preview
+    /// card without a label row: Windows draws the preview over the card).
+    closes: Vec<Option<(f32, f32, f32, f32)>>,
     hovered: Option<usize>,
+    /// The mouse is on the hovered card's close button.
+    on_close: bool,
+}
+
+fn inside(p: (f32, f32), (x, y, w, h): (f32, f32, f32, f32)) -> bool {
+    p.0 >= x && p.0 < x + w && p.1 >= y && p.1 < y + h
 }
 
 impl AltTabPanel {
     pub fn new() -> AltTabPanel {
-        AltTabPanel { pixels: HashMap::new(), icons: HashMap::new(), cards: Vec::new(), hovered: None }
+        AltTabPanel { pixels: HashMap::new(), icons: HashMap::new(), cards: Vec::new(), closes: Vec::new(), hovered: None, on_close: false }
     }
     fn hit(&self, p: (f32, f32)) -> Option<usize> {
-        self.cards.iter().position(|(x, y, w, h)| p.0 >= *x && p.0 < x + w && p.1 >= *y && p.1 < y + h)
+        self.cards.iter().position(|c| inside(p, *c))
+    }
+    /// The card whose close button is at `p`.
+    fn close_hit(&self, p: (f32, f32)) -> Option<usize> {
+        self.closes.iter().position(|c| c.is_some_and(|c| inside(p, c)))
     }
 
     /// Languages: a row each (code, then name), or a row of codes.
@@ -182,6 +198,7 @@ impl Panel for AltTabPanel {
     }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         if with(|s| s.kind == Kind::Languages) {
+            self.closes.clear();
             return self.lang_size(cx);
         }
         let g = cx.gfx;
@@ -208,6 +225,26 @@ impl Panel for AltTabPanel {
         };
         let per_row = n.clamp(1, per_row);
         self.cards = (0..n).map(|i| ((i % per_row) as f32 * (w + GAP), (i / per_row) as f32 * (h + GAP), w, h)).collect();
+        // The close button: with previews at the end of the label row (Windows draws the
+        // preview over the card); else in the card's top-right corner (vertically
+        // centred on a title-only card, smaller on an icon-only one).
+        let spot = match (previews, icon, title) {
+            (true, false, false) => None,
+            (true, _, _) => {
+                let s = 18.0;
+                Some((w - PAD - s, PAD + THUMB_H + PAD + (lh.max(18.0) - s) / 2.0, s))
+            }
+            (false, true, false) => Some((w - 2.0 - 16.0, 2.0, 16.0)),
+            (false, false, true) => Some((w - 6.0 - 18.0, (h - 18.0) / 2.0, 18.0)),
+            _ => Some((w - 4.0 - 18.0, 4.0, 18.0)),
+        };
+        let desktop = with(|s| s.list.iter().map(|e| e.hwnd == 0).collect::<Vec<_>>());
+        self.closes = self
+            .cards
+            .iter()
+            .zip(desktop)
+            .map(|(c, d)| spot.filter(|_| !d).map(|(x, y, s)| (c.0 + x, c.1 + y, s, s)))
+            .collect();
         let rows = n.div_ceil(per_row).max(1) as f32;
         (per_row as f32 * w + (per_row as f32 - 1.0) * GAP, rows * h + (rows - 1.0) * GAP)
     }
@@ -241,7 +278,8 @@ impl Panel for AltTabPanel {
                 if show_icon || show_title {
                     let cy = ty + THUMB_H + PAD + lh.max(18.0) / 2.0;
                     let iw = if show_icon { 16.0 + 6.0 } else { 0.0 };
-                    let text = if show_title { fit_text(g, &e.title, &f, tw - iw - 4.0) } else { String::new() };
+                    // Room for the close button at either end (the label stays centred).
+                    let text = if show_title { fit_text(g, &e.title, &f, tw - iw - 4.0 - 2.0 * 22.0) } else { String::new() };
                     let total = iw + g.measure(&text, &f) - if show_title { 0.0 } else { 6.0 };
                     let mut lx = tx + (tw - total) / 2.0;
                     if show_icon {
@@ -270,17 +308,29 @@ impl Panel for AltTabPanel {
                     ty += size + 8.0;
                 }
                 if show_title {
-                    let text = fit_text(g, &e.title, &f, w - 16.0);
+                    // A title-only card has the close button beside its title.
+                    let room = if show_icon { 16.0 } else { 16.0 + 2.0 * 26.0 };
+                    let text = fit_text(g, &e.title, &f, w - room);
                     let tw = g.measure(&text, &f);
                     g.text_at(&text, &f, cxm - tw / 2.0, ty + lh / 2.0, fg);
                 }
+            }
+            // The card under the mouse: its close button.
+            if let Some((bx, by, s, _)) = self.closes.get(i).copied().flatten().filter(|_| self.hovered == Some(i)) {
+                let (bx, by) = (x + bx, y + by);
+                g.fill_round(rect(bx, by, s, s), s / 2.0, white(if self.on_close { 0.24 } else { 0.12 } * alpha));
+                let gf = Font::icons(s * 0.45);
+                let gw = g.measure(CLOSE, &gf);
+                g.text_at(CLOSE, &gf, bx + (s - gw) / 2.0, by + s / 2.0, with_alpha(cx.look.fg, alpha));
             }
         }
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
         let h = at.and_then(|p| self.hit(p));
-        let mut changed = h != self.hovered;
+        let on_close = h.is_some() && at.and_then(|p| self.close_hit(p)) == h;
+        let mut changed = h != self.hovered || on_close != self.on_close;
         self.hovered = h;
+        self.on_close = on_close;
         // The card under the mouse is the choice (letting go of Alt switches to it).
         if let Some(i) = h {
             with(|s| {
@@ -304,6 +354,25 @@ impl Panel for AltTabPanel {
             return Reply::None;
         }
         let Some(i) = self.hit(at) else { return Reply::None };
+        // Its close button: that window closes, the switcher stays (without its card).
+        if self.close_hit(at) == Some(i) {
+            let Some(h) = with(|s| {
+                let h = s.list.get(i).map(|e| e.hwnd as isize)?;
+                s.list.remove(i);
+                if i < s.sel || s.sel >= s.list.len() {
+                    s.sel = s.sel.saturating_sub(1);
+                }
+                Some(h)
+            }) else {
+                return Reply::None;
+            };
+            self.hovered = None;
+            self.on_close = false;
+            crate::native::post(crate::native::Msg::AltTabChanged);
+            return Reply::Do(Act::call(move |_| {
+                let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_close(h));
+            }));
+        }
         if with(|s| s.kind == Kind::Languages) {
             let hkl = with(|s| {
                 s.open = false;

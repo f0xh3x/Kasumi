@@ -2366,6 +2366,13 @@ impl Surface {
         self.redraw(gfx);
     }
 
+    /// Alt + Tab: its cards changed (one closed from it): measured and laid out again.
+    pub fn alt_tab_resized(&mut self, gfx: &Gfx) {
+        self.remeasure = true;
+        self.measure(gfx);
+        self.kick();
+    }
+
     /// Alt + Tab: done (it goes back into the notch).
     pub fn alt_tab_close(&mut self) {
         if let Some((di, _, _)) = self.alt {

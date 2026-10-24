@@ -118,6 +118,8 @@ pub enum Msg {
     Lang(crate::keyhook::AltTabKey),
     /// Win + Space still held a moment after: the picker shows (that press's number).
     LangReveal(u64),
+    /// Alt + Tab's windows changed while it shows (one closed from it): laid out again.
+    AltTabChanged,
 }
 
 /// Alt + Tab's keys from the keyboard helper (and the commit hotkey).
@@ -443,6 +445,15 @@ impl Native {
             Msg::LangReveal(n) => {
                 if let Some((_, back)) = self.lang_pending.take_if(|p| p.0 == n) {
                     self.lang_open(back);
+                }
+            }
+            Msg::AltTabChanged => {
+                let (open, label) = widgets::alttab::with(|s| (s.open, s.label.clone()));
+                if !open {
+                } else if label.starts_with("@center:") {
+                    self.alt_center_draw();
+                } else if let Some(s) = self.surfaces.iter_mut().find(|s| s.label == label) {
+                    s.alt_tab_resized(&self.gfx);
                 }
             }
             Msg::WinKey(n) => {

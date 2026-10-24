@@ -155,14 +155,16 @@ impl Floating {
         super::widgets::Panel::hover(&mut self.panel, Some(p))
     }
 
-    /// A click on it (client device px): the card's window, to switch to.
+    /// A click on it (client device px): the card's window, to switch to (or a card's
+    /// close button: it stays).
     pub fn click(&mut self, button: Button, (x, y): (i32, i32)) -> Option<super::widgets::Act> {
         let p = (x as f32 / self.scale - PAD, y as f32 / self.scale - PAD);
         match self.panel.click(button, p) {
-            Reply::CloseAnd(act) | Reply::Do(act) => {
+            Reply::CloseAnd(act) => {
                 self.hide();
                 Some(act)
             }
+            Reply::Do(act) => Some(act),
             _ => None,
         }
     }
