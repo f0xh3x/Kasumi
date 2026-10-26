@@ -126,24 +126,29 @@ pub fn run(args: &[String]) {
             // The launcher searching (sample apps, a query), measured again as the engine would.
             if surface.widget_names().iter().any(|n| n == "launcher") {
                 let apps = ["Code", "Discord", "Spotify", "Steam", "Calculator", "Firefox", "Notepad", "Terminal"];
-                let list: Vec<Value> = apps.iter().map(|a| serde_json::json!({ "id": format!("app:{a}"), "name": a })).collect();
+                let mut list: Vec<Value> = apps.iter().map(|a| serde_json::json!({ "id": format!("app:{a}"), "name": a })).collect();
+                list.push(serde_json::json!({ "id": "ms-settings:personalization-background", "name": "Background", "keys": "wallpaper desktop picture slideshow" }));
                 surface.data(&gfx, "launcher:apps", &Value::Array(list));
-                super::widgets::launcher::set_open(true, &label);
-                for c in "o".chars() {
-                    super::widgets::launcher::type_char(c);
+                // A name, a sum (with [widgets.launcher] calculator) and a Settings page's
+                // search word (with [widgets.launcher] settings).
+                for (query, shot) in [("o", "search"), ("24*7", "calc"), ("wallpaper", "settings")] {
+                    super::widgets::launcher::set_open(true, &label);
+                    for c in query.chars() {
+                        super::widgets::launcher::type_char(c);
+                    }
+                    for _ in 0..3 {
+                        let Some(w) = surface.take_widths() else { break };
+                        measured.extend(w);
+                        layout = layout_for(&cfg, &label, m, rule, &id, &[], &measured);
+                        surface.update_positions(&gfx, layout.notches.clone());
+                    }
+                    surface.pose(&gfx, true, Some("launcher"), 1.0);
+                    if surface.render(&gfx).is_ok() {
+                        let (px, w, h) = surface.pixels();
+                        save_png(&dir.join(format!("{label}-launcher-{shot}.png")), px, w, h);
+                    }
+                    super::widgets::launcher::set_open(false, &label);
                 }
-                for _ in 0..3 {
-                    let Some(w) = surface.take_widths() else { break };
-                    measured.extend(w);
-                    layout = layout_for(&cfg, &label, m, rule, &id, &[], &measured);
-                    surface.update_positions(&gfx, layout.notches.clone());
-                }
-                surface.pose(&gfx, true, Some("launcher"), 1.0);
-                if surface.render(&gfx).is_ok() {
-                    let (px, w, h) = surface.pixels();
-                    save_png(&dir.join(format!("{label}-launcher-search.png")), px, w, h);
-                }
-                super::widgets::launcher::set_open(false, &label);
             }
             // Pop-ups out of the notch: a level, a word, a notification.
             let pops = [
