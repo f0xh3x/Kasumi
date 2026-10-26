@@ -157,8 +157,12 @@ fn settings_keys(id: &str) -> Option<&'static str> {
 /// on the PATH their file, Settings pages their link, app ids are AppsFolder parsing
 /// names.
 fn shell_path(id: &str) -> String {
-    if id.starts_with("::") || id.starts_with(SETTINGS) {
+    if id.starts_with("::") {
         format!("shell:{id}")
+    } else if id.starts_with(SETTINGS) {
+        // The link as it is (with "shell:" in front Explorer doesn't know it and opens
+        // Documents).
+        id.to_string()
     } else if let Some(path) = id.strip_prefix(RUN) {
         path.to_string()
     } else {
@@ -427,6 +431,18 @@ pub fn start(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opens_what_each_id_is() {
+        assert_eq!(shell_path("ms-settings:personalization-background"), "ms-settings:personalization-background");
+        assert_eq!(shell_path("::{26EE0668-A00A-44D7-9371-BEB064C98683}\\0\\::{74246BFC}"), "shell:::{26EE0668-A00A-44D7-9371-BEB064C98683}\\0\\::{74246BFC}");
+        assert_eq!(shell_path("run:C:\\Windows\\notepad.exe"), "C:\\Windows\\notepad.exe");
+        assert_eq!(shell_path("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"), "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+        // Every Settings page in the table is a link of its own.
+        for (page, ..) in SETTINGS_PAGES {
+            assert!(!page.contains(':') && !page.contains(' '), "{page}");
+        }
+    }
 
     #[test]
     fn hotkeys_parse() {
