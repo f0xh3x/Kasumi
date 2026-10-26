@@ -31,6 +31,8 @@ let current = (() => {
   const want = new URLSearchParams(location.search).get("page");
   return pages.some((p) => p.id === want) ? want! : pages[0].id;
 })();
+/** The sidebar's search: while it holds text, the content lists the settings matching it. */
+let query = "";
 // Opened on a page from elsewhere (the bar menu's Edit this bar...): go there.
 listen<string>("settings-page", (e) => {
   if (!pages.some((p) => p.id === e.payload)) return;
@@ -296,6 +298,39 @@ function renderPage(page: Page): HTMLElement {
   return content;
 }
 
+/** The sidebar's search: every setting whose page, section, name or help has all the
+ *  typed words, with its control (changeable here), under its page and section (a click
+ *  there goes to it). */
+function renderResults(q: string): HTMLElement {
+  const content = $("main", "content", $("h1", "page-title", "Search"));
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const has = (...texts: (string | undefined)[]) => {
+    const t = texts.filter(Boolean).join(" ").toLowerCase();
+    return words.every((w) => t.includes(w));
+  };
+  let found = 0;
+  for (const p of pages) {
+    for (const s of p.sections) {
+      // As on its page: the Widgets page's Global or monitor view.
+      if (s.scope === "global" && scope.monitor) continue;
+      if (s.scope === "monitor" && !scope.monitor) continue;
+      const whole = has(p.label, s.title, s.help);
+      const fields = s.fields.filter((f) => whole || ("label" in f && has(p.label, s.title, f.label, f.help)));
+      const rows = fields.map(control).filter((r): r is HTMLElement => r !== null);
+      if (!rows.length) continue;
+      found++;
+      const title = $("button", "card-title result-title", `${p.label} › ${s.title}`);
+      title.addEventListener("click", () => {
+        query = "";
+        goto(p.id, s.collapsible ? s.title : "");
+      });
+      content.append($("section", "card", title, ...rows));
+    }
+  }
+  if (!found) content.append($("p", "card-help", "No settings match."));
+  return content;
+}
+
 /** Shows `page` with its `section` dropdown open and scrolled into view. */
 function goto(page: string, section: string): void {
   // (The setup's widget chips: their settings are in the settings window.)
@@ -321,16 +356,37 @@ function render(): void {
   }
   const scroll = app.querySelector(".content")?.scrollTop ?? 0;
   const nav = $("nav", "nav");
+  // Search: typing redraws only the content, so the field keeps the focus.
+  const search = $("input", "input nav-search") as HTMLInputElement;
+  search.type = "search";
+  search.placeholder = "Search settings";
+  search.value = query;
+  search.addEventListener("input", () => {
+    query = search.value.trim();
+    const next = query ? renderResults(query) : renderPage(pages.find((p) => p.id === current)!);
+    app.querySelector(".content")!.replaceWith(next);
+    nav.querySelectorAll(".nav-item").forEach((n) => n.classList.toggle("active", !query && n.getAttribute("data-page") === current));
+  });
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && search.value) {
+      e.preventDefault();
+      search.value = "";
+      search.dispatchEvent(new Event("input"));
+    }
+  });
+  nav.append(search);
   for (const p of pages) {
-    const item = $("button", `nav-item${p.id === current ? " active" : ""}`, glyph(p.icon), p.label);
+    const item = $("button", `nav-item${p.id === current && !query ? " active" : ""}`, glyph(p.icon), p.label);
+    item.setAttribute("data-page", p.id);
     item.addEventListener("click", () => {
       current = p.id;
+      query = "";
       render();
       app.querySelector(".content")!.scrollTop = 0;
     });
     nav.append(item);
   }
-  const page = renderPage(pages.find((p) => p.id === current)!);
+  const page = query ? renderResults(query) : renderPage(pages.find((p) => p.id === current)!);
   app.replaceChildren(nav, page);
   page.scrollTop = scroll;
   // The sidebar's foot: the mist shape (Desktop asset.svg), the version in its lower-left gap.
