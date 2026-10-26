@@ -62,7 +62,8 @@ function search(): void {
 
 async function loadApps(): Promise<void> {
   try {
-    S.apps = await invoke<App[]>("launcher_apps");
+    // Settings pages are a native launcher option ([widgets.launcher] settings).
+    S.apps = (await invoke<App[]>("launcher_apps")).filter((a) => !a.id.startsWith("ms-settings:"));
     search();
   } catch (e) {
     console.error("launcher_apps", e);

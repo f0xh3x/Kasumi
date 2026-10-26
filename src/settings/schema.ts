@@ -422,6 +422,20 @@ export const pages: Page[] = [
         fields: [
           { kind: "slider", label: "Results shown", help: "How many apps the search lists at most.", path: ["widgets", "launcher", "results"], default: 8, min: 3, max: 20, step: 1 },
           { kind: "slider", label: "Width", path: ["widgets", "launcher", "panel_width"], default: 340, min: 260, max: 600, step: 10, unit: "px" },
+          {
+            kind: "toggle",
+            label: "Calculator",
+            help: "Type a sum (24*7, (3+4)^2, sqrt(2)) and its answer shows first; Enter copies it.",
+            path: ["widgets", "launcher", "calculator"],
+            default: false,
+          },
+          {
+            kind: "toggle",
+            label: "Settings pages",
+            help: "Windows Settings pages show among the results: type bluetooth, wallpaper, mouse, dark mode...",
+            path: ["widgets", "launcher", "settings"],
+            default: false,
+          },
           { kind: "custom", editor: "launcherPower" },
           {
             kind: "select",

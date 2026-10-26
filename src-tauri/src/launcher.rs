@@ -1,6 +1,6 @@
 //! The app launcher's backend: an index of installed apps (the Apps folder, which
 //! has desktop and Store apps alike) plus Control Panel items such as Device
-//! Manager, their icons on demand, launching, and the global hotkey (`[launcher] hotkey`) that opens it on the monitor under the
+//! Manager and Windows Settings pages, their icons on demand, launching, and the global hotkey (`[launcher] hotkey`) that opens it on the monitor under the
 //! cursor. The UI is a panel in a bar or dock (see engine::launcher_toggle).
 
 use serde_json::{json, Value};
@@ -54,10 +54,110 @@ const CONTROL_PANEL: &str = r"shell:::{26EE0668-A00A-44D7-9371-BEB064C98683}\0";
 /// Programs on the PATH: `run:<path>` (searches match them only by their whole name).
 const RUN: &str = "run:";
 
+/// Windows Settings pages the launcher finds ([widgets.launcher] settings): the
+/// `ms-settings:` link, the page's name, and words people search for. (Windows has no
+/// API listing its pages; its own search index names them by internal ids.)
+const SETTINGS_PAGES: &[(&str, &str, &str)] = &[
+    ("display", "Display", "screen resolution scale scaling brightness monitor hdr orientation"),
+    ("display-advanced", "Advanced display", "refresh rate hz monitor"),
+    ("display-advancedgraphics", "Graphics", "gpu graphics card performance"),
+    ("nightlight", "Night light", "blue light warm eyes"),
+    ("sound", "Sound", "audio volume speakers headphones microphone output input"),
+    ("sound-devices", "All sound devices", "audio speakers microphone"),
+    ("apps-volume", "Volume mixer", "app volume audio mixer"),
+    ("notifications", "Notifications", "do not disturb focus alerts banners"),
+    ("powersleep", "Power & battery", "sleep battery power mode screen timeout energy saver hibernate"),
+    ("storagesense", "Storage", "disk space cleanup storage sense drives temporary files"),
+    ("multitasking", "Multitasking", "snap windows alt tab virtual desktops"),
+    ("clipboard", "Clipboard", "clipboard history copy paste"),
+    ("remotedesktop", "Remote Desktop", "rdp remote"),
+    ("about", "About", "system info pc name specs rename computer windows version ram processor"),
+    ("activation", "Activation", "product key license"),
+    ("troubleshoot", "Troubleshoot", "fix problems troubleshooter"),
+    ("recovery", "Recovery", "reset this pc restore advanced startup"),
+    ("optionalfeatures", "Optional features", "add features"),
+    ("developers", "For developers", "developer mode sudo"),
+    ("bluetooth", "Bluetooth & devices", "bluetooth pair devices headphones wireless"),
+    ("printers", "Printers & scanners", "printer scanner print"),
+    ("mousetouchpad", "Mouse", "mouse pointer speed scroll wheel cursor buttons"),
+    ("devices-touchpad", "Touchpad", "touchpad gestures trackpad"),
+    ("typing", "Typing", "autocorrect spelling keyboard suggestions touch keyboard"),
+    ("pen", "Pen & Windows Ink", "pen stylus ink"),
+    ("autoplay", "AutoPlay", "usb removable drives media"),
+    ("usb", "USB", "usb"),
+    ("camera", "Cameras", "webcam camera"),
+    ("mobile-devices", "Mobile devices", "phone link android iphone"),
+    ("network-status", "Network & internet", "internet connection network"),
+    ("network-wifi", "Wi-Fi", "wifi wireless wlan"),
+    ("network-ethernet", "Ethernet", "cable lan wired"),
+    ("network-vpn", "VPN", "vpn"),
+    ("network-mobilehotspot", "Mobile hotspot", "hotspot tethering share internet"),
+    ("network-airplanemode", "Airplane mode", "flight mode"),
+    ("network-proxy", "Proxy", "proxy"),
+    ("network-advancedsettings", "Advanced network settings", "adapters network reset dns"),
+    ("personalization-background", "Background", "wallpaper desktop picture slideshow"),
+    ("colors", "Colors", "dark mode light mode accent color theme transparency"),
+    ("lockscreen", "Lock screen", "lock screen picture"),
+    ("themes", "Themes", "theme desktop icons"),
+    ("fonts", "Fonts", "fonts typeface"),
+    ("personalization-start", "Start", "start menu"),
+    ("taskbar", "Taskbar", "taskbar"),
+    ("appsfeatures", "Installed apps", "uninstall programs remove apps"),
+    ("defaultapps", "Default apps", "default browser open with file types"),
+    ("startupapps", "Startup apps", "startup autostart boot"),
+    ("appsforwebsites", "Apps for websites", "links"),
+    ("videoplayback", "Video playback", "video hdr"),
+    ("yourinfo", "Your info", "account profile picture name"),
+    ("emailandaccounts", "Email & accounts", "email accounts"),
+    ("signinoptions", "Sign-in options", "password pin windows hello fingerprint face login"),
+    ("family-group", "Family", "family parental"),
+    ("otherusers", "Other users", "add user accounts"),
+    ("backup", "Windows Backup", "backup sync onedrive"),
+    ("workplace", "Access work or school", "work school"),
+    ("dateandtime", "Date & time", "clock time zone date"),
+    ("regionformatting", "Language & region", "language region format country keyboard layout"),
+    ("speech", "Speech", "voice speech recognition"),
+    ("gaming-gamebar", "Game Bar", "xbox game bar"),
+    ("gaming-gamedvr", "Captures", "screen recording clips"),
+    ("gaming-gamemode", "Game Mode", "games performance"),
+    ("easeofaccess-display", "Text size", "font size bigger text accessibility"),
+    ("easeofaccess-visualeffects", "Visual effects", "animations transparency scrollbars"),
+    ("easeofaccess-mousepointer", "Mouse pointer and touch", "cursor size pointer color"),
+    ("easeofaccess-magnifier", "Magnifier", "zoom magnify"),
+    ("easeofaccess-colorfilter", "Color filters", "color blind grayscale"),
+    ("easeofaccess-highcontrast", "Contrast themes", "high contrast"),
+    ("easeofaccess-narrator", "Narrator", "screen reader"),
+    ("easeofaccess-audio", "Audio accessibility", "mono audio"),
+    ("easeofaccess-closedcaptioning", "Captions", "subtitles captions"),
+    ("easeofaccess-keyboard", "Keyboard accessibility", "sticky keys filter keys on-screen keyboard"),
+    ("privacy", "Privacy & security", "privacy permissions"),
+    ("privacy-location", "Location", "gps location"),
+    ("privacy-webcam", "Camera permissions", "webcam privacy"),
+    ("privacy-microphone", "Microphone permissions", "microphone privacy"),
+    ("windowsdefender", "Windows Security", "antivirus defender virus firewall"),
+    ("windowsupdate", "Windows Update", "updates check for updates"),
+    ("windowsupdate-history", "Update history", "updates installed"),
+    ("windowsupdate-options", "Advanced update options", "updates restart hours"),
+    ("delivery-optimization", "Delivery Optimization", "download bandwidth"),
+    ("windowsinsider", "Windows Insider Program", "insider preview builds"),
+];
+
+/// Settings pages' ids start with this (the link itself).
+const SETTINGS: &str = "ms-settings:";
+/// The Settings app, for those pages' icon.
+const SETTINGS_APP: &str = "windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel";
+
+/// A Settings page's search words.
+fn settings_keys(id: &str) -> Option<&'static str> {
+    let page = id.strip_prefix(SETTINGS)?;
+    SETTINGS_PAGES.iter().find(|p| p.0 == page).map(|p| p.2)
+}
+
 /// The shell path an id opens: Control Panel ids are absolute ("::{...}"), programs
-/// on the PATH their file, app ids are AppsFolder parsing names.
+/// on the PATH their file, Settings pages their link, app ids are AppsFolder parsing
+/// names.
 fn shell_path(id: &str) -> String {
-    if id.starts_with("::") {
+    if id.starts_with("::") || id.starts_with(SETTINGS) {
         format!("shell:{id}")
     } else if let Some(path) = id.strip_prefix(RUN) {
         path.to_string()
@@ -115,8 +215,8 @@ fn items(folder: &str, id_kind: SIGDN) -> Vec<(String, String)> {
 }
 
 /// What the launcher searches: apps first (they win a tie), then the Control
-/// Panel items (Device Manager, Sound...) and programs on the PATH no app has the
-/// name of.
+/// Panel items (Device Manager, Sound...), programs on the PATH no app has the name
+/// of, and the Settings pages (the launcher shows those only with its option on).
 fn enumerate() -> Vec<(String, String)> {
     sta();
     // Uninstallers and documents are in the Apps folder too; they aren't apps to launch.
@@ -132,6 +232,7 @@ fn enumerate() -> Vec<(String, String)> {
     let panel = items(CONTROL_PANEL, SIGDN_DESKTOPABSOLUTEPARSING);
     out.extend(panel.into_iter().filter(|(_, name)| !names.contains(&name.to_lowercase())));
     out.extend(commands().into_iter().filter(|(_, name)| !names.contains(name)));
+    out.extend(SETTINGS_PAGES.iter().map(|(page, name, _)| (format!("{SETTINGS}{page}"), name.to_string())));
     out
 }
 
@@ -147,7 +248,13 @@ fn apps() -> Vec<(String, String)> {
 #[tauri::command]
 pub async fn launcher_apps() -> Result<Vec<Value>, String> {
     let list = tauri::async_runtime::spawn_blocking(apps).await.map_err(|e| e.to_string())?;
-    Ok(list.into_iter().map(|(id, name)| json!({ "id": id, "name": name })).collect())
+    Ok(list
+        .into_iter()
+        .map(|(id, name)| match settings_keys(&id) {
+            Some(keys) => json!({ "id": id, "name": name, "keys": keys }),
+            None => json!({ "id": id, "name": name }),
+        })
+        .collect())
 }
 
 /// An app's icon as {w, h, rgba}.
@@ -159,7 +266,9 @@ pub async fn launcher_icon(id: String) -> Result<Value, String> {
     let key = id.clone();
     let icon = tauri::async_runtime::spawn_blocking(move || {
         sta();
-        let item = unsafe { SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(shell_path(&key)), None) }.ok()?;
+        // Settings pages: the Settings app's icon.
+        let path = if key.starts_with(SETTINGS) { format!("shell:AppsFolder\\{SETTINGS_APP}") } else { shell_path(&key) };
+        let item = unsafe { SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(path), None) }.ok()?;
         crate::providers::tasks::item_icon(&item)
     })
     .await

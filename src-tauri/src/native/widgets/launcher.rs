@@ -17,9 +17,15 @@ struct State {
     open: bool,
     query: String,
     selected: usize,
-    apps: Vec<(String, String)>,
+    /// Id, name, search words (Settings pages'), lower case.
+    apps: Vec<(String, String, String)>,
     results: Vec<usize>,
     max: usize,
+    /// The sum the query is, worked out ([widgets.launcher] calculator).
+    calc: Option<String>,
+    calculator: bool,
+    /// Windows Settings pages among the results ([widgets.launcher] settings).
+    settings: bool,
     /// When the caret last moved (it shows solid for a moment, then blinks).
     typed: Instant,
     /// The surface it's open on (every surface draws on this thread: the others keep
@@ -28,7 +34,7 @@ struct State {
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, typed: Instant::now(), owner: String::new() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, typed: Instant::now(), owner: String::new() });
 }
 
 /// Higher is better; -1: no match (launcher.ts score).
@@ -58,12 +64,159 @@ fn command_score(name: &str, q: &str) -> f64 {
     }
 }
 
+/// The calculator's row in the results (its index among them).
+const CALC: usize = usize::MAX;
+
+/// A sum typed into the field ([widgets.launcher] calculator): `24*7`, `(3+4)^2`,
+/// `1,5 / 3`, `2 x 8`, `sqrt(2)`, `pi*2`. None unless it's a whole sum with at least one
+/// operation (a lone number isn't one).
+fn calc(text: &str) -> Option<String> {
+    struct P<'a> {
+        c: &'a [char],
+        i: usize,
+        ops: usize,
+    }
+    impl P<'_> {
+        fn skip(&mut self) {
+            while self.c.get(self.i).is_some_and(|c| c.is_whitespace()) {
+                self.i += 1;
+            }
+        }
+        fn eat(&mut self, set: &str) -> Option<char> {
+            self.skip();
+            let c = *self.c.get(self.i)?;
+            set.contains(c).then(|| {
+                self.i += 1;
+                c
+            })
+        }
+        fn word(&mut self, w: &str) -> bool {
+            self.skip();
+            let n = w.chars().count();
+            let here: String = self.c.iter().skip(self.i).take(n).collect::<String>().to_lowercase();
+            if here == w {
+                self.i += n;
+                true
+            } else {
+                false
+            }
+        }
+        fn sum(&mut self) -> Option<f64> {
+            let mut v = self.product()?;
+            while let Some(op) = self.eat("+-−") {
+                self.ops += 1;
+                let r = self.product()?;
+                v = if op == '+' { v + r } else { v - r };
+            }
+            Some(v)
+        }
+        fn product(&mut self) -> Option<f64> {
+            let mut v = self.power()?;
+            while let Some(op) = self.eat("*/x×÷") {
+                self.ops += 1;
+                let r = self.power()?;
+                v = if matches!(op, '/' | '÷') { v / r } else { v * r };
+            }
+            Some(v)
+        }
+        fn power(&mut self) -> Option<f64> {
+            let v = self.unary()?;
+            if self.eat("^").is_some() {
+                self.ops += 1;
+                return Some(v.powf(self.power()?));
+            }
+            Some(v)
+        }
+        fn unary(&mut self) -> Option<f64> {
+            if let Some(op) = self.eat("-−+") {
+                let v = self.unary()?;
+                return Some(if op == '+' { v } else { -v });
+            }
+            self.atom()
+        }
+        fn atom(&mut self) -> Option<f64> {
+            if self.eat("(").is_some() {
+                let v = self.sum()?;
+                self.eat(")")?;
+                return Some(v);
+            }
+            if self.word("sqrt") || self.word("√") {
+                self.ops += 1;
+                return Some(self.atom()?.sqrt());
+            }
+            if self.word("pi") || self.word("π") {
+                return Some(std::f64::consts::PI);
+            }
+            self.skip();
+            let start = self.i;
+            while self.c.get(self.i).is_some_and(|c| c.is_ascii_digit() || *c == '.' || *c == ',') {
+                self.i += 1;
+            }
+            let n: String = self.c[start..self.i].iter().map(|&c| if c == ',' { '.' } else { c }).collect();
+            n.parse::<f64>().ok()
+        }
+    }
+    let text = text.trim().trim_start_matches('=');
+    let chars: Vec<char> = text.chars().collect();
+    let mut p = P { c: &chars, i: 0, ops: 0 };
+    let v = p.sum()?;
+    p.skip();
+    if p.i != chars.len() || p.ops == 0 || !v.is_finite() {
+        return None;
+    }
+    // Ten decimals at most, without trailing zeros.
+    let v = if v == 0.0 { 0.0 } else { v };
+    if v.abs() >= 1e15 {
+        return Some(format!("{v:e}"));
+    }
+    let s = format!("{v:.10}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    Some(if s == "-0" { "0".to_string() } else { s.to_string() })
+}
+
+/// A Settings page's search words matching (two letters or more: a word starting with
+/// the query, or the whole query inside them).
+fn keys_score(keys: &str, q: &str) -> f64 {
+    if q.chars().count() < 2 || keys.is_empty() {
+        return -1.0;
+    }
+    if keys.split_whitespace().any(|w| w.starts_with(q)) {
+        50.0
+    } else if q.contains(' ') && keys.contains(q) {
+        45.0
+    } else {
+        -1.0
+    }
+}
+
+/// A result's id and name: an app (its index in the list) or the calculator's row.
+fn entry(s: &State, i: usize) -> (String, String) {
+    if i == CALC {
+        let v = s.calc.clone().unwrap_or_default();
+        return (format!("calc:{v}"), format!("= {v}"));
+    }
+    (s.apps[i].0.clone(), s.apps[i].1.clone())
+}
+
 fn search(s: &mut State) {
     let q = s.query.trim().to_lowercase();
-    let rate = |a: &(String, String)| if a.0.starts_with("run:") { command_score(&a.1, &q) } else { score(&a.1, &q) };
+    let settings = s.settings;
+    let rate = |a: &(String, String, String)| {
+        if a.0.starts_with("run:") {
+            command_score(&a.1, &q)
+        } else if a.0.starts_with("ms-settings:") {
+            if settings { score(&a.1, &q).max(keys_score(&a.2, &q)) } else { -1.0 }
+        } else {
+            score(&a.1, &q)
+        }
+    };
     let mut found: Vec<(usize, f64)> = if q.is_empty() { Vec::new() } else { s.apps.iter().enumerate().map(|(i, a)| (i, rate(a))).filter(|(_, sc)| *sc >= 0.0).collect() };
     found.sort_by(|a, b| b.1.total_cmp(&a.1));
-    s.results = found.into_iter().take(s.max).map(|(i, _)| i).collect();
+    // A sum: its answer first.
+    s.calc = if s.calculator { calc(&s.query) } else { None };
+    let first = s.calc.as_ref().map(|_| CALC);
+    let room = s.max - first.is_some() as usize;
+    s.results = first.into_iter().chain(found.into_iter().take(room).map(|(i, _)| i)).collect();
     s.selected = 0;
 }
 
@@ -91,10 +244,17 @@ pub fn set_open(open: bool, surface: &str) {
     });
 }
 
-fn set_max(opts: &Opts) {
-    if let Some(n) = opts.num("results").filter(|n| *n > 0.0) {
-        S.with(|s| s.borrow_mut().max = (n.round() as usize).clamp(3, 20));
-    }
+/// [widgets.launcher]: how many results, the calculator, Settings pages.
+fn set_opts(opts: &Opts) {
+    let on = |k: &str| opts.table.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    S.with(|s| {
+        let mut s = s.borrow_mut();
+        if let Some(n) = opts.num("results").filter(|n| *n > 0.0) {
+            s.max = (n.round() as usize).clamp(3, 20);
+        }
+        s.calculator = on("calculator");
+        s.settings = on("settings");
+    });
 }
 
 /// The apps to search (launcher_apps), asked for each time it opens.
@@ -128,7 +288,7 @@ pub fn key(vk: u16, ctrl: bool, bottom: bool) -> Out {
         match vk {
             v if v == away && n > 0 => s.selected = (s.selected + 1) % n,
             v if v == toward && n > 0 => s.selected = (s.selected + n - 1) % n,
-            0x0D => return s.results.get(s.selected).map_or(Out::None, |&i| Out::Launch(s.apps[i].0.clone())),
+            0x0D => return s.results.get(s.selected).map_or(Out::None, |&i| Out::Launch(entry(&s, i).0)),
             0x1B => return Out::Close,
             // Backspace: a letter, or (with Ctrl) the word before the caret.
             0x08 => {
@@ -210,7 +370,7 @@ pub struct LauncherWidget {
 
 impl LauncherWidget {
     pub fn new(opts: &Opts, inline: bool) -> LauncherWidget {
-        set_max(opts);
+        set_opts(opts);
         LauncherWidget { inline, surface: opts.surface.clone() }
     }
     fn searching(&self) -> bool {
@@ -226,7 +386,17 @@ impl Widget for LauncherWidget {
         (!self.searching()).then(|| "Search apps".into())
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
-        let apps = v.as_array().map(|a| a.iter().filter_map(|x| Some((x.get("id")?.as_str()?.to_string(), x.get("name")?.as_str()?.to_string()))).collect()).unwrap_or_default();
+        let apps = v
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| {
+                        let keys = x.get("keys").and_then(|k| k.as_str()).unwrap_or("").to_lowercase();
+                        Some((x.get("id")?.as_str()?.to_string(), x.get("name")?.as_str()?.to_string(), keys))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         S.with(|s| {
             let mut s = s.borrow_mut();
             s.apps = apps;
@@ -302,7 +472,7 @@ const ROW_H: f32 = 34.0;
 
 impl LauncherPanel {
     pub fn new(opts: &Opts, own_field: bool) -> LauncherPanel {
-        set_max(opts);
+        set_opts(opts);
         let chosen: Vec<String> = opts.table.get("power").and_then(|p| p.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
         let power = (0..POWER.len()).filter(|&i| chosen.iter().any(|c| c == POWER[i].0)).collect();
         let width = opts.num("panel_width").map_or(340.0, |w| w.clamp(240.0, 700.0) as f32);
@@ -408,7 +578,7 @@ impl Panel for LauncherPanel {
         }
         let (results, query, ids) = S.with(|s| {
             let s = s.borrow();
-            (s.results.len(), s.query.clone(), s.results.iter().map(|&i| s.apps[i].0.clone()).collect::<Vec<_>>())
+            (s.results.len(), s.query.clone(), s.results.iter().filter(|&&i| i != CALC).map(|&i| s.apps[i].0.clone()).collect::<Vec<_>>())
         });
         // Icons for results not asked for yet.
         let wanted: Vec<String> = ids.into_iter().filter(|id| !self.asked.contains(id)).collect();
@@ -447,7 +617,7 @@ impl Panel for LauncherPanel {
         let lh = g.text("Ag", &body).map_or(16.0, |t| t.height);
         let (results, selected, query) = S.with(|s| {
             let s = s.borrow();
-            (s.results.iter().map(|&i| s.apps[i].clone()).collect::<Vec<_>>(), s.selected, s.query.clone())
+            (s.results.iter().map(|&i| entry(&s, i)).collect::<Vec<_>>(), s.selected, s.query.clone())
         });
         let (parts, _) = self.parts(results.len(), !query.trim().is_empty() && results.is_empty(), lh, cx.look.bottom);
         for &(part, top, _) in &parts {
@@ -464,10 +634,28 @@ impl Panel for LauncherPanel {
                     if i == selected {
                         g.fill_round(rect(x, top, self.width, ROW_H), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
                     }
-                    if let Some(icon) = self.icons.get(id) {
+                    let cy = top + ROW_H / 2.0;
+                    if id.starts_with("calc:") {
+                        let f = Font::icons(16.0);
+                        let w = g.measure("\u{E8EF}", &f);
+                        g.text_at("\u{E8EF}", &f, x + 8.0 + (22.0 - w) / 2.0, cy, fg);
+                    } else if let Some(icon) = self.icons.get(id) {
                         icon.draw(g, x + 8.0, top + 6.0, 22.0, alpha);
                     }
-                    g.text_at(&fit_text(g, name, &body, self.width - 48.0), &body, x + 40.0, top + ROW_H / 2.0, fg);
+                    // What it is, dimmed at the end: a Settings page, the sum's answer (copied).
+                    let tag = if id.starts_with("ms-settings:") {
+                        "Settings"
+                    } else if id.starts_with("calc:") {
+                        "Copy"
+                    } else {
+                        ""
+                    };
+                    let small = cx.secondary(12.0);
+                    let tw = if tag.is_empty() { 0.0 } else { g.measure(tag, &small) + 12.0 };
+                    if !tag.is_empty() {
+                        g.text_at(tag, &small, x + self.width - 10.0 - (tw - 12.0), cy, dim);
+                    }
+                    g.text_at(&fit_text(g, name, &body, self.width - 48.0 - tw), &body, x + 40.0, cy, fg);
                 }
                 Part::Hint => {
                     g.text_at("No apps found", &cx.secondary(cx.look.font_size), x + 8.0, top + 6.0 + lh / 2.0, dim);
@@ -517,7 +705,7 @@ impl Panel for LauncherPanel {
             Some(Hit::Row(i)) => {
                 let id = S.with(|s| {
                     let s = s.borrow();
-                    s.results.get(i).map(|&k| s.apps[k].0.clone())
+                    s.results.get(i).map(|&k| entry(&s, k).0)
                 });
                 match id {
                     Some(id) => Reply::Do(launch(id)),
@@ -548,8 +736,11 @@ impl Panel for LauncherPanel {
     }
 }
 
-/// Starts an app and closes the launcher.
+/// Starts an app (or copies the sum's answer) and closes the launcher.
 pub fn launch(id: String) -> Act {
+    if let Some(v) = id.strip_prefix("calc:").map(String::from) {
+        return Act::call(move |_| crate::win::set_clipboard_text(&v)).then(Act::Launcher { open: false, refocus: false });
+    }
     Act::call(move |_| {
         let _ = tauri::async_runtime::block_on(crate::launcher::launcher_launch(id));
     })
@@ -580,5 +771,29 @@ pub fn clipboard_text() -> Option<String> {
         })();
         let _ = CloseClipboard();
         text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calc;
+
+    #[test]
+    fn sums() {
+        assert_eq!(calc("24*7").as_deref(), Some("168"));
+        assert_eq!(calc("(3+4)^2").as_deref(), Some("49"));
+        assert_eq!(calc("1,5 / 3").as_deref(), Some("0.5"));
+        assert_eq!(calc("2 x 8").as_deref(), Some("16"));
+        assert_eq!(calc("= -2 + 5").as_deref(), Some("3"));
+        assert_eq!(calc("10/3").as_deref(), Some("3.3333333333"));
+        assert_eq!(calc("sqrt(16)").as_deref(), Some("4"));
+        assert_eq!(calc("2^-1").as_deref(), Some("0.5"));
+    }
+
+    #[test]
+    fn not_sums() {
+        for t in ["42", "notepad", "xbox", "1/0", "2+", "(2+3", "3.1.4+1", ""] {
+            assert_eq!(calc(t), None, "{t}");
+        }
     }
 }
