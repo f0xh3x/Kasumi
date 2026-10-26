@@ -133,6 +133,7 @@ pub struct ScrollShow {
     pub size: f32,
     pub ms: u64,
     pub length: f64,
+    pub width: f64,
     pub anim: crate::config::Animation,
     pub theme: crate::config::Theme,
     pub geometry: crate::config::Geometry,

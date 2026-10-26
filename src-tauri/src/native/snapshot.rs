@@ -63,6 +63,7 @@ pub fn run(args: &[String]) {
             size: 0.2,
             ms: cfg.osd.duration_ms,
             length: cfg.osd.scroll_length,
+            width: cfg.osd.scroll_width,
             anim: cfg.animation.clone(),
             theme: cfg.theme.clone(),
             geometry: cfg.geometry.clone(),

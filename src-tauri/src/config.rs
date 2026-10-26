@@ -492,6 +492,8 @@ pub struct Osd {
     pub scroll: bool,
     /// Its length (px; at most 80% of the screen's height).
     pub scroll_length: f64,
+    /// Its width: how far its notch stands out of the screen's edge (px).
+    pub scroll_width: f64,
     /// Pop new notifications out of the notch (Windows' own store, see
     /// providers/notifications.rs).
     pub notifications: bool,
@@ -539,6 +541,7 @@ impl Default for Osd {
             file_progress: false,
             scroll: false,
             scroll_length: 800.0,
+            scroll_width: 10.0,
             notifications: false,
             notification_style: "line".into(),
             notification_ms: 5000,

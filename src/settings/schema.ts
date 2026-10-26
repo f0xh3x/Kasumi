@@ -1264,6 +1264,17 @@ export const pages: Page[] = [
             step: 20,
             unit: "px",
           },
+          {
+            kind: "slider",
+            label: "Width",
+            help: "How far its notch stands out of the screen's edge.",
+            path: (cfg) => (cfg.osd?.scroll ? ["osd", "scroll_width"] : null),
+            default: 10,
+            min: 6,
+            max: 30,
+            step: 1,
+            unit: "px",
+          },
         ],
       },
       {

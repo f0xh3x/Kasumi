@@ -23,10 +23,8 @@ use super::widgets::Look;
 use super::{ScrollShow, Spring};
 use crate::win::Monitor;
 
-/// The notch's depth from the screen's edge, the track's width, and the gap between
-/// the track's ends and the notch's (flat) ends; the thumb's shortest length.
-const DEPTH: f32 = 14.0;
-const TRACK: f32 = 4.0;
+/// The gap between the track's ends and the notch's (flat) ends; the thumb's
+/// shortest length.
 const END: f32 = 10.0;
 const MIN_THUMB: f32 = 24.0;
 /// Room for a spring's overshoot.
@@ -36,8 +34,10 @@ pub struct ScrollBar {
     hwnd: Option<HWND>,
     dib: Option<Dib>,
     monitor: Option<Monitor>,
-    /// The track's length (px, logical).
+    /// The track's length and the notch's depth from the edge ([osd] scroll_width;
+    /// px, logical).
     length: f32,
+    depth: f32,
     look: Option<Look>,
     geometry: crate::config::Geometry,
     /// Out (0..1: the notch grows from the edge), the thumb's start and length
@@ -51,7 +51,7 @@ pub struct ScrollBar {
 impl ScrollBar {
     pub fn new() -> ScrollBar {
         let s = Spring::new(0.0, 300.0, 30.0);
-        ScrollBar { hwnd: None, dib: None, monitor: None, length: 800.0, look: None, geometry: Default::default(), shown: s.clone(), top: s.clone(), size: s, until: None }
+        ScrollBar { hwnd: None, dib: None, monitor: None, length: 800.0, depth: 10.0, look: None, geometry: Default::default(), shown: s.clone(), top: s.clone(), size: s, until: None }
     }
 
     /// A new position: out (again) on that monitor, the thumb heading there.
@@ -75,6 +75,7 @@ impl ScrollBar {
         }
         let tall = (s.monitor.bottom - s.monitor.top) as f64 / s.monitor.scale.max(0.5);
         self.length = s.length.clamp(100.0, tall * 0.8) as f32;
+        self.depth = s.width.clamp(4.0, 40.0) as f32;
         self.monitor = Some(s.monitor.clone());
         self.look = Some(Look::from_theme(&s.theme, false));
         self.geometry = s.geometry.clone();
@@ -118,9 +119,9 @@ impl ScrollBar {
     /// size (logical px).
     fn sizes(&self) -> (f32, f32, f32) {
         let g = &self.geometry;
-        let k = DEPTH as f64 / g.notch_height.max(1.0);
+        let k = self.depth as f64 / g.notch_height.max(1.0);
         let width = self.length + 2.0 * (END + (g.notch_corner_radius * k) as f32);
-        let w = (DEPTH * ROOM).ceil();
+        let w = (self.depth * ROOM).ceil();
         let h = width + 2.0 * (g.concave_radius * k * ROOM as f64) as f32 + 2.0;
         (width, w, h)
     }
@@ -139,7 +140,7 @@ impl ScrollBar {
         let out = self.shown.value.max(0.0);
         // The notch, as the bars draw theirs, standing on the right edge: its depth (and
         // the size of its curves) grows from nothing.
-        let depth = DEPTH as f64 * out;
+        let depth = self.depth as f64 * out;
         let k = depth / self.geometry.notch_height.max(1.0);
         let left = (h - width) as f64 / 2.0;
         let bump = Bump { x: left, width: width as f64, height: depth, in_hull: true, scale: k, ..Default::default() };
@@ -165,13 +166,16 @@ impl ScrollBar {
         // (white at 20%) with a white thumb, fading in as the notch comes out.
         let a = ((out as f32 - 0.35) / 0.65).clamp(0.0, 1.0);
         if a > 0.0 {
-            let x = w - depth as f32 / 2.0 - TRACK / 2.0;
+            // The track: under a third of the notch's depth (4 px in a 14 px notch), on
+            // whole device pixels (a track between pixels has soft edges).
+            let track =((self.depth / 3.5).clamp(2.0, 10.0) * scale).round() / scale;
+            let x = gfx.snap(w - depth as f32 / 2.0 - track / 2.0);
             let y0 = (h - self.length) / 2.0;
-            gfx.fill_round(rect(x, y0, TRACK, self.length), TRACK / 2.0, white(0.2 * a));
+            gfx.fill_round(rect(x, y0, track, self.length), track / 2.0, white(0.2 * a));
             let size = self.size.value as f32;
             let len = (size * self.length).clamp(MIN_THUMB.min(self.length), self.length);
             let at = (self.top.value as f32 / (1.0 - size).max(1e-3)).clamp(0.0, 1.0) * (self.length - len);
-            gfx.fill_round(rect(x, y0 + at, TRACK, len), TRACK / 2.0, white(a));
+            gfx.fill_round(rect(x, y0 + at, track, len), track / 2.0, white(a));
         }
         gfx.end()?;
         Ok((w_px, h_px))
