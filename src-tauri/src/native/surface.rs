@@ -421,6 +421,7 @@ impl Surface {
             font: own.and_then(|t| t.get("font")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
             font2: own.and_then(|t| t.get("font_secondary")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
             device: l.device.clone(),
+            surface: self.label.clone(),
         }
     }
 
@@ -693,7 +694,7 @@ impl Surface {
 
     /// Docks: the island with the launcher's field, while it searches.
     fn launcher_isle(&self) -> Option<String> {
-        if !widgets::launcher::searching() {
+        if !widgets::launcher::searching_on(&self.label) {
             return None;
         }
         self.drops
@@ -783,7 +784,7 @@ impl Surface {
 
     /// Rust opened (focused this surface) or closed the launcher.
     fn set_launcher(&mut self, gfx: &Gfx, open: bool) {
-        widgets::launcher::set_open(open);
+        widgets::launcher::set_open(open, &self.label);
         if open && self.dock() && self.expanded {
             if let Some(k) = self.launcher_isle() {
                 self.open_isle(Some(k));
@@ -814,7 +815,7 @@ impl Surface {
     }
 
     pub fn launcher_open(&self) -> bool {
-        widgets::launcher::searching() && self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "launcher") || (widgets::launcher::searching() && self.drops.iter().any(|d| d.key == "bar:launcher" && d.spring.target > 0.5))
+        widgets::launcher::searching_on(&self.label) && self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "launcher") || (widgets::launcher::searching_on(&self.label) && self.drops.iter().any(|d| d.key == "bar:launcher" && d.spring.target > 0.5))
     }
 
     /// A key while the launcher's field has the focus.
@@ -1047,7 +1048,7 @@ impl Surface {
 
     /// A widget stepping aside for the launcher's field in its notch (while it searches).
     fn aside_in(&self, d: &Drop, wi: usize) -> bool {
-        widgets::launcher::searching() && widgets::widget_type(&self.widgets[wi].name) != "launcher" && d.slot.iter().any(|&k| widgets::widget_type(&self.widgets[k].name) == "launcher")
+        widgets::launcher::searching_on(&self.label) && widgets::widget_type(&self.widgets[wi].name) != "launcher" && d.slot.iter().any(|&k| widgets::widget_type(&self.widgets[k].name) == "launcher")
     }
 
     fn aside(&self, di: usize, wi: usize) -> bool {

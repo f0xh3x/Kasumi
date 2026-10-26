@@ -107,7 +107,7 @@ pub fn run(args: &[String]) {
                 let apps = ["Code", "Discord", "Spotify", "Steam", "Calculator", "Firefox", "Notepad", "Terminal"];
                 let list: Vec<Value> = apps.iter().map(|a| serde_json::json!({ "id": format!("app:{a}"), "name": a })).collect();
                 surface.data(&gfx, "launcher:apps", &Value::Array(list));
-                super::widgets::launcher::set_open(true);
+                super::widgets::launcher::set_open(true, &label);
                 for c in "o".chars() {
                     super::widgets::launcher::type_char(c);
                 }
@@ -122,7 +122,7 @@ pub fn run(args: &[String]) {
                     let (px, w, h) = surface.pixels();
                     save_png(&dir.join(format!("{label}-launcher-search.png")), px, w, h);
                 }
-                super::widgets::launcher::set_open(false);
+                super::widgets::launcher::set_open(false, &label);
             }
             // Pop-ups out of the notch: a level, a word, a notification.
             let pops = [

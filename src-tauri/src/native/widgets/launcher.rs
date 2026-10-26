@@ -22,10 +22,13 @@ struct State {
     max: usize,
     /// When the caret last moved (it shows solid for a moment, then blinks).
     typed: Instant,
+    /// The surface it's open on (every surface draws on this thread: the others keep
+    /// their search icon).
+    owner: String,
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, typed: Instant::now() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, typed: Instant::now(), owner: String::new() });
 }
 
 /// Higher is better; -1: no match (launcher.ts score).
@@ -64,16 +67,24 @@ fn search(s: &mut State) {
     s.selected = 0;
 }
 
-/// Whether a search is showing (the fields grow, a dock notch's other widgets step aside).
-pub fn searching() -> bool {
-    S.with(|s| s.borrow().open)
+/// Whether a search is showing on `surface` (its field grows, a dock notch's other
+/// widgets step aside).
+pub fn searching_on(surface: &str) -> bool {
+    S.with(|s| {
+        let s = s.borrow();
+        s.open && s.owner == surface
+    })
 }
 
-/// Rust opened or closed the launcher: an empty query either way.
-pub fn set_open(open: bool) {
+/// Rust opened or closed the launcher on `surface`: an empty query either way.
+pub fn set_open(open: bool, surface: &str) {
     S.with(|s| {
         let mut s = s.borrow_mut();
+        if !open && s.owner != surface {
+            return; // another surface's launcher is the open one
+        }
         s.open = open;
+        s.owner = surface.to_string();
         s.query.clear();
         s.typed = Instant::now();
         search(&mut s);
@@ -194,12 +205,16 @@ fn draw_field(g: &Gfx, cx: &Ctx, x: f32, cy: f32, w: f32, alpha: f32) {
 /// `inline`: the dock's own field (no launcher widget placed), only there then.
 pub struct LauncherWidget {
     inline: bool,
+    surface: String,
 }
 
 impl LauncherWidget {
     pub fn new(opts: &Opts, inline: bool) -> LauncherWidget {
         set_max(opts);
-        LauncherWidget { inline }
+        LauncherWidget { inline, surface: opts.surface.clone() }
+    }
+    fn searching(&self) -> bool {
+        searching_on(&self.surface)
     }
 }
 
@@ -208,7 +223,7 @@ impl Widget for LauncherWidget {
         &["launcher:apps"]
     }
     fn tooltip(&self) -> Option<String> {
-        (!searching()).then(|| "Search apps".into())
+        (!self.searching()).then(|| "Search apps".into())
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let apps = v.as_array().map(|a| a.iter().filter_map(|x| Some((x.get("id")?.as_str()?.to_string(), x.get("name")?.as_str()?.to_string()))).collect()).unwrap_or_default();
@@ -220,7 +235,7 @@ impl Widget for LauncherWidget {
         true
     }
     fn wake(&self) -> Option<Instant> {
-        searching().then(|| Instant::now() + Duration::from_millis(265))
+        self.searching().then(|| Instant::now() + Duration::from_millis(265))
     }
     fn tick(&mut self, _now: Instant) -> bool {
         true
@@ -229,7 +244,7 @@ impl Widget for LauncherWidget {
         false
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
-        let on = searching();
+        let on = self.searching();
         if self.inline && !on {
             return 0.0;
         }
@@ -238,12 +253,12 @@ impl Widget for LauncherWidget {
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
         let f = Font::icons(14.0);
         let iw = cx.gfx.text_at("\u{E721}", &f, x, cy + 1.0, with_alpha(cx.look.fg, alpha));
-        if searching() {
+        if self.searching() {
             draw_field(cx.gfx, cx, x + iw + 8.0, cy, 190.0, alpha);
         }
     }
     fn click(&mut self, button: Button, _at: (f32, f32)) -> Reply {
-        if button != Button::Left || searching() {
+        if button != Button::Left || self.searching() {
             return Reply::None;
         }
         Reply::Do(Act::Launcher { open: true, refocus: false })
@@ -270,6 +285,7 @@ enum Hit {
 /// a field of its own when nothing else has one, and the power buttons.
 pub struct LauncherPanel {
     own_field: bool,
+    surface: String,
     power: Vec<usize>,
     icons: HashMap<String, AppIcon>,
     pixels: HashMap<String, Pixels>,
@@ -290,7 +306,7 @@ impl LauncherPanel {
         let chosen: Vec<String> = opts.table.get("power").and_then(|p| p.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
         let power = (0..POWER.len()).filter(|&i| chosen.iter().any(|c| c == POWER[i].0)).collect();
         let width = opts.num("panel_width").map_or(340.0, |w| w.clamp(240.0, 700.0) as f32);
-        LauncherPanel { own_field, power, icons: HashMap::new(), pixels: HashMap::new(), asked: Vec::new(), pending: None, width, rows: Vec::new(), hovered: None, armed: None }
+        LauncherPanel { own_field, surface: opts.surface.clone(), power, icons: HashMap::new(), pixels: HashMap::new(), asked: Vec::new(), pending: None, width, rows: Vec::new(), hovered: None, armed: None }
     }
     fn hit(&self, p: (f32, f32)) -> Option<Hit> {
         self.rows.iter().find(|(h, top, ht)| {
@@ -371,7 +387,7 @@ impl Panel for LauncherPanel {
     }
     fn wake(&self) -> Option<Instant> {
         // The own field's caret blinks; an armed power button disarms after 3 s.
-        let caret = (self.own_field && searching()).then(|| Instant::now() + Duration::from_millis(265));
+        let caret = (self.own_field && searching_on(&self.surface)).then(|| Instant::now() + Duration::from_millis(265));
         [caret, self.armed.map(|a| a.1)].into_iter().flatten().min()
     }
     fn tick(&mut self, now: Instant) -> bool {

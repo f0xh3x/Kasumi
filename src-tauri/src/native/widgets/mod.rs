@@ -91,6 +91,8 @@ pub struct Opts {
     pub font2: String,
     /// The monitor's device name.
     pub device: String,
+    /// The surface it's on (its label).
+    pub surface: String,
 }
 
 impl Opts {
