@@ -487,6 +487,11 @@ pub struct Osd {
     pub caps_lock: bool,
     /// Explorer's file copies and moves: their progress as a level pop-up (osd/fileops.rs).
     pub file_progress: bool,
+    /// A scroll bar at the right edge of the screen while a window under the cursor
+    /// scrolls (osd/scroll.rs): native windows only, not browsers.
+    pub scroll: bool,
+    /// Its length (px; at most 80% of the screen's height).
+    pub scroll_length: f64,
     /// Pop new notifications out of the notch (Windows' own store, see
     /// providers/notifications.rs).
     pub notifications: bool,
@@ -532,6 +537,8 @@ impl Default for Osd {
             keyboard_width: 120.0,
             caps_lock: false,
             file_progress: false,
+            scroll: false,
+            scroll_length: 800.0,
             notifications: false,
             notification_style: "line".into(),
             notification_ms: 5000,

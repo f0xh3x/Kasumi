@@ -1242,6 +1242,31 @@ export const pages: Page[] = [
         ],
       },
       {
+        title: "Scrolling",
+        collapsible: true,
+        group: "Pop-ups",
+        icon: 0xe8cb,
+        fields: [
+          {
+            kind: "toggle",
+            label: "Show scroll position",
+            help: "A scroll bar at the right edge of the screen while a folder or app under the mouse scrolls. Browsers and apps built on them aren't included. Only with Native Kasumi (General).",
+            path: ["osd", "scroll"],
+            default: false,
+          },
+          {
+            kind: "slider",
+            label: "Length",
+            path: (cfg) => (cfg.osd?.scroll ? ["osd", "scroll_length"] : null),
+            default: 800,
+            min: 300,
+            max: 1400,
+            step: 20,
+            unit: "px",
+          },
+        ],
+      },
+      {
         title: "Keyboard layout",
         collapsible: true,
         group: "Pop-ups",

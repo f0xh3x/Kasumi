@@ -119,6 +119,8 @@ keyboard = true              # pop a small notch at the language widget when the
 keyboard_width = 120
 caps_lock = false            # pop the OSD when Caps Lock is switched on / off
 file_progress = false        # Explorer's file copies and moves: their progress as a pop-up
+scroll = false               # a scroll bar at the screen's right edge while folders and apps scroll (not browsers)
+scroll_length = 800
 notification_click = "app"   # clicking a notification pop-up: app (opens it) | panel (Kasumi's notifications) | center (Windows') | dismiss
 
 # Bar spacing (widgets in the open bar).

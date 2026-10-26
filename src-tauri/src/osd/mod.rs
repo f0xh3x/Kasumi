@@ -1,8 +1,10 @@
-//! On-screen display for volume and brightness changes. The frontend grows the
+//! On-screen display for volume and brightness changes (and the scroll position,
+//! scroll.rs, a bar of its own at the screen's edge). The frontend grows the
 //! OSD notch into a pill for a moment; the overlay stays click-through.
 
 mod brightness;
 mod fileops;
+mod scroll;
 mod volume;
 
 use crate::providers::SharedConfig;
@@ -145,4 +147,5 @@ pub fn start(app: &AppHandle) {
     volume::start(app);
     brightness::start(app);
     fileops::start(app);
+    scroll::start(app);
 }

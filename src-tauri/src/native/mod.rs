@@ -11,6 +11,7 @@ mod floating;
 mod gfx;
 mod icons;
 mod popup;
+mod scrollbar;
 pub mod snapshot;
 mod surface;
 mod tooltip;
@@ -120,6 +121,19 @@ pub enum Msg {
     LangReveal(u64),
     /// Alt + Tab's windows changed while it shows (one closed from it): laid out again.
     AltTabChanged,
+    /// The scroll position pop-up (osd/scroll.rs).
+    Scroll(Box<ScrollShow>),
+}
+
+/// Where a view has scrolled to (shares of the track), on which monitor, for how long,
+/// how long the bar is, and the springs it moves with.
+pub struct ScrollShow {
+    pub monitor: Monitor,
+    pub top: f32,
+    pub size: f32,
+    pub ms: u64,
+    pub length: f64,
+    pub anim: crate::config::Animation,
 }
 
 /// Alt + Tab's keys from the keyboard helper (and the commit hotkey).
@@ -165,6 +179,7 @@ const WM_WAKE: u32 = WM_APP + 1;
 /// The cursor left a window (TrackMouseEvent).
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const TIMER_WIDGETS: usize = 1;
+const TIMER_SCROLL: usize = 2;
 
 /// Whether the native renderer draws the bars (chosen at start).
 pub fn active() -> bool {
@@ -226,6 +241,8 @@ pub(crate) struct Native {
     app: Option<AppHandle>,
     /// Alt + Tab in the middle of the screen (made the first time).
     alt_float: Option<floating::Floating>,
+    /// The scroll position bar (made the first time).
+    scroll: Option<scrollbar::ScrollBar>,
     /// Win + Space pressed, the picker not shown yet (a quick press just switches):
     /// which press (its number) and its direction.
     lang_pending: Option<(u64, bool)>,
@@ -279,7 +296,7 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
         return;
     };
     WAKE.store(wake.0 as isize, Ordering::Relaxed);
-    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None, lang_pending: None, lang_presses: 0 }));
+    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None, scroll: None, lang_pending: None, lang_presses: 0 }));
     INBOX.with(|i| *i.borrow_mut() = Some(rx));
     let _ = ready.send(());
     eprintln!("[kasumi] native renderer started");
@@ -289,7 +306,7 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
     let mut msg = MSG::default();
     let mut last = Instant::now();
     'run: loop {
-        let animating = NATIVE.with(|n| n.try_borrow().is_ok_and(|n| n.as_ref().is_some_and(|n| n.surfaces.iter().any(|s| s.animating))));
+        let animating = NATIVE.with(|n| n.try_borrow().is_ok_and(|n| n.as_ref().is_some_and(|n| n.surfaces.iter().any(|s| s.animating) || n.scroll.as_ref().is_some_and(|b| b.animating()))));
         unsafe {
             if animating {
                 while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -310,6 +327,9 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
                         for act in s.take_acts() {
                             run_act(act, n.app.clone());
                         }
+                    }
+                    if let Some(b) = n.scroll.as_mut().filter(|b| b.animating()) {
+                        b.frame(&n.gfx, dt);
                     }
                     report(n);
                 });
@@ -445,6 +465,18 @@ impl Native {
             Msg::LangReveal(n) => {
                 if let Some((_, back)) = self.lang_pending.take_if(|p| p.0 == n) {
                     self.lang_open(back);
+                }
+            }
+            Msg::Scroll(show) => {
+                let bar = self.scroll.get_or_insert_with(scrollbar::ScrollBar::new);
+                bar.show(&show);
+                // Back in once it has been out long enough.
+                let wake = WAKE.load(Ordering::Relaxed);
+                if let (Some(t), true) = (bar.until, wake != 0) {
+                    let ms = t.saturating_duration_since(Instant::now()).as_millis().clamp(10, 60_000) as u32;
+                    unsafe {
+                        SetTimer(Some(HWND(wake as *mut _)), TIMER_SCROLL, ms, None);
+                    }
                 }
             }
             Msg::AltTabChanged => {
@@ -762,6 +794,15 @@ unsafe extern "system" fn wake_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 // Busy (a call that pumps messages): the messages wait in the channel.
                 let _ = PostMessageW(Some(hwnd), WM_WAKE, WPARAM(0), LPARAM(0));
             }
+            LRESULT(0)
+        }
+        WM_TIMER if wp.0 == TIMER_SCROLL => {
+            let _ = KillTimer(Some(hwnd), TIMER_SCROLL);
+            with_native(|n| {
+                if let Some(b) = n.scroll.as_mut() {
+                    b.tick(Instant::now());
+                }
+            });
             LRESULT(0)
         }
         WM_TIMER if wp.0 == TIMER_WIDGETS => {

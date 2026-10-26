@@ -1,8 +1,9 @@
 //! The keyboard hook, in a small helper process (`Kasumi.exe --keyhook <pid>`):
 //! the volume keys (osd/volume.rs), the Windows key opening the launcher
 //! instead of Start ([launcher] start_menu), Win + 1..9 opening the tasks
-//! widget's apps ([widgets.tasks] win_keys), and Alt + Tab showing Kasumi's
-//! switcher ([alt_tab]).
+//! widget's apps ([widgets.tasks] win_keys), Alt + Tab showing Kasumi's
+//! switcher ([alt_tab]), and the scroll wheel and paging keys for the scroll
+//! position pop-up ([osd] scroll; a mouse hook only while that's on).
 //!
 //! Why a separate process: while one of our windows had the focus, Windows didn't
 //! run a low-level hook of ours that was first in line, nor the hooks after it.
@@ -32,8 +33,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_RMENU, VK_MENU, VK_SHIFT, GetAsyncKeyState,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG,
-    WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    CallNextHookEx, GetMessageW, MsgWaitForMultipleObjects, PeekMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION,
+    KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG, PM_REMOVE, QS_ALLINPUT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN,
+    WM_MOUSEWHEEL, WM_SYSKEYDOWN,
 };
 
 /// The hotkey a lone Windows key press becomes (no keyboard has F24).
@@ -74,6 +76,10 @@ struct Events {
     /// The language picker on (switch), and its signals: next, previous, cancel, commit.
     lang: HANDLE,
     lang_keys: [HANDLE; 4],
+    /// The scroll pop-up on (switch), and its signals: the wheel turned, a paging key.
+    scroll: HANDLE,
+    scroll_wheel: HANDLE,
+    scroll_key: HANDLE,
 }
 unsafe impl Send for Events {}
 unsafe impl Sync for Events {}
@@ -95,6 +101,9 @@ fn events() -> &'static Events {
             alt_tab_keys: [make("AltTabNext", false), make("AltTabPrev", false), make("AltTabCancel", false)],
             lang: make("Lang", true),
             lang_keys: [make("LangNext", false), make("LangPrev", false), make("LangCancel", false), make("LangCommit", false)],
+            scroll: make("Scroll", true),
+            scroll_wheel: make("ScrollWheel", false),
+            scroll_key: make("ScrollKey", false),
         }
     })
 }
@@ -217,6 +226,17 @@ pub fn set_replace_volume(on: bool) {
 /// Whether a lone Windows key press opens the launcher instead of Start.
 pub fn set_start_key(on: bool) {
     set(events().start_key, on);
+}
+
+/// Whether the helper reports the scroll wheel and paging keys (osd/scroll.rs).
+pub fn set_scroll(on: bool) {
+    set(events().scroll, on);
+}
+
+/// The scroll signals to wait on: the wheel turned, a paging key went down.
+pub fn scroll_signals() -> [isize; 2] {
+    let ev = events();
+    [ev.scroll_wheel.0 as isize, ev.scroll_key.0 as isize]
 }
 
 // --- In the helper process --------------------------------------------------------
@@ -352,10 +372,14 @@ fn on_key(info: &KBDLLHOOKSTRUCT, down: bool) -> bool {
     if info.dwExtraInfo == OURS {
         return false;
     }
+    let ev = events();
+    // Page Up / Down, Home, End: the scroll pop-up looks whether the view moved.
+    if down && matches!(info.vkCode, 0x21..=0x24) && is_set(ev.scroll) {
+        set(ev.scroll_key, true);
+    }
     if alt_tab_key(info, down) || lang_key(info, down) {
         return true;
     }
-    let ev = events();
     let vk = info.vkCode as u16;
     let volume = match VIRTUAL_KEY(vk) {
         VK_VOLUME_UP => Some(0),
@@ -439,6 +463,39 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     CallNextHookEx(None, code, wparam, lparam)
 }
 
+unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code == HC_ACTION as i32 && wparam.0 as u32 == WM_MOUSEWHEEL {
+        set(events().scroll_wheel, true);
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// The mouse hook, on its own thread, only while the scroll pop-up is on: every mouse
+/// move passes through a low-level hook, so none is kept otherwise.
+fn mouse_hook() {
+    let ev = events();
+    let module = unsafe { GetModuleHandleW(None).ok() };
+    loop {
+        unsafe { WaitForSingleObject(ev.scroll, INFINITE) };
+        let Ok(hook) = (unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), module.map(Into::into), 0) }) else {
+            eprintln!("[kasumi] mouse hook failed");
+            return;
+        };
+        // Low-level hooks are called through this thread's message loop; once a second
+        // it looks whether the switch went off.
+        let mut msg = MSG::default();
+        while is_set(ev.scroll) {
+            unsafe {
+                MsgWaitForMultipleObjects(None, false, 1000, QS_ALLINPUT);
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {}
+            }
+        }
+        unsafe {
+            let _ = UnhookWindowsHookEx(hook);
+        }
+    }
+}
+
 /// `Kasumi.exe --keyhook <app pid>`: runs the hook until the app exits.
 pub fn helper(app_pid: u32) {
     // Exit with the app (however it ends).
@@ -449,6 +506,7 @@ pub fn helper(app_pid: u32) {
         std::process::exit(0);
     });
     let _ = events();
+    std::thread::spawn(mouse_hook);
     unsafe {
         // Answer in time even while a game keeps the PC busy: a hook that answers too
         // late is skipped, and the Windows key then opens Start.
