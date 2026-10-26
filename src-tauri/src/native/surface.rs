@@ -215,6 +215,11 @@ impl Dib {
             Ok(Dib { dc, bmp, bits: bits as *mut u8, w, h })
         }
     }
+
+    /// Its pixels (premultiplied BGRA, `w` px a row).
+    pub(super) fn pixels(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.bits, (self.w * self.h * 4) as usize) }
+    }
 }
 
 impl std::ops::Drop for Dib {

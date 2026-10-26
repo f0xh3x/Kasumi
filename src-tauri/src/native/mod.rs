@@ -134,6 +134,8 @@ pub struct ScrollShow {
     pub ms: u64,
     pub length: f64,
     pub anim: crate::config::Animation,
+    pub theme: crate::config::Theme,
+    pub geometry: crate::config::Geometry,
 }
 
 /// Alt + Tab's keys from the keyboard helper (and the commit hotkey).
@@ -799,8 +801,10 @@ unsafe extern "system" fn wake_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         WM_TIMER if wp.0 == TIMER_SCROLL => {
             let _ = KillTimer(Some(hwnd), TIMER_SCROLL);
             with_native(|n| {
+                // The latest show's timer (each show sets it again): due, even when it
+                // comes a tick early.
                 if let Some(b) = n.scroll.as_mut() {
-                    b.tick(Instant::now());
+                    b.hide();
                 }
             });
             LRESULT(0)

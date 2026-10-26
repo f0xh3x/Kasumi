@@ -226,16 +226,16 @@ impl Reader {
 
 /// Hands the bar to the native thread: on the cursor's monitor, out for `ms`.
 fn show(app: &AppHandle, pt: POINT, pos: Pos) {
-    let (on, ms, length, anim) = {
+    let (on, ms, length, anim, theme, geometry) = {
         let cfg = app.state::<SharedConfig>();
         let cfg = cfg.read().unwrap();
-        (cfg.osd.enabled && cfg.osd.scroll, cfg.osd.duration_ms, cfg.osd.scroll_length, cfg.animation.clone())
+        (cfg.osd.enabled && cfg.osd.scroll, cfg.osd.duration_ms, cfg.osd.scroll_length, cfg.animation.clone(), cfg.theme.clone(), cfg.geometry.clone())
     };
     if !on {
         return;
     }
     let Some(monitor) = crate::win::monitors().into_iter().find(|m| pt.x >= m.left && pt.x < m.right && pt.y >= m.top && pt.y < m.bottom) else { return };
-    crate::native::post(crate::native::Msg::Scroll(Box::new(crate::native::ScrollShow { monitor, top: pos.top, size: pos.size, ms, length, anim })));
+    crate::native::post(crate::native::Msg::Scroll(Box::new(crate::native::ScrollShow { monitor, top: pos.top, size: pos.size, ms, length, anim, theme, geometry })));
 }
 
 fn held(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) -> bool {

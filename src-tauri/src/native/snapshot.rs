@@ -55,6 +55,26 @@ pub fn run(args: &[String]) {
         }
     };
     let monitors = crate::win::monitors();
+    // The scroll position pop-up ([osd] scroll): coming out, and out, on the first monitor.
+    if let Some(m) = monitors.first() {
+        let show = super::ScrollShow {
+            monitor: m.clone(),
+            top: 0.3,
+            size: 0.2,
+            ms: cfg.osd.duration_ms,
+            length: cfg.osd.scroll_length,
+            anim: cfg.animation.clone(),
+            theme: cfg.theme.clone(),
+            geometry: cfg.geometry.clone(),
+        };
+        for out in [0.5, 1.0] {
+            if let Some((px, w, h, stride)) = super::scrollbar::ScrollBar::snapshot(&gfx, &show, out) {
+                let rows: Vec<u8> = (0..h as usize).flat_map(|y| px[y * stride as usize * 4..(y * stride as usize + w as usize) * 4].to_vec()).collect();
+                save_png(&dir.join(format!("scroll-{}.png", (out * 100.0) as i32)), &rows, w, h);
+                say(format!("scroll bar {out}: {w} x {h}"));
+            }
+        }
+    }
     for (i, m) in monitors.iter().enumerate() {
         let rule = cfg.monitors.iter().find(|r| monitor_matches(&r.matcher, m, i));
         if rule.is_some_and(|r| !r.enabled) {
