@@ -396,6 +396,8 @@ impl Panel for PrivacyPanel {
 pub struct TrayPanel {
     opts: Opts,
     icons: Vec<(String, String)>,
+    /// Each icon's hint (its app's tooltip), by id.
+    tips: HashMap<String, String>,
     pixels: HashMap<String, super::icon::Pixels>,
     bitmaps: HashMap<String, (String, AppIcon)>,
     style: Option<Style>,
@@ -407,7 +409,7 @@ const CELL_GAP: f32 = 4.0;
 
 impl TrayPanel {
     pub fn new(opts: &Opts) -> TrayPanel {
-        TrayPanel { opts: opts.clone(), icons: Vec::new(), pixels: HashMap::new(), bitmaps: HashMap::new(), style: None, hovered: None }
+        TrayPanel { opts: opts.clone(), icons: Vec::new(), tips: HashMap::new(), pixels: HashMap::new(), bitmaps: HashMap::new(), style: None, hovered: None }
     }
     fn per_row(&self) -> usize {
         self.opts.num("icons_per_row").unwrap_or(5.0).max(1.0) as usize
@@ -436,8 +438,15 @@ impl Panel for TrayPanel {
                 }
             }
             self.icons.push((id.to_string(), rgba.to_string()));
+            // Its app's tooltip, else its program's name (as the tray widget's).
+            let s = |k: &str| i.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
+            self.tips.insert(id.to_string(), Some(s("tip")).filter(|t| !t.is_empty()).unwrap_or_else(|| s("exe")));
         }
         true
+    }
+    fn tooltip(&self) -> Option<String> {
+        let (id, _) = self.icons.get(self.hovered?)?;
+        self.tips.get(id).cloned().filter(|t| !t.is_empty())
     }
     fn pad(&self) -> (f32, f32, f32) {
         (8.0, 12.0, 10.0)

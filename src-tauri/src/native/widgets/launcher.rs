@@ -755,10 +755,8 @@ impl LauncherPanel {
             Hit::User => self.user.as_ref().map(|u| u.0.clone()).filter(|_| self.side),
             Hit::Row(_) => None,
         };
-        if let Some((hit, _)) = self.armed {
-            return label(hit).map(|l| (format!("Click again to {}", l.to_lowercase()), true));
-        }
-        self.hovered.and_then(label).map(|l| (l, false))
+        let (hit, _) = self.armed?;
+        label(hit).map(|l| (format!("Click again to {}", l.to_lowercase()), true))
     }
 
     /// The account picture (round), or a person glyph until it's read.
@@ -1063,6 +1061,14 @@ impl Panel for LauncherPanel {
     fn closed(&mut self) {
         self.hovered = None;
         self.armed = None;
+    }
+    fn tooltip(&self) -> Option<String> {
+        match self.hovered? {
+            Hit::Button(k) => self.buttons.get(k).map(|b| b.label.clone()),
+            Hit::Power(k) => self.power.get(k).map(|&p| POWER[p].1.to_string()),
+            Hit::User => Some(self.user.as_ref().map_or("Your account".into(), |u| format!("{} (your account)", u.0))),
+            Hit::Row(_) => None,
+        }
     }
 }
 

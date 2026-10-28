@@ -12,6 +12,9 @@ pub struct MenuButton {
 }
 
 impl Widget for MenuButton {
+    fn tooltip(&self) -> Option<String> {
+        Some("Menu".into())
+    }
     fn width(&mut self, cx: &Ctx) -> f32 {
         self.width = cx.gfx.measure(glyph::MENU, &Font::icons(14.0));
         self.width

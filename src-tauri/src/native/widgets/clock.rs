@@ -447,6 +447,18 @@ impl Panel for Calendar {
         set_timer(next);
         Reply::Redraw
     }
+    fn tooltip(&self) -> Option<String> {
+        Some(match (self.hovered?, timer()) {
+            (TimerHit::Preset(m), _) if m >= 60 => format!("Start a {}-hour timer", m / 60),
+            (TimerHit::Preset(m), _) => format!("Start a {m}-minute timer"),
+            (TimerHit::Stopwatch, _) => "Start a stopwatch".into(),
+            (TimerHit::Pause, Some(t)) if running(t) => "Pause".into(),
+            (TimerHit::Pause, _) => "Resume".into(),
+            (TimerHit::AddMinute, _) => "Add a minute".into(),
+            (TimerHit::Reset, _) => "Back to 0:00".into(),
+            (TimerHit::Stop, _) => "Stop".into(),
+        })
+    }
 }
 
 #[cfg(test)]

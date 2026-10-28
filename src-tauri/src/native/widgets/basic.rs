@@ -65,6 +65,9 @@ impl Widget for Temps {
     fn keys(&self) -> &'static [&'static str] {
         &["temps"]
     }
+    fn tooltip(&self) -> Option<String> {
+        Some(if self.ok { format!("CPU {}  ·  GPU {}", self.cpu.text, self.gpu.text) } else { "Temperatures (LibreHardwareMonitor not reachable)".into() })
+    }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let warn = self.opts.num("warn").unwrap_or(90.0);
         let read = |k: &str| v.get(k).and_then(num);
@@ -164,6 +167,10 @@ impl Disk {
 impl Widget for Disk {
     fn keys(&self) -> &'static [&'static str] {
         &["disks"]
+    }
+    fn tooltip(&self) -> Option<String> {
+        let list: Vec<String> = self.drives.iter().map(|d| format!("{} {}", d.id, d.text.text)).collect();
+        Some(if list.is_empty() { "Disk usage".into() } else { list.join("\n") })
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let chosen: Vec<String> = self.opts.table.get("disks").and_then(|d| d.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
@@ -316,11 +323,13 @@ impl Widget for Buttons {
 pub struct Language {
     opts: Opts,
     code: String,
+    /// The layout's full name (its tooltip).
+    name: String,
 }
 
 impl Language {
     pub fn new(opts: Opts) -> Language {
-        Language { opts, code: String::new() }
+        Language { opts, code: String::new(), name: String::new() }
     }
     fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
         let mut out = Vec::new();
@@ -348,7 +357,11 @@ impl Widget for Language {
         let code = if v.is_null() { String::new() } else { language_code(v, self.opts.str("format")) };
         let changed = code != self.code;
         self.code = code;
+        self.name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
         changed
+    }
+    fn tooltip(&self) -> Option<String> {
+        Some(if self.name.is_empty() { "Keyboard layout".into() } else { format!("{} (click to switch)", self.name) })
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
         if self.code.is_empty() {

@@ -2182,9 +2182,16 @@ impl Surface {
             let local = over_widget.filter(|(w, _)| *w == wi).map(|(_, l)| l);
             changed |= self.widgets[wi].w.hover(local);
         }
-        // The hint of what's under the cursor: bar widgets only, not while a panel is open.
+        // The hint of what's under the cursor: in a panel, by the cursor (under it; above
+        // it on a bottom surface); a bar widget's, past the row, while no panel is open.
         let panel_open = self.drops.iter().any(|d| d.spring.target > 0.5);
+        let in_panel = over_panel.and_then(|(_, pi, _)| self.panels[pi].p.tooltip()).filter(|_| self.layout.tooltips);
         let want = match (pt, over_widget) {
+            (Some((x, y)), _) if in_panel.is_some() => in_panel.map(|text| {
+                let s = self.scale();
+                let y = if self.bottom() { y - 18.0 } else { y + 22.0 };
+                (text, (self.pos.x + (x * s) as i32, self.pos.y + (y * s) as i32))
+            }),
             (Some((x, _)), Some((wi, _))) if self.layout.tooltips && !panel_open => self.widgets[wi].w.tooltip().zip(self.widgets[wi].drawn).map(|(text, (_, cy, _))| {
                 let l = &self.layout;
                 let row = match (self.dock(), self.expanded) {

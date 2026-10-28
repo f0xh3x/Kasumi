@@ -591,6 +591,10 @@ pub trait Panel {
     }
     /// The panel has shut (forget armed buttons and hover).
     fn closed(&mut self) {}
+    /// The hint for what's under the cursor in it (shown by the cursor).
+    fn tooltip(&self) -> Option<String> {
+        None
+    }
     /// The pieces its content shows one after another with [animation] cascade
     /// (content px: x, y, w, h); none: all at once.
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {

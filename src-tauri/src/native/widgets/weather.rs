@@ -55,6 +55,25 @@ impl Weather {
 }
 
 impl Widget for Weather {
+    fn tooltip(&self) -> Option<String> {
+        let (code, _) = self.now?;
+        // Open-Meteo's weather codes, in words.
+        let what = match code {
+            0 => "Clear",
+            1 | 2 => "Partly cloudy",
+            3 => "Cloudy",
+            45 | 48 => "Fog",
+            51..=57 => "Drizzle",
+            66 | 67 => "Freezing rain",
+            61..=65 => "Rain",
+            80..=82 => "Rain showers",
+            71..=77 => "Snow",
+            85 | 86 => "Snow showers",
+            c if c >= 95 => "Thunderstorm",
+            _ => "Cloudy",
+        };
+        Some(format!("{what}, {}", self.temp.text))
+    }
     fn keys(&self) -> &'static [&'static str] {
         &["weather"]
     }

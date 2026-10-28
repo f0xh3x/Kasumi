@@ -702,6 +702,27 @@ impl Panel for QuickPanel {
             _ => Reply::None,
         }
     }
+    fn tooltip(&self) -> Option<String> {
+        match self.hovered? {
+            Hit::VolumeIcon => Some(if self.volume().is_some_and(|v| v.1) { "Unmute" } else { "Mute" }.into()),
+            Hit::AppIcon(pid) => self.apps.iter().find(|a| a.0 == pid).map(|a| format!("{}: {}", a.1, if a.3 { "unmute" } else { "mute" })),
+            Hit::Expand(0) => Some("Volume per app".into()),
+            Hit::Expand(_) => Some("Output device".into()),
+            Hit::Display => Some("Display settings".into()),
+            Hit::Output(i) => self.outputs.get(i).map(|o| o.1.clone()),
+            Hit::Track(Slider::Volume) => Some(format!("Volume {}%", self.value(Slider::Volume).round())),
+            Hit::Track(Slider::Brightness) => Some(format!("Brightness {}%", self.value(Slider::Brightness).round())),
+            Hit::Track(Slider::App(pid)) => self.apps.iter().find(|a| a.0 == pid).map(|a| format!("{} {}%", a.1, self.value(Slider::App(pid)).round())),
+            Hit::Tile(i) => {
+                let t = self.tiles().get(i).copied()?;
+                match self.switch(t.0) {
+                    Some(Some(on)) => Some(format!("{}: {}", t.1, if on { "on" } else { "off" })),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
     fn closed(&mut self) {
         // The panel shut: the list goes with it (no animation), the power tiles too.
         self.armed = None;

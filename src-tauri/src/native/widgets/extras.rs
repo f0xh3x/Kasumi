@@ -111,6 +111,9 @@ impl Netspeed {
 }
 
 impl Widget for Netspeed {
+    fn tooltip(&self) -> Option<String> {
+        Some(format!("Download {}  ·  Upload {}", self.down.text, self.up.text))
+    }
     fn keys(&self) -> &'static [&'static str] {
         &["netspeed"]
     }
@@ -154,6 +157,10 @@ impl Privacy {
 impl Widget for Privacy {
     fn keys(&self) -> &'static [&'static str] {
         &["privacy"]
+    }
+    fn tooltip(&self) -> Option<String> {
+        let used: Vec<&str> = DEVICES.iter().enumerate().filter(|(i, _)| self.on[*i]).map(|(_, d)| d.2).collect();
+        Some(if used.is_empty() { "Nothing is using the microphone, camera or location".into() } else { format!("In use: {}", used.join(", ")) })
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let mut on = [false; 3];
@@ -506,6 +513,9 @@ impl Claude {
 }
 
 impl Widget for Claude {
+    fn tooltip(&self) -> Option<String> {
+        Some(if self.busy() { "Claude Code is working".into() } else { "Claude Code".into() })
+    }
     fn keys(&self) -> &'static [&'static str] {
         &["claude"]
     }
