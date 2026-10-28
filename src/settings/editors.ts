@@ -1037,9 +1037,9 @@ const DEFAULT_ICON: Record<string, number> = {
 const DESTRUCTIVE = new Set(["restart", "shutdown", "sign_out"]);
 
 /** Editor for a widget's `items` (menu entries, buttons). */
-const itemsEditor = (widget: string, separators = true): Editor => (ctx) => {
-  const items: any[] = structuredClone(ctx.cfg.widgets?.[widget]?.items ?? []);
-  const save = () => ctx.save(["widgets", widget, "items"], items);
+const itemsEditor = (widget: string, separators = true, key = "items"): Editor => (ctx) => {
+  const items: any[] = structuredClone(ctx.cfg.widgets?.[widget]?.[key] ?? []);
+  const save = () => ctx.save(["widgets", widget, key], items);
   const list = $("div", "menu-editor");
 
   const render = () => {
@@ -1123,6 +1123,15 @@ const itemsEditor = (widget: string, separators = true): Editor => (ctx) => {
 };
 
 const menuItems = itemsEditor("menu");
+
+/** The launcher's own buttons ([widgets.launcher] buttons): as a Buttons widget's. */
+const launcherButtons: Editor = (ctx) =>
+  $(
+    "div",
+    "stack-tight",
+    row("Your buttons", "Folders and actions beside the power buttons (or in the column), as in the Buttons widget.", $("span")),
+    itemsEditor("launcher", false, "buttons")(ctx),
+  );
 
 /** Every Buttons widget (`buttons`, `buttons#2`, ...): its buttons, notch, add / remove. */
 const buttonsWidgets: Editor = (ctx) => {
@@ -1836,4 +1845,5 @@ export const editors: Record<string, Editor> = {
   weatherLocation,
   tempsSensors,
   menuItems,
+  launcherButtons,
 };

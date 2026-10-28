@@ -436,11 +436,36 @@ export const pages: Page[] = [
             path: ["widgets", "launcher", "settings"],
             default: false,
           },
+          {
+            kind: "toggle",
+            label: "Pinned apps",
+            help: "Before you type, the launcher lists the apps pinned to Windows' Start menu (as many as Results shown).",
+            path: ["widgets", "launcher", "pinned"],
+            default: false,
+          },
+          { kind: "toggle", label: "User button", help: "Your account picture and name; opens Settings › Your info.", path: ["widgets", "launcher", "user"], default: false },
           { kind: "custom", editor: "launcherPower" },
+          { kind: "custom", editor: "launcherButtons" },
           {
             kind: "select",
-            label: "Power buttons position",
-            path: (cfg) => ((cfg.widgets?.launcher?.power ?? []).length ? ["widgets", "launcher", "power_align"] : null),
+            label: "Buttons and user",
+            help: "Where the user, your buttons and the power buttons go.",
+            path: ["widgets", "launcher", "buttons_position"],
+            default: "row",
+            options: [
+              { value: "row", label: "In a row below the apps" },
+              { value: "left", label: "In a column on the left" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Buttons position",
+            help: "In the row: which side the buttons sit on.",
+            path: (cfg) => {
+              const l = cfg.widgets?.launcher;
+              const some = (l?.power ?? []).length || (l?.buttons ?? []).length;
+              return some && l?.buttons_position !== "left" ? ["widgets", "launcher", "power_align"] : null;
+            },
             default: "right",
             options: [
               { value: "left", label: "Left" },
@@ -448,7 +473,6 @@ export const pages: Page[] = [
               { value: "right", label: "Right" },
             ],
           },
-          { kind: "toggle", label: "User button", help: "Your account picture and name beside the power buttons; opens Settings › Your info.", path: ["widgets", "launcher", "user"], default: false },
         ],
       },
       {

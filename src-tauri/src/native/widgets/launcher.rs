@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use super::icon::{decode, AppIcon, Pixels, Style};
 use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply, Widget};
-use crate::native::gfx::{rect, white, with_alpha, Font, Gfx};
+use crate::native::gfx::{rect, rgba, white, with_alpha, Font, Gfx};
+use windows::Win32::Graphics::Direct2D::ID2D1Bitmap;
 
 struct State {
     open: bool,
@@ -26,6 +27,12 @@ struct State {
     calculator: bool,
     /// Windows Settings pages among the results ([widgets.launcher] settings).
     settings: bool,
+    /// Start's pinned apps (id, name), listed while nothing is typed ([widgets.launcher]
+    /// pinned); the user's button ([widgets.launcher] user: its name and picture are
+    /// asked for as the launcher opens).
+    pins: Vec<(String, String)>,
+    pinned: bool,
+    user: bool,
     /// When the caret last moved (it shows solid for a moment, then blinks).
     typed: Instant,
     /// The surface it's open on (every surface draws on this thread: the others keep
@@ -34,7 +41,7 @@ struct State {
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, typed: Instant::now(), owner: String::new() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, typed: Instant::now(), owner: String::new() });
 }
 
 /// Higher is better; -1: no match (launcher.ts score).
@@ -64,8 +71,10 @@ fn command_score(name: &str, q: &str) -> f64 {
     }
 }
 
-/// The calculator's row in the results (its index among them).
+/// The calculator's row in the results (its index among them), and where Start's
+/// pins' indices begin.
 const CALC: usize = usize::MAX;
+const PIN: usize = 1 << 40;
 
 /// A sum typed into the field ([widgets.launcher] calculator): `24*7`, `(3+4)^2`,
 /// `1,5 / 3`, `2 x 8`, `sqrt(2)`, `pi*2`. None unless it's a whole sum with at least one
@@ -189,11 +198,15 @@ fn keys_score(keys: &str, q: &str) -> f64 {
     }
 }
 
-/// A result's id and name: an app (its index in the list) or the calculator's row.
+/// A result's id and name: an app (its index in the list), the calculator's row or a
+/// pin of Start's.
 fn entry(s: &State, i: usize) -> (String, String) {
     if i == CALC {
         let v = s.calc.clone().unwrap_or_default();
         return (format!("calc:{v}"), format!("= {v}"));
+    }
+    if i >= PIN {
+        return s.pins[i - PIN].clone();
     }
     (s.apps[i].0.clone(), s.apps[i].1.clone())
 }
@@ -217,6 +230,10 @@ fn search(s: &mut State) {
     let first = s.calc.as_ref().map(|_| CALC);
     let room = s.max - first.is_some() as usize;
     s.results = first.into_iter().chain(found.into_iter().take(room).map(|(i, _)| i)).collect();
+    // Nothing typed yet: Start's pins.
+    if q.is_empty() && s.pinned {
+        s.results = (0..s.pins.len().min(s.max)).map(|k| PIN + k).collect();
+    }
     s.selected = 0;
 }
 
@@ -254,16 +271,57 @@ fn set_opts(opts: &Opts) {
         }
         s.calculator = on("calculator");
         s.settings = on("settings");
+        s.pinned = on("pinned");
+        s.user = on("user");
     });
 }
 
-/// The apps to search (launcher_apps), asked for each time it opens.
+/// The apps to search (launcher_apps), asked for each time it opens; with their options
+/// on, the user (name, picture) and Start's pins too (those take half a second).
 pub fn load_apps() -> Act {
-    Act::call(|_| {
+    let (pinned, user) = S.with(|s| {
+        let s = s.borrow();
+        (s.pinned, s.user)
+    });
+    Act::call(move |_| {
+        let post = |key: &str, v: Value| crate::native::post(crate::native::Msg::Data(key.into(), v));
         if let Ok(list) = tauri::async_runtime::block_on(crate::launcher::launcher_apps()) {
-            crate::native::post(crate::native::Msg::Data("launcher:apps".into(), Value::Array(list)));
+            post("launcher:apps", Value::Array(list));
+        }
+        if user {
+            post("launcher:user", tauri::async_runtime::block_on(crate::launcher::launcher_user()));
+        }
+        if pinned {
+            let pins = crate::launcher::start_pins().into_iter().map(|(id, name)| serde_json::json!({ "id": id, "name": name })).collect();
+            post("launcher:pinned", Value::Array(pins));
         }
     })
+}
+
+/// The app list or Start's pins arrived (whichever of the launcher's widgets and panels
+/// gets it: they share one state).
+fn take_list(key: &str, v: &Value) {
+    let list = |keys: bool| -> Vec<(String, String, String)> {
+        v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| {
+                        let k = if keys { x.get("keys").and_then(|k| k.as_str()).unwrap_or("").to_lowercase() } else { String::new() };
+                        Some((x.get("id")?.as_str()?.to_string(), x.get("name")?.as_str()?.to_string(), k))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    S.with(|s| {
+        let mut s = s.borrow_mut();
+        match key {
+            "launcher:apps" => s.apps = list(true),
+            "launcher:pinned" => s.pins = list(false).into_iter().map(|(id, name, _)| (id, name)).collect(),
+            _ => return,
+        }
+        search(&mut s);
+    });
 }
 
 /// What a key did.
@@ -380,28 +438,13 @@ impl LauncherWidget {
 
 impl Widget for LauncherWidget {
     fn keys(&self) -> &'static [&'static str] {
-        &["launcher:apps"]
+        &["launcher:apps", "launcher:pinned"]
     }
     fn tooltip(&self) -> Option<String> {
         (!self.searching()).then(|| "Search apps".into())
     }
-    fn data(&mut self, _key: &str, v: &Value) -> bool {
-        let apps = v
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| {
-                        let keys = x.get("keys").and_then(|k| k.as_str()).unwrap_or("").to_lowercase();
-                        Some((x.get("id")?.as_str()?.to_string(), x.get("name")?.as_str()?.to_string(), keys))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        S.with(|s| {
-            let mut s = s.borrow_mut();
-            s.apps = apps;
-            search(&mut s);
-        });
+    fn data(&mut self, key: &str, v: &Value) -> bool {
+        take_list(key, v);
         true
     }
     fn wake(&self) -> Option<Instant> {
@@ -448,107 +491,318 @@ const POWER: [(&str, &str, &str, bool); 6] = [
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Hit {
     Row(usize),
+    User,
+    Button(usize),
     Power(usize),
 }
 
-/// The matching apps (an icon and name each, the chosen one highlighted), with
-/// a field of its own when nothing else has one, and the power buttons.
+/// A button of the user's ([widgets.launcher] buttons, as the Buttons widget's items).
+struct Custom {
+    icon: String,
+    label: String,
+    action: String,
+    target: Option<String>,
+    confirm: bool,
+}
+
+/// The matching apps (an icon and name each, the chosen one highlighted), with a field of
+/// its own when nothing else has one; the user's button, buttons of their own and the
+/// power buttons in a row at the end, like a start menu's, or in a column on the left
+/// ([widgets.launcher] buttons_position = "left").
 pub struct LauncherPanel {
     own_field: bool,
     surface: String,
     power: Vec<usize>,
+    buttons: Vec<Custom>,
+    show_user: bool,
+    /// The user's name and account picture (JPEG) as read, the picture once drawable.
+    user: Option<(String, Option<Vec<u8>>)>,
+    user_pic: Option<ID2D1Bitmap>,
+    side: bool,
+    /// The row's buttons: "left", "center" or "right" ([widgets.launcher] power_align).
+    align: String,
     icons: HashMap<String, AppIcon>,
     pixels: HashMap<String, Pixels>,
     asked: Vec<String>,
     pending: Option<Act>,
     width: f32,
-    /// Rows as last laid out (content px): what, top, height.
-    rows: Vec<(Hit, f32, f32)>,
+    /// What can be clicked as last laid out (content px): what, x, y, w, h.
+    boxes: Vec<(Hit, [f32; 4])>,
     hovered: Option<Hit>,
-    armed: Option<(usize, Instant)>,
+    armed: Option<(Hit, Instant)>,
 }
 
 const ROW_H: f32 = 34.0;
+/// An icon button, and the column's width.
+const BTN_W: f32 = 30.0;
+const BTN_H: f32 = 28.0;
+const COL: f32 = 40.0;
 
-impl LauncherPanel {
-    pub fn new(opts: &Opts, own_field: bool) -> LauncherPanel {
-        set_opts(opts);
-        let chosen: Vec<String> = opts.table.get("power").and_then(|p| p.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-        let power = (0..POWER.len()).filter(|&i| chosen.iter().any(|c| c == POWER[i].0)).collect();
-        let width = opts.num("panel_width").map_or(340.0, |w| w.clamp(240.0, 700.0) as f32);
-        LauncherPanel { own_field, surface: opts.surface.clone(), power, icons: HashMap::new(), pixels: HashMap::new(), asked: Vec::new(), pending: None, width, rows: Vec::new(), hovered: None, armed: None }
-    }
-    fn hit(&self, p: (f32, f32)) -> Option<Hit> {
-        self.rows.iter().find(|(h, top, ht)| {
-            let in_row = p.1 >= *top && p.1 < top + ht;
-            match h {
-                Hit::Row(_) => in_row,
-                Hit::Power(k) => in_row && {
-                    let x = self.width - 4.0 - (self.power.len() - k) as f32 * 32.0;
-                    p.0 >= x && p.0 < x + 30.0
-                },
-            }
-        }).map(|r| r.0)
-    }
-}
-
-/// A piece of the launcher panel.
+/// A piece of the list.
 #[derive(Clone, Copy, PartialEq)]
 enum Part {
     Field,
     Line,
     Row(usize),
     Hint,
-    Power,
+}
+
+/// The panel laid out: the list's pieces (what, top, height) in the list's area, the
+/// total height, the list's area, the buttons' boxes, the row's note box (x, centre y,
+/// width) and the dividing line (x, y, w, h).
+struct Lay {
+    parts: Vec<(Part, f32, f32)>,
+    h: f32,
+    list_x: f32,
+    list_w: f32,
+    boxes: Vec<(Hit, [f32; 4])>,
+    note: Option<[f32; 3]>,
+    divider: Option<[f32; 4]>,
 }
 
 impl LauncherPanel {
-    /// Its parts top to bottom (what, top, height) and the total height. A bottom dock
-    /// mirrors them (the page's column-reverse): the field by the dock, the best match
-    /// next to it, the power buttons furthest away.
-    fn parts(&self, results: usize, no_match: bool, lh: f32, bottom: bool) -> (Vec<(Part, f32, f32)>, f32) {
-        let mut v = Vec::new();
+    pub fn new(opts: &Opts, own_field: bool) -> LauncherPanel {
+        set_opts(opts);
+        let chosen: Vec<String> = opts.table.get("power").and_then(|p| p.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        let power = (0..POWER.len()).filter(|&i| chosen.iter().any(|c| c == POWER[i].0)).collect();
+        let buttons = opts
+            .table
+            .get("buttons")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|it| {
+                        let s = |k: &str| it.get(k).and_then(|v| v.as_str()).map(String::from);
+                        let action = s("action")?;
+                        Some(Custom { icon: s("icon").unwrap_or_else(|| "\u{E8B7}".into()), label: s("label").unwrap_or_else(|| action.clone()), action, target: s("target"), confirm: it.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false) })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let width = opts.num("panel_width").map_or(340.0, |w| w.clamp(240.0, 700.0) as f32);
+        let align = match opts.str("power_align") {
+            Some(a @ ("left" | "center")) => a.to_string(),
+            _ => "right".to_string(),
+        };
+        LauncherPanel {
+            own_field,
+            surface: opts.surface.clone(),
+            power,
+            buttons,
+            show_user: opts.table.get("user").and_then(|v| v.as_bool()).unwrap_or(false),
+            user: None,
+            user_pic: None,
+            side: opts.str("buttons_position") == Some("left"),
+            align,
+            icons: HashMap::new(),
+            pixels: HashMap::new(),
+            asked: Vec::new(),
+            pending: None,
+            width,
+            boxes: Vec::new(),
+            hovered: None,
+            armed: None,
+        }
+    }
+
+    fn hit(&self, p: (f32, f32)) -> Option<Hit> {
+        self.boxes.iter().find(|(_, b)| p.0 >= b[0] && p.0 < b[0] + b[2] && p.1 >= b[1] && p.1 < b[1] + b[3]).map(|(h, _)| *h)
+    }
+
+    fn controls(&self) -> bool {
+        self.show_user || !self.buttons.is_empty() || !self.power.is_empty()
+    }
+
+    /// The user's name as shown in the row (fitted), and the width it takes.
+    fn user_name(&self, g: &Gfx, cx: &Ctx) -> (String, f32) {
+        let name = self.user.as_ref().map(|u| u.0.clone()).unwrap_or_default();
+        let f = cx.secondary(12.0);
+        let text = fit_text(g, &name, &f, self.width * 0.4);
+        let w = g.measure(&text, &f);
+        (text, w)
+    }
+
+    fn lay(&self, g: &Gfx, cx: &Ctx, results: usize, no_match: bool, lh: f32) -> Lay {
+        let bottom = cx.look.bottom;
+        let side = self.side && self.controls();
+        let list_x = if side { COL + 1.0 + 6.0 } else { 0.0 };
+        let list_w = self.width - list_x;
+        let mut parts = Vec::new();
         let mut y = 0.0;
         if self.own_field {
-            v.push((Part::Field, 4.0, 26.0));
-            v.push((Part::Line, 4.0 + 26.0 + 8.0, 1.0));
+            parts.push((Part::Field, 4.0, 26.0));
+            parts.push((Part::Line, 4.0 + 26.0 + 8.0, 1.0));
             y += 4.0 + 26.0 + 8.0 + 1.0 + 4.0;
         }
         for i in 0..results {
-            v.push((Part::Row(i), y, ROW_H));
+            parts.push((Part::Row(i), y, ROW_H));
             y += ROW_H + 2.0;
         }
         if no_match {
-            v.push((Part::Hint, y, 12.0 + lh));
+            parts.push((Part::Hint, y, 12.0 + lh));
             y += 12.0 + lh;
         }
-        if !self.power.is_empty() {
-            v.push((Part::Line, y + 4.0, 1.0));
-            v.push((Part::Power, y + 4.0 + 1.0 + 6.0, 28.0));
-            y += 4.0 + 1.0 + 6.0 + 28.0;
-        }
-        if bottom {
-            for p in &mut v {
-                p.1 = y - p.1 - p.2;
+        let list_h = y;
+        let (nb, np) = (self.buttons.len(), self.power.len());
+        let mut boxes = Vec::new();
+        let (mut note, mut divider) = (None, None);
+        let h;
+        if !self.controls() {
+            h = list_h;
+        } else if side {
+            // The column: the user and the buttons from the top, power buttons at the end.
+            let bx = (COL - BTN_W) / 2.0;
+            let mut top = 4.0;
+            if self.show_user {
+                boxes.push((Hit::User, [(COL - 30.0) / 2.0, top, 30.0, 30.0]));
+                top += 30.0 + 6.0;
+            }
+            for k in 0..nb {
+                boxes.push((Hit::Button(k), [bx, top, BTN_W, BTN_H]));
+                top += BTN_H + 2.0;
+            }
+            let power_h = np as f32 * (BTN_H + 2.0);
+            h = list_h.max(top + if np > 0 && top > 4.0 { 8.0 } else { 0.0 } + power_h + 2.0);
+            let mut py = h - 2.0 - power_h;
+            for k in 0..np {
+                boxes.push((Hit::Power(k), [bx, py, BTN_W, BTN_H]));
+                py += BTN_H + 2.0;
+            }
+            divider = Some([COL, 4.0, 1.0, (h - 8.0).max(0.0)]);
+        } else {
+            // The row at the end: the user, then the buttons (aligned as asked).
+            parts.push((Part::Line, y + 4.0, 1.0));
+            let band = y + 4.0 + 1.0 + 6.0;
+            h = band + BTN_H;
+            let user_w = if self.show_user { 3.0 + 24.0 + 8.0 + self.user_name(g, cx).1 + 8.0 } else { 0.0 };
+            if self.show_user {
+                boxes.push((Hit::User, [0.0, band, user_w, BTN_H]));
+            }
+            let n = (nb + np) as f32;
+            let gw = n * (BTN_W + 2.0) - 2.0;
+            let after_user = if self.show_user { user_w + 4.0 } else { 4.0 };
+            let gx = match self.align.as_str() {
+                "left" => after_user,
+                "center" => ((self.width - gw) / 2.0).max(after_user),
+                _ => self.width - 4.0 - gw,
+            };
+            for k in 0..nb + np {
+                let hit = if k < nb { Hit::Button(k) } else { Hit::Power(k - nb) };
+                boxes.push((hit, [gx + k as f32 * (BTN_W + 2.0), band, BTN_W, BTN_H]));
+            }
+            // The note (a button's name, "Click again to ...") in the free side.
+            let (nx, nr) = if self.align == "left" { (gx + gw + 6.0, self.width - 6.0) } else { (after_user + 2.0, gx - 6.0) };
+            if nr - nx > 30.0 {
+                note = Some([nx, band + BTN_H / 2.0, nr - nx]);
             }
         }
-        (v, y)
+        // A bottom dock mirrors the list (the field by the dock, the best match next to
+        // it) and the row (furthest away); the column stays as it is.
+        if bottom {
+            for p in &mut parts {
+                p.1 = h - p.1 - p.2;
+            }
+            if !side {
+                for (_, b) in &mut boxes {
+                    b[1] = h - b[1] - b[3];
+                }
+                if let Some(n) = note.as_mut() {
+                    n[1] = h - n[1];
+                }
+            }
+        }
+        Lay { parts, h, list_x, list_w, boxes, note, divider }
+    }
+
+    /// What the note says: a confirmation asked for, else the hovered button's name.
+    fn note_text(&self) -> Option<(String, bool)> {
+        let label = |hit: Hit| match hit {
+            Hit::Button(k) => self.buttons.get(k).map(|b| b.label.clone()),
+            Hit::Power(k) => self.power.get(k).map(|&p| POWER[p].1.to_string()),
+            Hit::User => self.user.as_ref().map(|u| u.0.clone()).filter(|_| self.side),
+            Hit::Row(_) => None,
+        };
+        if let Some((hit, _)) = self.armed {
+            return label(hit).map(|l| (format!("Click again to {}", l.to_lowercase()), true));
+        }
+        self.hovered.and_then(label).map(|l| (l, false))
+    }
+
+    /// The account picture (round), or a person glyph until it's read.
+    fn draw_user_pic(&self, g: &Gfx, cx: &Ctx, x: f32, y: f32, d: f32, alpha: f32) {
+        match &self.user_pic {
+            Some(bmp) => g.fill_picture(bmp, rect(x, y, d, d), d / 2.0, alpha),
+            None => {
+                g.fill_round(rect(x, y, d, d), d / 2.0, white(0.12 * alpha));
+                let f = Font::icons(d / 2.0);
+                let w = g.measure("\u{E77B}", &f);
+                g.text_at("\u{E77B}", &f, x + (d - w) / 2.0, y + d / 2.0, with_alpha(cx.look.fg, alpha));
+            }
+        }
+    }
+
+    /// A click on a button: a second one first if it asks for that, then its action and
+    /// the launcher closes.
+    fn press(&mut self, hit: Hit) -> Reply {
+        let close = Act::Launcher { open: false, refocus: false };
+        let (act, confirm) = match hit {
+            Hit::User => (Act::Run { action: "open".into(), target: Some("ms-settings:yourinfo".into()) }, false),
+            Hit::Button(k) => {
+                let b = &self.buttons[k];
+                (Act::Run { action: b.action.clone(), target: b.target.clone() }, b.confirm)
+            }
+            Hit::Power(k) => {
+                let (action, _, _, confirm) = POWER[self.power[k]];
+                let act = action.to_string();
+                (
+                    Act::call(move |app| {
+                        let _ = tauri::async_runtime::block_on(crate::actions::run_action(app, act, None));
+                    }),
+                    confirm,
+                )
+            }
+            Hit::Row(_) => return Reply::None,
+        };
+        if confirm && !self.armed.is_some_and(|a| a.0 == hit) {
+            self.armed = Some((hit, Instant::now() + Duration::from_secs(3)));
+            return Reply::Redraw;
+        }
+        self.armed = None;
+        Reply::Do(act.then(close))
     }
 }
 
 impl Panel for LauncherPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["appIcons"]
+        &["appIcons", "launcher:apps", "launcher:pinned", "launcher:user"]
     }
-    fn data(&mut self, _key: &str, v: &Value) -> bool {
-        if let Some(map) = v.as_object() {
-            for (id, icon) in map {
-                if !self.icons.contains_key(id) {
-                    if let Some(px) = decode(icon) {
-                        self.pixels.insert(id.clone(), px);
+    fn data(&mut self, key: &str, v: &Value) -> bool {
+        match key {
+            "appIcons" => {
+                if let Some(map) = v.as_object() {
+                    for (id, icon) in map {
+                        if !self.icons.contains_key(id) {
+                            if let Some(px) = decode(icon) {
+                                self.pixels.insert(id.clone(), px);
+                            }
+                        }
                     }
                 }
             }
+            "launcher:user" => {
+                use base64::Engine;
+                let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let picture = v
+                    .get("picture")
+                    .and_then(|p| p.as_str())
+                    .and_then(|url| url.split_once(','))
+                    .and_then(|(_, b64)| base64::engine::general_purpose::STANDARD.decode(b64).ok());
+                if self.user.as_ref().is_none_or(|u| u.0 != name || u.1 != picture) {
+                    self.user = Some((name, picture));
+                    self.user_pic = None;
+                }
+            }
+            _ => take_list(key, v),
         }
         true
     }
@@ -556,7 +810,7 @@ impl Panel for LauncherPanel {
         self.pending.take()
     }
     fn wake(&self) -> Option<Instant> {
-        // The own field's caret blinks; an armed power button disarms after 3 s.
+        // The own field's caret blinks; an armed button disarms after 3 s.
         let caret = (self.own_field && searching_on(&self.surface)).then(|| Instant::now() + Duration::from_millis(265));
         [caret, self.armed.map(|a| a.1)].into_iter().flatten().min()
     }
@@ -576,9 +830,14 @@ impl Panel for LauncherPanel {
                 self.icons.insert(id, i);
             }
         }
+        if self.user_pic.is_none() {
+            if let Some(bytes) = self.user.as_ref().and_then(|u| u.1.as_ref()) {
+                self.user_pic = g.picture(bytes).ok();
+            }
+        }
         let (results, query, ids) = S.with(|s| {
             let s = s.borrow();
-            (s.results.len(), s.query.clone(), s.results.iter().filter(|&&i| i != CALC).map(|&i| s.apps[i].0.clone()).collect::<Vec<_>>())
+            (s.results.len(), s.query.clone(), s.results.iter().filter(|&&i| i != CALC).map(|&i| entry(&s, i).0).collect::<Vec<_>>())
         });
         // Icons for results not asked for yet.
         let wanted: Vec<String> = ids.into_iter().filter(|id| !self.asked.contains(id)).collect();
@@ -597,50 +856,53 @@ impl Panel for LauncherPanel {
             }));
         }
         let lh = g.text("Ag", &cx.body()).map_or(16.0, |t| t.height);
-        let (parts, h) = self.parts(results, !query.trim().is_empty() && results == 0, lh, cx.look.bottom);
-        let mut rows = Vec::new();
-        for &(part, top, ht) in &parts {
-            match part {
-                Part::Row(i) => rows.push((Hit::Row(i), top, ht)),
-                Part::Power => rows.extend((0..self.power.len()).map(|k| (Hit::Power(k), top, ht))),
-                _ => {}
-            }
-        }
-        self.rows = rows;
-        (self.width, h.max(1.0))
+        let lay = self.lay(g, cx, results, !query.trim().is_empty() && results == 0, lh);
+        let mut boxes: Vec<(Hit, [f32; 4])> = lay
+            .parts
+            .iter()
+            .filter_map(|&(part, top, ht)| match part {
+                Part::Row(i) => Some((Hit::Row(i), [lay.list_x, top, lay.list_w, ht])),
+                _ => None,
+            })
+            .collect();
+        boxes.extend(lay.boxes);
+        self.boxes = boxes;
+        (self.width, lay.h.max(1.0))
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
         let fg = with_alpha(cx.look.fg, alpha);
         let dim = with_alpha(cx.look.dimmed(), alpha);
         let body = cx.body();
+        let small = cx.secondary(12.0);
         let lh = g.text("Ag", &body).map_or(16.0, |t| t.height);
         let (results, selected, query) = S.with(|s| {
             let s = s.borrow();
             (s.results.iter().map(|&i| entry(&s, i)).collect::<Vec<_>>(), s.selected, s.query.clone())
         });
-        let (parts, _) = self.parts(results.len(), !query.trim().is_empty() && results.is_empty(), lh, cx.look.bottom);
-        for &(part, top, _) in &parts {
+        let lay = self.lay(g, cx, results.len(), !query.trim().is_empty() && results.is_empty(), lh);
+        let (lx, lw) = (x + lay.list_x, lay.list_w);
+        for &(part, top, _) in &lay.parts {
             let top = y + top;
             match part {
                 Part::Field => {
                     let cy = top + 13.0;
-                    let iw = g.text_at("\u{E721}", &Font::icons(14.0), x + 8.0, cy + 1.0, fg);
-                    draw_field(g, cx, x + 8.0 + iw + 10.0, cy, self.width - 16.0 - iw - 10.0, alpha);
+                    let iw = g.text_at("\u{E721}", &Font::icons(14.0), lx + 8.0, cy + 1.0, fg);
+                    draw_field(g, cx, lx + 8.0 + iw + 10.0, cy, lw - 16.0 - iw - 10.0, alpha);
                 }
-                Part::Line => g.fill_rect(rect(x, top, self.width, 1.0), white(0.08 * alpha)),
+                Part::Line => g.fill_rect(rect(lx, top, lw, 1.0), white(0.08 * alpha)),
                 Part::Row(i) => {
                     let (id, name) = &results[i];
                     if i == selected {
-                        g.fill_round(rect(x, top, self.width, ROW_H), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+                        g.fill_round(rect(lx, top, lw, ROW_H), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
                     }
                     let cy = top + ROW_H / 2.0;
                     if id.starts_with("calc:") {
                         let f = Font::icons(16.0);
                         let w = g.measure("\u{E8EF}", &f);
-                        g.text_at("\u{E8EF}", &f, x + 8.0 + (22.0 - w) / 2.0, cy, fg);
+                        g.text_at("\u{E8EF}", &f, lx + 8.0 + (22.0 - w) / 2.0, cy, fg);
                     } else if let Some(icon) = self.icons.get(id) {
-                        icon.draw(g, x + 8.0, top + 6.0, 22.0, alpha);
+                        icon.draw(g, lx + 8.0, top + 6.0, 22.0, alpha);
                     }
                     // What it is, dimmed at the end: a Settings page, the sum's answer (copied).
                     let tag = if id.starts_with("ms-settings:") {
@@ -650,34 +912,61 @@ impl Panel for LauncherPanel {
                     } else {
                         ""
                     };
-                    let small = cx.secondary(12.0);
                     let tw = if tag.is_empty() { 0.0 } else { g.measure(tag, &small) + 12.0 };
                     if !tag.is_empty() {
-                        g.text_at(tag, &small, x + self.width - 10.0 - (tw - 12.0), cy, dim);
+                        g.text_at(tag, &small, lx + lw - 10.0 - (tw - 12.0), cy, dim);
                     }
-                    g.text_at(&fit_text(g, name, &body, self.width - 48.0 - tw), &body, x + 40.0, cy, fg);
+                    g.text_at(&fit_text(g, name, &body, lw - 48.0 - tw), &body, lx + 40.0, cy, fg);
                 }
                 Part::Hint => {
-                    g.text_at("No apps found", &cx.secondary(cx.look.font_size), x + 8.0, top + 6.0 + lh / 2.0, dim);
+                    g.text_at("No apps found", &cx.secondary(cx.look.font_size), lx + 8.0, top + 6.0 + lh / 2.0, dim);
                 }
-                Part::Power => {
-                    let cy = top + 14.0;
-                    let n = self.power.len();
-                    if let Some((k, _)) = self.armed {
-                        let label = POWER[self.power[k]].1.to_lowercase();
-                        g.text_at(&format!("Click again to {label}"), &cx.secondary(12.0), x + 6.0, cy, dim);
-                    }
-                    for (k, &p) in self.power.iter().enumerate() {
-                        let bx = x + self.width - 4.0 - (n - k) as f32 * 32.0;
-                        let on = self.hovered == Some(Hit::Power(k));
-                        if on {
-                            g.fill_round(rect(bx, cy - 14.0, 30.0, 28.0), 8.0, white(0.1 * alpha));
-                        }
-                        let f = Font::icons(14.0);
-                        let w = g.measure(POWER[p].2, &f);
-                        g.text_at(POWER[p].2, &f, bx + (30.0 - w) / 2.0, cy, if on { fg } else { dim });
-                    }
+            }
+        }
+        if let Some(d) = lay.divider {
+            g.fill_rect(rect(x + d[0], y + d[1], d[2], d[3]), white(0.08 * alpha));
+        }
+        for &(hit, b) in &lay.boxes {
+            let (bx, by) = (x + b[0], y + b[1]);
+            let on = self.hovered == Some(hit);
+            let armed = self.armed.is_some_and(|a| a.0 == hit);
+            if armed || on {
+                g.fill_round(rect(bx, by, b[2], b[3]), 8.0, white(if armed { 0.16 } else { 0.1 } * alpha));
+            }
+            match hit {
+                Hit::User if self.side => self.draw_user_pic(g, cx, bx + 1.0, by + 1.0, 28.0, alpha),
+                Hit::User => {
+                    self.draw_user_pic(g, cx, bx + 3.0, by + (b[3] - 24.0) / 2.0, 24.0, alpha);
+                    let (name, _) = self.user_name(g, cx);
+                    g.text_at(&name, &small, bx + 3.0 + 24.0 + 8.0, by + b[3] / 2.0, fg);
                 }
+                Hit::Button(_) | Hit::Power(_) => {
+                    let glyph = match hit {
+                        Hit::Button(k) => self.buttons[k].icon.as_str(),
+                        Hit::Power(k) => POWER[self.power[k]].2,
+                        _ => "",
+                    };
+                    let f = Font::icons(14.0);
+                    let w = g.measure(glyph, &f);
+                    g.text_at(glyph, &f, bx + (b[2] - w) / 2.0, by + b[3] / 2.0, if on || armed { fg } else { dim });
+                }
+                Hit::Row(_) => {}
+            }
+        }
+        // A button's name or a confirmation: in the row's free side, or (column) as a
+        // label beside the button.
+        if let Some((text, ask)) = self.note_text() {
+            let anchor = self.armed.map(|a| a.0).or(self.hovered);
+            if let Some(n) = lay.note {
+                let t = fit_text(g, &text, &small, n[2]);
+                let tx = if self.align == "left" { x + n[0] + n[2] - g.measure(&t, &small) } else { x + n[0] };
+                g.text_at(&t, &small, tx, y + n[1], if ask { fg } else { dim });
+            } else if let Some(b) = anchor.and_then(|h| lay.boxes.iter().find(|(bh, _)| *bh == h)).map(|(_, b)| *b).filter(|_| lay.divider.is_some()) {
+                let tw = g.measure(&text, &small).min(lay.list_w - 12.0);
+                let t = fit_text(g, &text, &small, tw);
+                let (px, cy) = (x + COL + 6.0, y + b[1] + b[3] / 2.0);
+                g.fill_round(rect(px, cy - 12.0, tw + 16.0, 24.0), 8.0, with_alpha(rgba(0.16, 0.16, 0.16, 1.0), alpha));
+                g.text_at(&t, &small, px + 8.0, cy, fg);
             }
         }
     }
@@ -712,21 +1001,7 @@ impl Panel for LauncherPanel {
                     None => Reply::None,
                 }
             }
-            Some(Hit::Power(k)) => {
-                let (action, _, _, confirm) = POWER[self.power[k]];
-                if confirm && !self.armed.is_some_and(|a| a.0 == k) {
-                    self.armed = Some((k, Instant::now() + Duration::from_secs(3)));
-                    return Reply::Redraw;
-                }
-                self.armed = None;
-                let act = action.to_string();
-                Reply::Do(
-                    Act::call(move |app| {
-                        let _ = tauri::async_runtime::block_on(crate::actions::run_action(app, act, None));
-                    })
-                    .then(Act::Launcher { open: false, refocus: false }),
-                )
-            }
+            Some(hit) => self.press(hit),
             None => Reply::None,
         }
     }

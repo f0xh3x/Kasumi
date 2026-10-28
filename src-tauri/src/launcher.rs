@@ -154,8 +154,8 @@ fn settings_keys(id: &str) -> Option<&'static str> {
 }
 
 /// The shell path an id opens: Control Panel ids are absolute ("::{...}"), programs
-/// on the PATH their file, Settings pages their link, app ids are AppsFolder parsing
-/// names.
+/// on the PATH and Start's pinned shortcuts their file, Settings pages their link, app
+/// ids are AppsFolder parsing names.
 fn shell_path(id: &str) -> String {
     if id.starts_with("::") {
         format!("shell:{id}")
@@ -163,7 +163,7 @@ fn shell_path(id: &str) -> String {
         // The link as it is (with "shell:" in front Explorer doesn't know it and opens
         // Documents).
         id.to_string()
-    } else if let Some(path) = id.strip_prefix(RUN) {
+    } else if let Some(path) = id.strip_prefix(RUN).or_else(|| id.strip_prefix(LNK)) {
         path.to_string()
     } else {
         format!("shell:AppsFolder\\{id}")
@@ -247,6 +247,67 @@ fn apps() -> Vec<(String, String)> {
     let apps = enumerate();
     *INDEX.lock().unwrap() = Some(Index { at: Instant::now(), apps: apps.clone() });
     apps
+}
+
+/// Shortcuts pinned to Start that no app in the index has the name of: `lnk:<path>`.
+const LNK: &str = "lnk:";
+
+static PINS: Mutex<Option<(Instant, Vec<(String, String)>)>> = Mutex::new(None);
+
+/// `%APPDATA%\x` -> its folder (the variables in Start's layout).
+fn expand_vars(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(a) = rest.find('%') {
+        let Some(b) = rest[a + 1..].find('%') else { break };
+        out.push_str(&rest[..a]);
+        let name = &rest[a + 1..a + 1 + b];
+        out.push_str(&std::env::var(name).unwrap_or_else(|_| format!("%{name}%")));
+        rest = &rest[a + 2 + b..];
+    }
+    out + rest
+}
+
+/// The apps pinned to Windows' Start menu, in its order ([widgets.launcher] pinned):
+/// Windows has no API for them, but `Export-StartLayout` writes them as JSON (Windows
+/// 11; elsewhere none). Store apps come as their app ids, desktop apps as their Start
+/// menu shortcuts, matched to the index by name. Read again after a minute at most.
+pub fn start_pins() -> Vec<(String, String)> {
+    if let Some((at, pins)) = PINS.lock().unwrap().as_ref() {
+        if at.elapsed() < Duration::from_secs(60) {
+            return pins.clone();
+        }
+    }
+    let file = std::env::temp_dir().join(format!("kasumi-start-{}.json", std::process::id()));
+    let ok = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &format!("Export-StartLayout -Path '{}'", file.display())])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    let text = if ok { std::fs::read_to_string(&file).unwrap_or_default() } else { String::new() };
+    let _ = std::fs::remove_file(&file);
+    let layout: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).unwrap_or(Value::Null);
+    let index = apps();
+    let by_id = |id: &str| index.iter().find(|(i, _)| i.eq_ignore_ascii_case(id)).cloned();
+    let by_name = |name: &str| index.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)).cloned();
+    let mut pins = Vec::new();
+    for p in layout.get("pinnedList").and_then(|l| l.as_array()).into_iter().flatten() {
+        let s = |k: &str| p.get(k).and_then(|v| v.as_str());
+        if let Some(found) = s("packagedAppId").and_then(by_id) {
+            pins.push(found);
+        } else if let Some(link) = s("desktopAppLink") {
+            let path = expand_vars(link);
+            let name = std::path::Path::new(&path).file_stem().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            pins.push(by_name(&name).unwrap_or_else(|| (format!("{LNK}{path}"), name)));
+        }
+    }
+    pins.dedup();
+    *PINS.lock().unwrap() = Some((Instant::now(), pins.clone()));
+    pins
 }
 
 #[tauri::command]
@@ -433,10 +494,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn expands_variables() {
+        std::env::set_var("KASUMI_TEST_DIR", r"C:\Users\x");
+        assert_eq!(expand_vars(r"%KASUMI_TEST_DIR%\Start Menu\a.lnk"), r"C:\Users\x\Start Menu\a.lnk");
+        assert_eq!(expand_vars(r"%NO_SUCH_VAR_K%\a"), r"%NO_SUCH_VAR_K%\a");
+        assert_eq!(expand_vars("100% sure"), "100% sure");
+    }
+
+    /// The Start menu's pins on this PC: `cargo test start_pins_read -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn start_pins_read() {
+        let t = Instant::now();
+        let pins = start_pins();
+        println!("{} pins in {} ms", pins.len(), t.elapsed().as_millis());
+        for p in pins {
+            println!("  {p:?}");
+        }
+    }
+
+    #[test]
     fn opens_what_each_id_is() {
         assert_eq!(shell_path("ms-settings:personalization-background"), "ms-settings:personalization-background");
         assert_eq!(shell_path("::{26EE0668-A00A-44D7-9371-BEB064C98683}\\0\\::{74246BFC}"), "shell:::{26EE0668-A00A-44D7-9371-BEB064C98683}\\0\\::{74246BFC}");
         assert_eq!(shell_path("run:C:\\Windows\\notepad.exe"), "C:\\Windows\\notepad.exe");
+        assert_eq!(shell_path("lnk:C:\\Start Menu\\Zen.lnk"), "C:\\Start Menu\\Zen.lnk");
         assert_eq!(shell_path("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"), "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
         // Every Settings page in the table is a link of its own.
         for (page, ..) in SETTINGS_PAGES {
