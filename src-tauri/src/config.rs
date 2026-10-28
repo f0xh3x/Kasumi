@@ -216,6 +216,9 @@ pub struct General {
     pub corners_attached: bool,
     /// Tooltips when hovering widgets.
     pub tooltips: bool,
+    /// Other apps' tooltips (classic ones: Explorer's, the tray's) in Kasumi's look
+    /// (native/apptips.rs; experimental).
+    pub app_tooltips: bool,
     /// Look for a new version on GitHub when Kasumi starts, and say so (updater.rs).
     pub check_updates: bool,
     /// Install new versions from GitHub by itself (updater.rs).
@@ -235,6 +238,7 @@ impl Default for General {
             corner_radius: 10.0,
             corners_attached: true,
             tooltips: true,
+            app_tooltips: false,
             check_updates: true,
             auto_update: false,
             update_notes: true,

@@ -139,6 +139,13 @@ export const pages: Page[] = [
           { kind: "toggle", label: "Tooltips", help: "Show a hint when hovering widgets in the bars.", path: ["general", "tooltips"], default: true },
           {
             kind: "toggle",
+            label: "Other apps' tooltips too (experimental)",
+            help: "Hover hints in File Explorer, the tray and classic Windows apps show in Kasumi's look (newer apps and browsers draw their own, which stay as they are).",
+            path: (cfg) => (cfg.general?.tooltips === false ? null : ["general", "app_tooltips"]),
+            default: false,
+          },
+          {
+            kind: "toggle",
             label: "Hide the Windows taskbar",
             help: "Hidden while Kasumi runs and restored when it quits. The Win key and Start menu keep working. Turn off Windhawk mods that show the taskbar (e.g. “Taskbar auto-hide when maximized”).",
             path: ["shell", "hide_taskbar"],

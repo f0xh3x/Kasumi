@@ -4,6 +4,7 @@
 //! `ui.rs`, which posts `Msg`s here. A surface reports what a page reported
 //! (notch widths, interactive regions) straight to the engine.
 
+pub mod apptips;
 pub mod ctxmenu;
 pub mod geometry;
 mod drop;
@@ -123,6 +124,9 @@ pub enum Msg {
     AltTabChanged,
     /// The scroll position pop-up (osd/scroll.rs).
     Scroll(Box<ScrollShow>),
+    /// Another app's tooltip to cover with Kasumi's: its text and box (screen px), or
+    /// none (it hid; apptips.rs).
+    AppTip(Option<(String, [i32; 4])>),
 }
 
 /// Where a view has scrolled to (shares of the track), on which monitor, for how long,
@@ -246,6 +250,8 @@ pub(crate) struct Native {
     alt_float: Option<floating::Floating>,
     /// The scroll position bar (made the first time).
     scroll: Option<scrollbar::ScrollBar>,
+    /// Kasumi's tooltip over another app's (apptips.rs; made the first time).
+    app_tip: Option<tooltip::Tooltip>,
     /// Win + Space pressed, the picker not shown yet (a quick press just switches):
     /// which press (its number) and its direction.
     lang_pending: Option<(u64, bool)>,
@@ -299,7 +305,7 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
         return;
     };
     WAKE.store(wake.0 as isize, Ordering::Relaxed);
-    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None, scroll: None, lang_pending: None, lang_presses: 0 }));
+    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None, scroll: None, app_tip: None, lang_pending: None, lang_presses: 0 }));
     INBOX.with(|i| *i.borrow_mut() = Some(rx));
     let _ = ready.send(());
     eprintln!("[kasumi] native renderer started");
@@ -470,6 +476,27 @@ impl Native {
                     self.lang_open(back);
                 }
             }
+            Msg::AppTip(tip) => match tip {
+                Some((text, cover)) => {
+                    // The look of the bar on the monitor it's on (else the first one's).
+                    let (cx, cy) = ((cover[0] + cover[2]) / 2, (cover[1] + cover[3]) / 2);
+                    let on = |s: &&Surface| {
+                        let m = s.monitor();
+                        cx >= m.left && cx < m.right && cy >= m.top && cy < m.bottom
+                    };
+                    let Some(s) = self.surfaces.iter().find(on).or(self.surfaces.first()) else { return };
+                    let (look, scale) = (s.look().clone(), s.monitor().scale as f32);
+                    let tip = self.app_tip.get_or_insert_with(tooltip::Tooltip::default);
+                    if let Err(e) = tip.show_over(&self.gfx, &look, &text, cover, scale) {
+                        eprintln!("[kasumi] app tooltip: {e}");
+                    }
+                }
+                None => {
+                    if let Some(t) = self.app_tip.as_mut() {
+                        t.hide();
+                    }
+                }
+            },
             Msg::Scroll(show) => {
                 let bar = self.scroll.get_or_insert_with(scrollbar::ScrollBar::new);
                 bar.show(&show);

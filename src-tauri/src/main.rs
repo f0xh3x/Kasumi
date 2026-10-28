@@ -73,6 +73,9 @@ fn main() {
             keyhook::on_alt_tab(native::alt_tab);
             keyhook::on_lang(native::lang_switch);
             native::ctxmenu::watch(app.handle().clone());
+            if native::active() {
+                native::apptips::start(app.handle());
+            }
             autostart::refresh();
             updater::start(app.handle());
             settings::startup(app.handle(), first_run);
