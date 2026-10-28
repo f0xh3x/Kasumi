@@ -67,6 +67,18 @@ pub fn devices() -> Vec<(String, String, u8)> {
     out
 }
 
+/// For the settings page: the batteries there are now, `[{id, name, percent}]` (this
+/// PC's as "laptop"), to pick the ones the widget shows.
+#[tauri::command]
+pub async fn batteries_list() -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(p) = super::system::battery().get("percent").and_then(|p| p.as_f64()) {
+        out.push(json!({ "id": "laptop", "name": "This PC", "percent": p }));
+    }
+    out.extend(devices().into_iter().map(|(id, name, p)| json!({ "id": id, "name": name, "percent": p })));
+    out
+}
+
 fn wanted(app: &AppHandle) -> bool {
     super::placed(app, "batteries") || super::widget_opts(app, "quick").get("devices").and_then(|v| v.as_bool()) == Some(true)
 }

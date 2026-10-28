@@ -1126,6 +1126,40 @@ const itemsEditor = (widget: string, separators = true, key = "items"): Editor =
 
 const menuItems = itemsEditor("menu");
 
+/** The batteries the widget shows ([widgets.batteries] show = "chosen", ids in
+ *  `shown`): the ones there are now, each with a switch; ids picked earlier but not
+ *  connected now are kept. */
+const batteryPicks: Editor = (ctx) => {
+  const b = (ctx.cfg as any).widgets?.batteries ?? {};
+  if (b.show !== "chosen") return $("div");
+  const picked = new Set<string>(Array.isArray(b.shown) ? b.shown : []);
+  const box = $("div", "stack-tight", $("p", "card-help", "Looking for batteries…"));
+  invoke<{ id: string; name: string; percent: number }[]>("batteries_list")
+    .then((list) => {
+      if (!list.length) {
+        box.replaceChildren($("p", "card-help", "No batteries found: this PC has none, and no Bluetooth device with one is connected."));
+        return;
+      }
+      // Devices with the same name told apart by the end of their Bluetooth address.
+      const tail = (id: string) => {
+        const m = /DEV_([0-9A-F]{12})/i.exec(id);
+        return m ? ` · …${m[1].slice(-4)}` : "";
+      };
+      box.replaceChildren(
+        ...list.map((d) => {
+          const sw = toggleSwitch(picked.has(d.id), (on) => {
+            if (on) picked.add(d.id);
+            else picked.delete(d.id);
+            ctx.save(["widgets", "batteries", "shown"], [...picked]);
+          });
+          return row(d.name, `${Math.round(d.percent)}%${tail(d.id)}`, sw.el);
+        }),
+      );
+    })
+    .catch((e) => box.replaceChildren($("p", "card-help", `Couldn't list the batteries: ${e}`)));
+  return box;
+};
+
 /** The launcher's own buttons ([widgets.launcher] buttons): as a Buttons widget's. */
 const launcherButtons: Editor = (ctx) =>
   $(
@@ -1848,4 +1882,5 @@ export const editors: Record<string, Editor> = {
   tempsSensors,
   menuItems,
   launcherButtons,
+  batteryPicks,
 };

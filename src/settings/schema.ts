@@ -792,9 +792,18 @@ export const pages: Page[] = [
             options: [
               { value: "lowest", label: "The lowest battery" },
               { value: "all", label: "Every battery" },
+              { value: "chosen", label: "The ones you pick" },
             ],
           },
-          { kind: "toggle", label: "This PC's battery", help: "Counted in the bar too (laptops).", path: ["widgets", "batteries", "laptop"], default: true },
+          { kind: "custom", editor: "batteryPicks" },
+          {
+            kind: "toggle",
+            label: "This PC's battery",
+            help: "Counted in the bar too (laptops).",
+            path: (cfg) => (cfg.widgets?.batteries?.show === "chosen" ? null : ["widgets", "batteries", "laptop"]),
+            default: true,
+          },
+          { kind: "toggle", label: "Device names", help: "Each battery's name beside its level in the bar.", path: ["widgets", "batteries", "names"], default: false },
         ],
       },
       {

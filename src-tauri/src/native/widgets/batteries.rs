@@ -10,9 +10,11 @@ use super::shell::battery_glyph;
 use super::{fit_text, row_draw, row_width, Button, Ctx, Opts, Panel, Piece, Reply, Widget};
 use crate::native::gfx::{rect, white, with_alpha, Font, Gfx};
 
-/// A battery: name, percent, charging, and what's said of it (the laptop's time left).
+/// A battery: its id ("laptop", a device's), name, percent, charging, and what's said
+/// of it (the laptop's time left).
 #[derive(Clone, PartialEq)]
 struct Cell {
+    id: String,
     name: String,
     percent: f64,
     charging: bool,
@@ -37,13 +39,14 @@ fn cells(v: &Value) -> Vec<Cell> {
             })
         };
         if let Some(p) = b.get("percent").and_then(|p| p.as_f64()) {
-            out.push(Cell { name: "This PC".into(), percent: p, charging, note, laptop: true });
+            out.push(Cell { id: "laptop".into(), name: "This PC".into(), percent: p, charging, note, laptop: true });
         }
     }
     for d in v.get("devices").and_then(|d| d.as_array()).into_iter().flatten() {
         let name = d.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+        let id = d.get("id").and_then(|n| n.as_str()).unwrap_or("").to_string();
         if let Some(p) = d.get("percent").and_then(|p| p.as_f64()) {
-            out.push(Cell { name, percent: p, charging: false, note: String::new(), laptop: false });
+            out.push(Cell { id, name, percent: p, charging: false, note: String::new(), laptop: false });
         }
     }
     out
@@ -61,14 +64,23 @@ impl Batteries {
     pub fn new(opts: Opts) -> Batteries {
         Batteries { opts, cells: Vec::new() }
     }
-    /// The ones shown in the bar: all of them, or the lowest.
+    /// The ones shown in the bar: all of them, the ones picked ([widgets.batteries]
+    /// show = "chosen", their ids in `shown`), or the lowest.
     fn shown(&self) -> Vec<&Cell> {
-        let laptop = self.opts.flag("laptop") != Some(false);
-        let list: Vec<&Cell> = self.cells.iter().filter(|c| laptop || !c.laptop).collect();
-        if self.opts.str("show") == Some("all") {
-            return list;
+        match self.opts.str("show") {
+            Some("chosen") => {
+                let picked: Vec<&str> = self.opts.table.get("shown").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+                self.cells.iter().filter(|c| picked.contains(&c.id.as_str())).collect()
+            }
+            show => {
+                let laptop = self.opts.flag("laptop") != Some(false);
+                let list: Vec<&Cell> = self.cells.iter().filter(|c| laptop || !c.laptop).collect();
+                if show == Some("all") {
+                    return list;
+                }
+                list.into_iter().min_by(|a, b| a.percent.total_cmp(&b.percent)).into_iter().collect()
+            }
         }
-        list.into_iter().min_by(|a, b| a.percent.total_cmp(&b.percent)).into_iter().collect()
     }
     fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
         let body = cx.body();
@@ -80,6 +92,11 @@ impl Batteries {
             let color = if c.percent <= LOW && !c.charging { cx.look.warn } else { cx.look.fg };
             out.push(Piece::glyph(battery_glyph(c.percent, c.charging), 14.0, color));
             out.push(Piece::Gap(4.0));
+            // Its name before the level ([widgets.batteries] names).
+            if self.opts.flag("names") == Some(true) {
+                out.push(Piece::text(c.name.clone(), body.clone(), cx.look.dimmed()));
+                out.push(Piece::Gap(5.0));
+            }
             out.push(Piece::text(format!("{}%", c.percent.round()), body.clone(), color));
         }
         if out.is_empty() {
