@@ -33,14 +33,13 @@ use super::widgets::Look;
 
 // --- In the app: the helper runs while it's on ---------------------------------------
 
-/// Keeps the helper running while [context_menu] is on (native bars), and starts it
-/// again if it ends.
+/// Keeps the helper running while [context_menu] is on, and starts it again if it
+/// ends.
 pub fn watch(app: tauri::AppHandle) {
     let _ = std::thread::Builder::new().name("kasumi-ctxmenu".into()).spawn(move || {
         let mut child: Option<std::process::Child> = None;
         loop {
-            let want = super::active()
-                && tauri::Manager::state::<crate::providers::SharedConfig>(&app).read().map(|c| c.context_menu.enabled).unwrap_or(false);
+            let want = tauri::Manager::state::<crate::providers::SharedConfig>(&app).read().map(|c| c.context_menu.enabled).unwrap_or(false);
             if let Some(c) = child.as_mut() {
                 if let Ok(Some(status)) = c.try_wait() {
                     eprintln!("[kasumi] context menu helper ended ({status})");

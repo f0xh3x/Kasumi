@@ -1,5 +1,6 @@
-//! The native renderer ([general] renderer = "native"): the bars and docks drawn
-//! with Direct2D / DirectWrite into layered windows instead of WebView2 pages.
+//! The bars and docks, drawn with Direct2D / DirectWrite into layered windows. (Up to
+//! 0.6 they could also be WebView2 pages; that TypeScript, which this was ported
+//! from, is in git at v0.6.7.)
 //! One thread owns every surface; the engine and providers talk to it through
 //! `ui.rs`, which posts `Msg`s here. A surface reports what a page reported
 //! (notch widths, interactive regions) straight to the engine.
@@ -106,7 +107,7 @@ pub enum Msg {
     State(String, bool),
     Positions(String, Vec<NotchLayout>),
     Nudge(String, Option<String>),
-    /// Pop-ups and the rest: event name and payload, as the pages got them.
+    /// Pop-ups and the rest: event name and payload.
     Event(String, String, Value),
     Data(String, Value),
     /// Entries of an object key that changed (publish_entries).
@@ -174,7 +175,6 @@ pub fn win_key(n: u8) {
     post(Msg::WinKey(n));
 }
 
-static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Surfaces drawn off screen (the headless live test in snapshot.rs).
 static OFFSCREEN: AtomicBool = AtomicBool::new(false);
 /// Frames drawn while animating (the live test counts them).
@@ -187,11 +187,6 @@ const WM_WAKE: u32 = WM_APP + 1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const TIMER_WIDGETS: usize = 1;
 const TIMER_SCROLL: usize = 2;
-
-/// Whether the native renderer draws the bars (chosen at start).
-pub fn active() -> bool {
-    ACTIVE.load(Ordering::Relaxed)
-}
 
 /// Hands a message to the native thread.
 pub fn post(msg: Msg) {
@@ -229,7 +224,6 @@ fn spawn(app: Option<AppHandle>) {
     if SENDER.set(Mutex::new(tx)).is_err() {
         return;
     }
-    ACTIVE.store(true, Ordering::Relaxed);
     let (ready_tx, ready_rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("kasumi-native".into())

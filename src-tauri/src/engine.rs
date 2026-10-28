@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager};
 
 /// Extra window height below the tallest shape so spring overshoot isn't clipped.
 const OVERSHOOT_MARGIN: f64 = 24.0;
@@ -194,21 +194,6 @@ pub struct ReloadSender(pub Sender<()>);
 // Commands are async so they run off the main thread and never contend with
 // window operations the engine dispatches there.
 
-#[tauri::command]
-pub async fn get_layout(window: tauri::WebviewWindow, state: State<'_, SharedState>) -> Result<Layout, String> {
-    let sh = state.lock().unwrap();
-    let o = sh.overlays.get(window.label()).ok_or("unknown overlay")?;
-    let mut layout = o.layout.clone();
-    layout.expanded = o.expanded;
-    Ok(layout)
-}
-
-#[tauri::command]
-pub async fn set_regions(window: tauri::WebviewWindow, state: State<'_, SharedState>, regions: Vec<Rect>) -> Result<(), String> {
-    store_regions(&state, window.label(), regions);
-    Ok(())
-}
-
 fn store_regions(state: &SharedState, label: &str, regions: Vec<Rect>) {
     let mut sh = state.lock().unwrap();
     if let Some(o) = sh.overlays.get_mut(label) {
@@ -216,12 +201,12 @@ fn store_regions(state: &SharedState, label: &str, regions: Vec<Rect>) {
     }
 }
 
-/// A native surface's interactive areas (what `set_regions` is for the pages).
+/// A surface's interactive areas.
 pub fn native_regions(app: &AppHandle, label: &str, regions: Vec<Rect>) {
     store_regions(&app.state::<SharedState>(), label, regions);
 }
 
-/// A native surface measured its notches (what `set_notch_widths` is for the pages).
+/// A surface measured its notches.
 pub fn native_widths(app: &AppHandle, label: &str, widths: HashMap<String, NotchWidth>) {
     store_widths(&app.state::<SharedState>(), label, widths);
 }
@@ -239,56 +224,12 @@ fn store_widths(state: &SharedState, label: &str, widths: HashMap<String, NotchW
     }
 }
 
-/// The frontend measured its notches' content; positions are recomputed with
-/// these widths (the engine thread picks this up on its next tick).
-#[tauri::command]
-pub async fn set_notch_widths(
-    window: tauri::WebviewWindow,
-    state: State<'_, SharedState>,
-    widths: HashMap<String, NotchWidth>,
-) -> Result<(), String> {
-    store_widths(&state, window.label(), widths);
-    Ok(())
-}
-
-/// The frontend measured content (e.g. a bar dropdown) taller than the window: grow it.
-#[tauri::command]
-pub async fn set_content_height(window: tauri::WebviewWindow, state: State<'_, SharedState>, height: f64) -> Result<(), String> {
-    let (hwnd, m, h) = {
-        let mut sh = state.lock().unwrap();
-        let Some(o) = sh.overlays.get_mut(window.label()) else { return Ok(()) };
-        let wanted = (height + OVERSHOOT_MARGIN).ceil();
-        if wanted <= o.layout.height {
-            return Ok(());
-        }
-        o.layout.height = wanted;
-        (o.hwnd, o.monitor.clone(), (wanted, o.window_top()))
-    };
-    if let Some(hwnd) = hwnd {
-        let (h, top) = h;
-        let h_px = (h * m.scale).ceil() as i32;
-        window
-            .run_on_main_thread(move || win::place(hwnd, m.left, top, m.width(), h_px))
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 /// Physical y of the top of an overlay window `height` logical px tall on `edge`.
 fn window_top(m: &Monitor, edge: Edge, height: f64) -> i32 {
     match edge {
         Edge::Top => m.top,
         Edge::Bottom => m.bottom - (height * m.scale).ceil() as i32,
     }
-}
-
-/// Converts logical px within an overlay window (from its top-left, as the page
-/// sees it) to physical screen coordinates.
-pub fn to_screen(app: &AppHandle, label: &str, x: f64, y: f64) -> Option<(i32, i32)> {
-    let state = app.state::<SharedState>();
-    let sh = state.lock().unwrap();
-    let o = sh.overlays.get(label)?;
-    Some((o.monitor.left + (x * o.monitor.scale).round() as i32, o.window_top() + (y * o.monitor.scale).round() as i32))
 }
 
 /// Whether a monitor matches a [[monitors]] rule's `match` (or an OSD screen):
@@ -379,28 +320,6 @@ pub fn osd_targets(app: &AppHandle, kind: &str) -> Vec<(String, Option<String>)>
     out
 }
 
-/// Whether `layout` shows a widget of this type (`type` or `type#n`) in its bar
-/// or a notch, or a notch's own panel of that type (older configs name one).
-fn shows(layout: &Layout, ty: &str) -> bool {
-    let is = |w: &String| w.split('#').next() == Some(ty);
-    [&layout.bar.left, &layout.bar.center, &layout.bar.right].iter().any(|g| g.iter().any(is))
-        || layout.notches.iter().any(|n| n.widgets.iter().any(is) || n.panel.as_ref().is_some_and(is))
-}
-
-/// The overlays showing a widget of any of these types (who a data key goes to).
-pub fn overlays_showing(app: &AppHandle, types: &[&str]) -> Vec<String> {
-    let state = app.state::<SharedState>();
-    let sh = state.lock().unwrap();
-    sh.overlays.iter().filter(|(_, o)| types.iter().any(|t| shows(&o.layout, t))).map(|(l, _)| l.clone()).collect()
-}
-
-/// Whether this overlay shows a widget of any of these types.
-pub fn overlay_shows(app: &AppHandle, label: &str, types: &[&str]) -> bool {
-    let state = app.state::<SharedState>();
-    let sh = state.lock().unwrap();
-    sh.overlays.get(label).is_some_and(|o| types.iter().any(|t| shows(&o.layout, t)))
-}
-
 /// The window that was in front before the launcher took focus.
 static LAUNCHER_PREV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 /// The open launcher has had the focus (so losing it means the user went elsewhere).
@@ -450,7 +369,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             }
             drop(sh);
             for (l, hwnd) in show {
-                crate::ui::set_shown(app, &l, hwnd, true);
+                crate::ui::set_shown(&l, hwnd, true);
             }
             return;
         }
@@ -482,8 +401,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
         if opening && !o.expanded {
             o.expanded = true;
             o.hover = Hover::Open;
-            crate::ui::state(app, &label, true);
-            crate::ui::low_memory(app, &label, false);
+            crate::ui::state(&label, true);
         }
         if opening && !front_is_ours {
             LAUNCHER_PREV.store(front, std::sync::atomic::Ordering::Relaxed);
@@ -509,7 +427,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
                 Some(w) => {
                     let _ = w.show();
                 }
-                None => crate::ui::set_shown(&handle, &l, Some(hwnd), true),
+                None => crate::ui::set_shown(&l, Some(hwnd), true),
             }
         }
         if back {
@@ -561,7 +479,7 @@ pub fn launcher_toggle(app: &AppHandle, label: Option<String>, open: Option<bool
             }
         });
     }
-    crate::ui::event(app, &label, "notch://launcher", serde_json::json!({ "open": opening }));
+    crate::ui::event(&label, "notch://launcher", serde_json::json!({ "open": opening }));
 }
 
 fn o_pinned(sh: &Shared, label: &str) -> bool {
@@ -585,19 +503,6 @@ fn launcher_target(sh: &Shared) -> Option<String> {
         .or_else(|| here.iter().find(|(_, o)| o.edge == Edge::Bottom && !o.layout.notches.is_empty()))
         .or_else(|| here.iter().find(|(_, o)| o.edge == Edge::Top))
         .map(|(l, _)| (*l).clone())
-}
-
-/// The launcher widget was clicked: open the launcher on this overlay.
-#[tauri::command]
-pub async fn launcher_open(window: tauri::WebviewWindow) {
-    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(true), false);
-}
-
-/// The launcher closed (Esc, an app launched, focus lost). `refocus`: give the
-/// foreground back to the window that had it.
-#[tauri::command]
-pub async fn launcher_close(window: tauri::WebviewWindow, refocus: bool) {
-    launcher_toggle(window.app_handle(), Some(window.label().to_string()), Some(false), refocus);
 }
 
 /// Frontend console errors, forwarded to the app log.
@@ -1134,17 +1039,14 @@ impl Engine {
         }
 
         for label in to_destroy {
-            crate::ui::destroy(&self.app, &label);
+            crate::ui::destroy(&label);
         }
-        for (label, m, mut layout, moved, hwnd, expanded, top) in to_update {
-            if let (true, Some(h)) = (moved, hwnd) {
-                let h_px = (layout.height * m.scale).ceil() as i32;
-                crate::ui::place(&self.app, &label, h, m, top, h_px);
+        for (label, m, mut layout, moved, hwnd, expanded, _top) in to_update {
+            if moved && hwnd.is_some() {
+                crate::ui::place(&label, m);
             }
             layout.expanded = expanded;
-            crate::ui::layout(&self.app, &label, &layout);
-            // A widget may be new here, and data goes only to pages showing its widget.
-            crate::providers::resend(&self.app, &label);
+            crate::ui::layout(&label, &layout);
         }
         for (label, m, layout) in to_create {
             if let Err(e) = self.create_window(&label, &m, &layout) {
@@ -1157,59 +1059,21 @@ impl Engine {
 
     fn create_window(&self, label: &str, m: &Monitor, layout: &Layout) -> tauri::Result<()> {
         eprintln!("[kasumi] creating {label}");
-        if crate::ui::native() {
-            // Not under the lock: the native thread reports to the engine through it.
-            let created = crate::ui::create_native(label, m, layout);
-            let mut sh = self.shared.lock().unwrap();
-            match created {
-                Some(hwnd) => {
-                    if let Some(o) = sh.overlays.get_mut(label) {
-                        o.hwnd = Some(hwnd);
-                    }
-                    eprintln!("[kasumi] built {label} (native)");
+        // Not under the lock: the native thread reports to the engine through it.
+        let created = crate::ui::create(label, m, layout);
+        let mut sh = self.shared.lock().unwrap();
+        match created {
+            Some(hwnd) => {
+                if let Some(o) = sh.overlays.get_mut(label) {
+                    o.hwnd = Some(hwnd);
                 }
-                None => {
-                    eprintln!("[kasumi] failed to create native {label}");
-                    sh.overlays.remove(label);
-                }
+                eprintln!("[kasumi] built {label}");
             }
-            return Ok(());
+            None => {
+                eprintln!("[kasumi] failed to create {label}");
+                sh.overlays.remove(label);
+            }
         }
-        let window = WebviewWindowBuilder::new(&self.app, label, WebviewUrl::App("index.html".into()))
-            .title("Kasumi")
-            .transparent(true)
-            .decorations(false)
-            .shadow(false)
-            .always_on_top(true)
-            // No skip_taskbar(): it calls into Explorer's taskbar synchronously and
-            // hangs window creation whenever Explorer is hung. Instead a style guard
-            // (win::guard_overlay_style, installed before the window is shown) keeps
-            // it a tool window, so it never gets a taskbar button or Alt+Tab entry.
-            .resizable(false)
-            .focused(false)
-            .focusable(false)
-            .visible(false)
-            // Dropped files are taken by WebView2 itself (see dropzone).
-            .disable_drag_drop_handler()
-            .additional_browser_args(win::BROWSER_ARGS)
-            .build()?;
-        let hwnd = window.hwnd()?.0 as isize;
-        eprintln!("[kasumi] built {label}");
-        if let Some(o) = self.shared.lock().unwrap().overlays.get_mut(label) {
-            o.hwnd = Some(hwnd);
-        }
-        let (x, y, w, h) = (m.left, window_top(m, layout.edge, layout.height), m.width(), (layout.height * m.scale).ceil() as i32);
-        self.app.run_on_main_thread(move || {
-            let _ = window.set_ignore_cursor_events(true);
-            win::guard_overlay_style(hwnd);
-            win::place(hwnd, x, y, w, h);
-            crate::dropzone::attach(&window);
-            crate::webmem::set_low(&window, true);
-            // Show through tao so its visibility flag stays in sync; it re-applies
-            // that flag whenever window styles change (e.g. click-through toggles).
-            let _ = window.show();
-            eprintln!("[kasumi] shown {}", window.label());
-        })?;
         Ok(())
     }
 
@@ -1310,7 +1174,7 @@ impl Engine {
             }
         }
         for (label, hwnd, hide) in changes {
-            crate::ui::set_shown(&self.app, &label, hwnd, !hide);
+            crate::ui::set_shown(&label, hwnd, !hide);
         }
     }
 
@@ -1414,7 +1278,7 @@ impl Engine {
             if let Some(o) = self.shared.lock().unwrap().overlays.get_mut(&label) {
                 o.layout.notches = layout.notches;
             }
-            crate::ui::positions(&self.app, &label, notches);
+            crate::ui::positions(&label, notches);
         }
     }
 
@@ -1505,7 +1369,7 @@ impl Engine {
                 o.undocked = undocked;
                 o.layout.notches = layout.notches;
             }
-            crate::ui::positions(&self.app, &label, notches);
+            crate::ui::positions(&label, notches);
         }
     }
 
@@ -1622,16 +1486,15 @@ impl Engine {
             win::raise_topmost(h);
         }
         for (label, notch) in nudges {
-            crate::ui::nudge(&self.app, &label, notch);
+            crate::ui::nudge(&label, notch);
         }
         let toggled = !emits.is_empty();
         for (label, expanded) in emits {
-            // Closed bars keep their memory low (see webmem).
-            crate::ui::low_memory(&self.app, &label, !expanded);
-            crate::ui::state(&self.app, &label, expanded);
+            crate::ui::state(&label, expanded);
         }
         for (label, hwnd, ignore) in click_through {
-            crate::ui::click_through(&self.app, &label, hwnd, ignore);
+            let _ = hwnd;
+            crate::ui::click_through(&label, ignore);
         }
         (toggled, calm)
     }

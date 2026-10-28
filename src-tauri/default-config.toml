@@ -16,7 +16,6 @@ tooltips = true           # hints when hovering widgets
 check_updates = true      # look for a new version when Kasumi starts (the notch says so)
 auto_update = false       # install new versions from GitHub by itself
 update_notes = true       # after an update, a window shows what's new
-renderer = "native"          # what draws the bars: web (WebView2) | native (Direct2D, much lighter); on restart
 
 [shell]
 hide_taskbar = true       # hide the Windows taskbar while Kasumi runs (restored on quit)

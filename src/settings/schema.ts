@@ -1344,7 +1344,7 @@ export const pages: Page[] = [
           {
             kind: "toggle",
             label: "Show scroll position",
-            help: "A scroll bar at the right edge of the screen while a folder or app under the mouse scrolls. Browsers and apps built on them aren't included. Only with Native Kasumi (General).",
+            help: "A scroll bar at the right edge of the screen while a folder or app under the mouse scrolls. Browsers and apps built on them aren't included.",
             path: ["osd", "scroll"],
             default: false,
           },
@@ -1624,20 +1624,6 @@ export const pages: Page[] = [
             default: true,
           },
           { kind: "action", label: "What's new", help: "This version's notes.", button: "Show", run: "notes" },
-        ],
-      },
-      {
-        title: "Native Kasumi",
-        help: "Kasumi draws its bars and docks with Windows' own graphics: a fraction of the memory and CPU of the browser engine it used before. If something doesn't work right, turn this off to go back to the browser engine for now (it will be removed in a later version), and let us know.",
-        fields: [
-          {
-            kind: "toggle",
-            label: "Start Kasumi native",
-            help: "Takes effect the next time Kasumi starts (quit it from the tray and start it again).",
-            path: ["general", "renderer"],
-            default: "native",
-            values: ["web", "native"],
-          },
         ],
       },
       {

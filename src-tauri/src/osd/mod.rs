@@ -26,7 +26,7 @@ pub fn emit(app: &AppHandle, kind: &str, event: &str, payload: Value) -> usize {
     for (label, notch) in &targets {
         let mut p = payload.clone();
         p["notch"] = json!(notch);
-        crate::ui::event(app, label, event, p);
+        crate::ui::event(label, event, p);
     }
     targets.len()
 }
@@ -130,12 +130,6 @@ fn now_ms() -> u64 {
 
 pub fn quiet_layout() {
     QUIET_LAYOUT.store(now_ms() + 1500, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Language widget click: cycle the foreground window to the next layout.
-#[tauri::command]
-pub async fn switch_keyboard_layout() -> Result<(), String> {
-    crate::win::next_keyboard_layout()
 }
 
 /// A volume key the keyboard helper took over (keyhook.rs).

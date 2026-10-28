@@ -10,7 +10,7 @@ use windows::Win32::Devices::Display::{
     DISPLAYCONFIG_TARGET_DEVICE_NAME, QDC_ONLY_ACTIVE_PATHS,
 };
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -28,11 +28,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RWIN, VK_SPACE,
 };
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, SetWindowSubclass, SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+    SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, EnumWindows, GetWindowTextLengthW, IsIconic, IsWindowVisible, ASFW_ANY,
-    WS_EX_TRANSPARENT, WS_THICKFRAME, STYLESTRUCT, WM_STYLECHANGING,
+    WS_EX_TRANSPARENT, WS_THICKFRAME,
     GetClassNameW, GetCursorPos, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW, GUITHREADINFO, WM_INPUTLANGCHANGEREQUEST, GetForegroundWindow, SetForegroundWindow, GetWindowLongPtrW, GetWindowLongW,
     GetWindowRect, IsZoomed, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
     GWL_STYLE, HWND_TOPMOST, MONITORINFOF_PRIMARY, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
@@ -227,58 +227,6 @@ pub fn restore_foreground(h: isize, ours: &[isize]) {
     }
 }
 
-/// Forces the overlay's extended style whenever anyone (tao included) changes it:
-/// tool window (no taskbar button, not in Alt+Tab), never activated (unless it's
-/// the open launcher), never an app window.
-unsafe extern "system" fn style_guard(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-    _id: usize,
-    _data: usize,
-) -> LRESULT {
-    if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_STYLE.0 {
-        // No title bar, system menu or minimize box (even invisible ones): "show
-        // desktop" / "minimize all" (and mods like Win+D per monitor) would
-        // minimize a window that has them.
-        let ss = &mut *(lparam.0 as *mut STYLESTRUCT);
-        // A popup: without a caption an "overlapped" window gets a title bar anyway.
-        ss.styleNew = (ss.styleNew & !FRAME_BITS) | WS_POPUP.0;
-    }
-    if msg == WM_STYLECHANGING && wparam.0 as i32 == GWL_EXSTYLE.0 {
-        let ss = &mut *(lparam.0 as *mut STYLESTRUCT);
-        let noactivate = if activatable(hwnd) { 0 } else { WS_EX_NOACTIVATE.0 };
-        ss.styleNew = (ss.styleNew | WS_EX_TOOLWINDOW.0 | noactivate) & !WS_EX_APPWINDOW.0;
-        if noactivate == 0 {
-            ss.styleNew &= !WS_EX_NOACTIVATE.0;
-        }
-    }
-    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE {
-        // Activated (the launcher): don't paint a title bar (lParam -1 = no frame repaint).
-        return DefSubclassProc(hwnd, msg, wparam, LPARAM(-1));
-    }
-    DefSubclassProc(hwnd, msg, wparam, lparam)
-}
-
-/// Installs the style guard. Must run on the window's thread, before it is shown.
-pub fn guard_overlay_style(h: isize) {
-    unsafe {
-        let _ = SetWindowSubclass(hwnd(h), Some(style_guard), 1, 0);
-        // No frame from the compositor either: themes and mods (accent-colored
-        // title bars, translucency) would draw one over the bar when it's active.
-        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY};
-        let policy = DWMNCRP_DISABLED;
-        let _ = DwmSetWindowAttribute(
-            hwnd(h),
-            DWMWA_NCRENDERING_POLICY,
-            &policy as *const _ as *const _,
-            std::mem::size_of_val(&policy) as u32,
-        );
-    }
-    apply_overlay_style(h);
-}
-
 /// Window-frame style bits an overlay must not have (see `style_guard`).
 use windows::Win32::UI::WindowsAndMessaging::{SWP_FRAMECHANGED, SWP_NOZORDER, WS_POPUP};
 
@@ -302,9 +250,9 @@ pub fn unminimize(h: isize) -> bool {
     false
 }
 
-/// WebView2 flags for every Kasumi window (they share one browser process, so
-/// they must match). wry's defaults, plus: all pages are one site, so they share one
-/// renderer process instead of one each (the bars are tiny; a renderer is ~70 MB).
+/// WebView2 flags for Kasumi's web windows (settings, setup, notes: they share one
+/// browser process, so they must match). wry's defaults, plus: all pages are one
+/// site, so they share one renderer process instead of one each (~70 MB each).
 pub const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --process-per-site";
 
 /// No activation on click, no taskbar / alt-tab entry, no frame (unminimizable).
@@ -332,17 +280,6 @@ pub fn apply_overlay_style(h: isize) {
         }
         if want != ex {
             SetWindowLongPtrW(hwnd(h), GWL_EXSTYLE, want);
-        }
-    }
-}
-
-/// Places the window at a physical rect and makes it topmost. Call on the window's
-/// thread: moving onto a monitor with another DPI makes tao apply the system's
-/// suggested size, so the second SetWindowPos restores the size we want.
-pub fn place(h: isize, x: i32, y: i32, w: i32, ht: i32) {
-    unsafe {
-        for _ in 0..2 {
-            let _ = SetWindowPos(hwnd(h), Some(HWND_TOPMOST), x, y, w, ht, SWP_NOACTIVATE);
         }
     }
 }

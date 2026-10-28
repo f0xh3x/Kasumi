@@ -480,12 +480,11 @@ pub fn start(app: &AppHandle) {
                             }
                         }
                         crate::keyhook::set_start_key(start);
-                        // Win + 1..9: the native bars' tasks widget (on unless switched off).
-                        let win_keys = crate::native::active()
-                            && cfg.widgets.get("tasks").and_then(|t| t.get("win_keys")).and_then(|v| v.as_bool()) != Some(false);
+                        // Win + 1..9: the tasks widget's apps (on unless switched off).
+                        let win_keys = cfg.widgets.get("tasks").and_then(|t| t.get("win_keys")).and_then(|v| v.as_bool()) != Some(false);
                         crate::keyhook::set_win_keys(win_keys);
-                        // Kasumi's Alt + Tab (native bars).
-                        let alt_tab = crate::native::active() && cfg.alt_tab.enabled;
+                        // Kasumi's Alt + Tab.
+                        let alt_tab = cfg.alt_tab.enabled;
                         if alt_tab != alt_tab_registered {
                             alt_tab_registered = alt_tab;
                             if alt_tab {
@@ -498,8 +497,8 @@ pub fn start(app: &AppHandle) {
                             }
                         }
                         crate::keyhook::set_alt_tab(alt_tab);
-                        // Kasumi's language picker (native bars).
-                        crate::keyhook::set_lang(crate::native::active() && cfg.lang_switch.enabled);
+                        // Kasumi's language picker.
+                        crate::keyhook::set_lang(cfg.lang_switch.enabled);
                         let hotkey = cfg.launcher.hotkey.trim();
                         (cfg.launcher.enabled && !hotkey.is_empty()).then(|| hotkey.to_string())
                     };

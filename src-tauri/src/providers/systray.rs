@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -444,19 +444,6 @@ pub fn start(app: &AppHandle) {
 
 fn make_long(lo: u32, hi: u32) -> usize {
     ((hi & 0xffff) << 16 | (lo & 0xffff)) as usize
-}
-
-/// `button`: "left" | "right" | "double". `x`, `y`: icon center in logical px of the overlay.
-#[tauri::command]
-pub async fn tray_click(
-    window: tauri::WebviewWindow,
-    id: String,
-    button: String,
-    x: f64,
-    y: f64,
-) -> Result<(), String> {
-    let (sx, sy) = crate::engine::to_screen(window.app_handle(), window.label(), x, y).unwrap_or((0, 0));
-    click_at(&id, &button, sx, sy)
 }
 
 /// A click on a hosted tray icon at a screen point (physical px): forwarded to its app.

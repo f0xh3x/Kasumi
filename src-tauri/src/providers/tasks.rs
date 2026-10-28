@@ -495,7 +495,7 @@ fn scan(app: &AppHandle) {
     let pinned = pins(app);
     let mut st = state().lock().unwrap();
     let mut windows = Vec::new();
-    // Icons found this scan; the pages are sent just these (`publish_entries`).
+    // Icons found this scan; the bars are sent just these (`publish_entries`).
     let mut fresh = serde_json::Map::new();
     // Pinned apps are listed (first, in pin order) even without windows.
     for p in &pinned {

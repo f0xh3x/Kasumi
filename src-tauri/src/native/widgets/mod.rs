@@ -162,7 +162,7 @@ pub enum Button {
 pub enum Act {
     /// actions.rs `run_action`.
     Run { action: String, target: Option<String> },
-    /// Anything else the pages invoked: run with the app, on a thread of its own.
+    /// Anything else: run with the app, on a thread of its own.
     Call(Box<dyn FnOnce(tauri::AppHandle) + Send>),
     /// A hosted tray icon clicked ("left" | "right"), at a point local to the widget
     /// (the surface makes it a screen point: apps put their menus there).

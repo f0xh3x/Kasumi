@@ -10,7 +10,7 @@ export default defineConfig({
   build: {
     target: "chrome120",
     outDir: "dist",
-    // Two pages: the overlay and the settings window.
-    rollupOptions: { input: { main: "index.html", settings: "settings.html" } },
+    // One page: the settings window (and the setup and update notes windows, its views).
+    rollupOptions: { input: { settings: "settings.html" } },
   },
 });

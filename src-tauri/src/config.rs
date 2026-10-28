@@ -225,9 +225,6 @@ pub struct General {
     pub auto_update: bool,
     /// After Kasumi updates, a window shows what's new (settings.rs `startup`).
     pub update_notes: bool,
-    /// What draws the bars: "web" (WebView2 pages) or "native" (Direct2D, native/).
-    /// Read at start.
-    pub renderer: String,
 }
 
 impl Default for General {
@@ -242,7 +239,6 @@ impl Default for General {
             check_updates: true,
             auto_update: false,
             update_notes: true,
-            renderer: "native".into(),
         }
     }
 }

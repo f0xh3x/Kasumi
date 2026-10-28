@@ -2,7 +2,7 @@
 //! Where they're dragged goes to the surface as `notch://drag-over` (screen px,
 //! null when they leave), the drop as `notch://drop` with its paths and point: on
 //! an app in the tasks widget it opens them with that app, elsewhere it pins them
-//! (what the pages did through WebView2, dropzone.rs).
+//!.
 
 use std::cell::Cell;
 

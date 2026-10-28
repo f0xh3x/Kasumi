@@ -243,10 +243,6 @@ fn held(vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) -> bool {
 }
 
 pub fn start(app: &AppHandle) {
-    if !crate::native::active() {
-        crate::keyhook::set_scroll(false);
-        return;
-    }
     let app = app.clone();
     std::thread::Builder::new()
         .name("kasumi-scroll".into())

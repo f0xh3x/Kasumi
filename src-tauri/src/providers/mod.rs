@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
+use tauri::{AppHandle, Manager};
 
 /// The current config, shared with providers (the engine replaces it on reload).
 pub type SharedConfig = Arc<RwLock<Config>>;
@@ -32,38 +32,15 @@ pub struct DataStore {
     values: Mutex<HashMap<String, Value>>,
 }
 
-/// Widget types whose pages read a data key. A key nobody lists here goes to
-/// every overlay (the safe default for a new provider).
-fn consumers(key: &str) -> Option<&'static [&'static str]> {
-    Some(match key {
-        "system" => &["quick"],
-        "tasks" | "taskIcons" => &["tasks"],
-        "temps" => &["temps"],
-        "media" => &["media"],
-        "weather" => &["weather"],
-        "tray" => &["tray"],
-        "keyboard" => &["language"],
-        "focus" => &["focus"],
-        "netspeed" => &["netspeed"],
-        "disks" => &["disk"],
-        "privacy" => &["privacy"],
-        "claude" => &["claude"],
-        "notifications" => &["notifications"],
-        "clipboard" => &["clipboard"],
-        "workspaces" => &["workspaces"],
-        _ => return None,
-    })
-}
-
 /// Sends one value to the overlays that show a widget using `key` (all of them
 /// for a key without a listed consumer): a page that has no such widget would
 /// only wake up to throw it away.
 fn emit_data(app: &AppHandle, key: &str, value: &Value) {
-    let labels = (!crate::ui::native()).then(|| consumers(key).map(|types| crate::engine::overlays_showing(app, types))).flatten();
-    crate::ui::data(app, labels, key, value);
+    let _ = app;
+    crate::ui::data(key, value);
 }
 
-/// Stores `value` under `key` and sends it to the pages that use it, if it changed.
+/// Stores `value` under `key` and sends it to the bars, if it changed.
 pub fn publish(app: &AppHandle, key: &str, value: Value) {
     {
         let store = app.state::<DataStore>();
@@ -77,7 +54,7 @@ pub fn publish(app: &AppHandle, key: &str, value: Value) {
 }
 
 /// For a key holding an object that grows by entry (icons by app): the store
-/// keeps the whole object, the pages are sent only the entries that changed and
+/// keeps the whole object, the bars are sent only the entries that changed and
 /// merge them (`MERGED` in data.ts).
 pub fn publish_entries(app: &AppHandle, key: &str, entries: serde_json::Map<String, Value>) {
     let changed = {
@@ -95,37 +72,8 @@ pub fn publish_entries(app: &AppHandle, key: &str, entries: serde_json::Map<Stri
         changed
     };
     if !changed.is_empty() {
-        let labels = (!crate::ui::native()).then(|| consumers(key).map(|types| crate::engine::overlays_showing(app, types))).flatten();
-        crate::ui::data_entries(app, labels, key, &changed);
+        crate::ui::data_entries(key, &changed);
     }
-}
-
-/// Sends one overlay the current values it uses. For after its layout changed:
-/// a widget it didn't show before may have arrived, and what was published
-/// meanwhile went only to the pages that had one.
-pub fn resend(app: &AppHandle, label: &str) {
-    // The native renderer keeps every value it was sent.
-    if crate::ui::native() {
-        return;
-    }
-    let keys: Vec<String> = app.state::<DataStore>().values.lock().unwrap().keys().cloned().collect();
-    for key in keys {
-        let Some(types) = consumers(&key) else { continue };
-        if !crate::engine::overlay_shows(app, label, types) {
-            continue;
-        }
-        // Read right before sending, so the value is as new as it can be (a
-        // publish landing in the microseconds between this read and the send
-        // could still be overtaken; the next change corrects it).
-        let Some(value) = app.state::<DataStore>().values.lock().unwrap().get(&key).cloned() else { continue };
-        let payload = json!({ "key": key, "value": value });
-        let _ = app.emit_to(EventTarget::WebviewWindow { label: label.to_string() }, "notch://data", payload);
-    }
-}
-
-#[tauri::command]
-pub async fn get_data(store: State<'_, DataStore>) -> Result<HashMap<String, Value>, String> {
-    Ok(store.values.lock().unwrap().clone())
 }
 
 /// Whether a widget is switched on (`[widgets.<name>] enabled`, default true).

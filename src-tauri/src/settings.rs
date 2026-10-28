@@ -165,12 +165,6 @@ pub async fn lhm_sensors(url: String) -> Result<Vec<serde_json::Value>, String> 
     Ok(out)
 }
 
-/// The user's Windows short-time format as a strftime pattern (e.g. "%H:%M").
-#[tauri::command]
-pub async fn system_time_format() -> String {
-    crate::win::short_time_pattern()
-}
-
 #[tauri::command]
 pub fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()

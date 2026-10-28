@@ -25,8 +25,8 @@ cp target/release/kasumi.exe "$APP/Kasumi.exe"
 START=$(wc -l < "$LOG")
 powershell -NoProfile -Command "Start-Process -FilePath '$APP\Kasumi.exe' -WorkingDirectory '$APP'; Start-Sleep 10"
 
-# Each overlay window: bars ~345 px tall, docks ~709 (room for panels). Only
-# 78 / 93 px means the page's script never ran (nothing drawn): see the log.
+# The bars' windows (they size to what shows: ~56 px closed). The log says
+# "built overlay-..." for each; a missing one means it couldn't be made.
 powershell -NoProfile -ExecutionPolicy Bypass -File "$ROOT/tools/windows.ps1"
-# Page errors since this start ("[kasumi:<window>] ..." lines come from the pages).
+# Settings page errors since this start ("[kasumi:<window>] ..." lines).
 tail -n +"$START" "$LOG" | grep "^\[kasumi:" || echo "no page errors logged"
