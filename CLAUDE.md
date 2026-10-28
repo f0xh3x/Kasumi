@@ -121,6 +121,7 @@ New commands (for the settings page) must be listed in `main.rs`'s `generate_han
 | No low-level keyboard or mouse hook inside the app: they live in the `--keyhook` helper process | Windows didn't run an in-app hook (or the hooks after it) while our window had the focus: the Windows key opened Start, PowerToys shortcuts died in our windows |
 | Our windows never keep the focus without the open launcher (`close_launcher_on_focus_loss` hands it back) | A bar holding focus it can't use swallowed keys |
 | Other apps' windows aren't changed (hidden, restyled): cover or leave them | Hiding gets undone by the app, and Kasumi then never learns when it ends |
+| A widget's / panel's `wake()` returns a stored moment (set in `tick`), never `Instant::now() + x` | The surface ticks it once `wake()` has passed, asking again then: "now + x" is always ahead, so it never ticked (the clock's timer, carets, media position: `3f7397a`) |
 
 ## 5. Build, install, check
 
