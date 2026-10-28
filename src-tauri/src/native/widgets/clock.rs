@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::SYSTEMTIME;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 
-use super::{Ctx, Opts, Panel, Widget};
+use super::{Act, Button, Ctx, Opts, Panel, Reply, Widget};
 use crate::native::gfx::{rect, rgba, white, with_alpha, Font};
 
 const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -48,10 +48,79 @@ pub fn strftime(fmt: &str, t: &SYSTEMTIME) -> String {
     out
 }
 
+// --- Timers ([widgets.clock] timers): a countdown or a stopwatch, one for all screens ---
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Timer {
+    /// Counting down: when it ends, or (paused) what's left.
+    Countdown { end: Instant, left: Option<Duration> },
+    /// Counting up: since when (running), and what was counted before.
+    Stopwatch { since: Option<Instant>, acc: Duration },
+}
+
+thread_local! {
+    static TIMER: std::cell::Cell<Option<Timer>> = const { std::cell::Cell::new(None) };
+}
+
+fn timer() -> Option<Timer> {
+    TIMER.with(|t| t.get())
+}
+
+fn set_timer(t: Option<Timer>) {
+    TIMER.with(|c| c.set(t));
+}
+
+/// What it shows now: time left (countdown) or counted (stopwatch).
+fn shown(t: Timer, now: Instant) -> Duration {
+    match t {
+        Timer::Countdown { end, left } => left.unwrap_or_else(|| end.saturating_duration_since(now)),
+        Timer::Stopwatch { since, acc } => acc + since.map_or(Duration::ZERO, |s| now.saturating_duration_since(s)),
+    }
+}
+
+/// "4:59", "1:02:03" (a countdown rounds up: it shows 0:00 only as it ends).
+fn clock_text(d: Duration, up: bool) -> String {
+    let s = if up { d.as_secs_f64().ceil() as u64 } else { d.as_secs() };
+    let (h, m, s) = (s / 3600, (s % 3600) / 60, s % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
+fn running(t: Timer) -> bool {
+    matches!(t, Timer::Countdown { left: None, .. } | Timer::Stopwatch { since: Some(_), .. })
+}
+
+/// A countdown that has run out: cleared (once, whichever clock notices first).
+fn take_expired(now: Instant) -> bool {
+    match timer() {
+        Some(Timer::Countdown { end, left: None }) if now >= end => {
+            set_timer(None);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Time's up: Windows' notification sound and a pop-up out of the notch.
+fn times_up() -> Act {
+    Act::call(|app| {
+        unsafe {
+            let _ = windows::Win32::System::Diagnostics::Debug::MessageBeep(windows::Win32::UI::WindowsAndMessaging::MB_ICONASTERISK);
+        }
+        crate::osd::emit(&app, "timer", "notch://osd", serde_json::json!({ "kind": "timer", "level": 1.0, "muted": false, "text": "Time's up", "ms": 8000 }));
+    })
+}
+
+/// While a timer runs, clocks and the calendar look again this often.
+const TIMER_TICK: Duration = Duration::from_millis(250);
+
 pub struct Clock {
     format: String,
     text: String,
     next: Instant,
+    /// A running timer's time beside the clock ([widgets.clock] timers).
+    timers: bool,
+    timer_text: String,
+    pending: Option<Act>,
 }
 
 impl Clock {
@@ -61,14 +130,23 @@ impl Clock {
             "system" => crate::win::short_time_pattern(),
             f => f.to_string(),
         };
-        let mut c = Clock { format, text: String::new(), next: Instant::now() };
+        let timers = opts.flag("timers") == Some(true);
+        let mut c = Clock { format, text: String::new(), next: Instant::now(), timers, timer_text: String::new(), pending: None };
         c.tick(Instant::now());
         c
     }
 }
 
+impl Clock {
+    /// Between the time and a running timer's.
+    const TIMER_GAP: f32 = 10.0;
+}
+
 impl Widget for Clock {
     fn wake(&self) -> Option<Instant> {
+        if self.timers && timer().is_some_and(running) {
+            return Some(self.next.min(Instant::now() + TIMER_TICK));
+        }
         Some(self.next)
     }
     fn tick(&mut self, now: Instant) -> bool {
@@ -78,15 +156,42 @@ impl Widget for Clock {
         let wait = if self.format.contains("%S") { ms } else { (59 - t.wSecond as u64) * 1000 + ms };
         self.next = now + Duration::from_millis(wait);
         let text = strftime(&self.format, &t);
-        let changed = text != self.text;
+        let mut changed = text != self.text;
         self.text = text;
+        if self.timers {
+            if take_expired(now) {
+                self.pending = Some(times_up());
+            }
+            let tt = timer().map_or(String::new(), |t| clock_text(shown(t, now), matches!(t, Timer::Countdown { .. })));
+            changed |= tt != self.timer_text;
+            self.timer_text = tt;
+        }
         changed
     }
+    fn act(&mut self) -> Option<Act> {
+        self.pending.take()
+    }
     fn width(&mut self, cx: &Ctx) -> f32 {
-        cx.gfx.measure(&self.text, &cx.main(14.0))
+        let w = cx.gfx.measure(&self.text, &cx.main(14.0));
+        if self.timer_text.is_empty() {
+            return w;
+        }
+        w + Self::TIMER_GAP + cx.gfx.measure("\u{E916}", &Font::icons(12.0)) + 4.0 + cx.gfx.measure(&self.timer_text, &cx.main(14.0))
     }
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
-        cx.gfx.text_at(&self.text, &cx.main(14.0), x, cy, with_alpha(cx.look.fg, alpha));
+        let w = cx.gfx.text_at(&self.text, &cx.main(14.0), x, cy, with_alpha(cx.look.fg, alpha));
+        if !self.timer_text.is_empty() {
+            let dim = with_alpha(cx.look.dimmed(), alpha);
+            let gx = x + w + Self::TIMER_GAP;
+            let gw = cx.gfx.text_at("\u{E916}", &Font::icons(12.0), gx, cy + 1.0, dim);
+            cx.gfx.text_at(&self.timer_text, &cx.main(14.0), gx + gw + 4.0, cy, dim);
+        }
+    }
+    fn tooltip(&self) -> Option<String> {
+        (!self.timer_text.is_empty()).then(|| match timer() {
+            Some(Timer::Stopwatch { .. }) => "Stopwatch".to_string(),
+            _ => "Timer".to_string(),
+        })
     }
 }
 
@@ -127,12 +232,35 @@ fn iso_week(days: i64) -> i64 {
     (thursday - days_from_civil(y, 1, 1)) / 7 + 1
 }
 
-/// Month view, Monday first, with ISO week numbers; today in the accent.
+/// Month view, Monday first, with ISO week numbers; today in the accent. With
+/// [widgets.clock] timers, a row under it: a countdown's presets and a stopwatch, or
+/// the one running with its buttons.
 #[derive(Default)]
 pub struct Calendar {
     /// The title's and the weekday row's heights as last measured.
     heights: (f32, f32),
+    timers: bool,
+    /// The timer row's buttons as last laid out (content px), and the one hovered.
+    boxes: std::cell::RefCell<Vec<(TimerHit, [f32; 4])>>,
+    hovered: Option<TimerHit>,
 }
+
+/// The timer row's buttons.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum TimerHit {
+    /// A countdown of so many minutes.
+    Preset(u64),
+    Stopwatch,
+    Pause,
+    AddMinute,
+    Reset,
+    Stop,
+}
+
+const PRESETS: [(u64, &str); 5] = [(1, "1m"), (5, "5m"), (10, "10m"), (25, "25m"), (60, "1h")];
+/// The timer row: its gap to the calendar, height.
+const TIMER_TOP: f32 = 12.0;
+const TIMER_H: f32 = 28.0;
 
 // styles.css .panel-calendar: 228 px wide, a 22 px week column, 24 px rows 2 px apart.
 const CAL_W: f32 = 228.0;
@@ -141,6 +269,45 @@ const ROW: f32 = 24.0;
 const GAP: f32 = 2.0;
 
 impl Calendar {
+    pub fn new(opts: &Opts) -> Calendar {
+        Calendar { timers: opts.flag("timers") == Some(true), ..Default::default() }
+    }
+
+    fn grid_h(&self) -> f32 {
+        let (title, dow) = self.heights;
+        title + 8.0 + dow + 6.0 * (ROW + GAP)
+    }
+
+    /// The timer row's buttons: what, x (from the row's left), width, label or glyph,
+    /// and whether that's a glyph. Idle: the presets and the stopwatch filling the row;
+    /// running: its buttons at the row's end.
+    fn timer_buttons(&self) -> Vec<(TimerHit, f32, f32, &'static str, bool)> {
+        let b = |hit, glyph| (hit, 0.0, 30.0, glyph, true);
+        let pause = |t: Timer| if running(t) { "\u{E769}" } else { "\u{E768}" };
+        let mut out = match timer() {
+            None => {
+                let n = PRESETS.len() as f32 + 1.0;
+                let w = (CAL_W - (n - 1.0) * 4.0) / n;
+                let mut v: Vec<_> = PRESETS.iter().enumerate().map(|(i, (m, l))| (TimerHit::Preset(*m), i as f32 * (w + 4.0), w, *l, false)).collect();
+                v.push((TimerHit::Stopwatch, (n - 1.0) * (w + 4.0), w, "\u{E916}", true));
+                return v;
+            }
+            Some(t @ Timer::Countdown { .. }) => vec![b(TimerHit::Pause, pause(t)), (TimerHit::AddMinute, 0.0, 30.0, "+1", false), b(TimerHit::Stop, "\u{E71A}")],
+            Some(t @ Timer::Stopwatch { .. }) => vec![b(TimerHit::Pause, pause(t)), b(TimerHit::Reset, "\u{E72C}"), b(TimerHit::Stop, "\u{E71A}")],
+        };
+        let mut x = CAL_W;
+        for i in (0..out.len()).rev() {
+            x -= out[i].2;
+            out[i].1 = x;
+            x -= 4.0;
+        }
+        out
+    }
+
+    fn timer_hit(&self, p: (f32, f32)) -> Option<TimerHit> {
+        self.boxes.borrow().iter().find(|(_, b)| p.0 >= b[0] && p.0 < b[0] + b[2] && p.1 >= b[1] && p.1 < b[1] + b[3]).map(|(h, _)| *h)
+    }
+
     fn heights(cx: &Ctx) -> (f32, f32) {
         let title = cx.gfx.text("Ag", &cx.main(13.0)).map_or(16.0, |t| t.height);
         let dow = cx.gfx.text("Mo", &cx.main(11.0)).map_or(13.0, |t| t.height);
@@ -150,7 +317,10 @@ impl Calendar {
 
 impl Panel for Calendar {
     fn wake(&self) -> Option<Instant> {
-        // Today moves at midnight: look again every minute.
+        // A running timer: its time. Else today moves at midnight: every minute.
+        if self.timers && timer().is_some_and(running) {
+            return Some(Instant::now() + TIMER_TICK);
+        }
         Some(Instant::now() + Duration::from_secs(60))
     }
     fn tick(&mut self, _now: Instant) -> bool {
@@ -159,7 +329,7 @@ impl Panel for Calendar {
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         let (title, dow) = Self::heights(cx);
         self.heights = (title, dow);
-        (CAL_W, title + 8.0 + dow + 6.0 * (ROW + GAP))
+        (CAL_W, self.grid_h() + if self.timers { TIMER_TOP + 1.0 + 10.0 + TIMER_H } else { 0.0 })
     }
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
         let (title, dow) = self.heights;
@@ -217,12 +387,93 @@ impl Panel for Calendar {
                 centred(&d.to_string(), &day_font, left, col, top + ROW / 2.0, c);
             }
         }
+        if !self.timers {
+            return;
+        }
+        // The timer row, under a line.
+        let line_y = y + self.grid_h() + TIMER_TOP;
+        g.fill_rect(rect(x, line_y, CAL_W, 1.0), white(0.08 * alpha));
+        let top = line_y + 1.0 + 10.0;
+        let cy = top + TIMER_H / 2.0;
+        let fg = with_alpha(cx.look.fg, alpha);
+        let dim = with_alpha(cx.look.dimmed(), alpha);
+        let mut boxes = Vec::new();
+        if let Some(t) = timer() {
+            // What's running: its glyph and time (dimmed while paused).
+            let f = Font::icons(13.0);
+            let gw = g.text_at(if matches!(t, Timer::Stopwatch { .. }) { "\u{E916}" } else { "\u{E823}" }, &f, x + 2.0, cy + 1.0, dim);
+            let text = clock_text(shown(t, Instant::now()), matches!(t, Timer::Countdown { .. }));
+            g.text_at(&text, &cx.main(16.0), x + 2.0 + gw + 8.0, cy, if running(t) { fg } else { dim });
+        }
+        for (hit, bx, bw, label, glyph) in self.timer_buttons() {
+            let r = rect(x + bx, top, bw, TIMER_H);
+            let on = self.hovered == Some(hit);
+            g.fill_round(r, 8.0, white(if on { 0.14 } else { 0.06 } * alpha));
+            let f = if glyph { Font::icons(12.0) } else { cx.main(11.0) };
+            let w = g.measure(label, &f);
+            g.text_at(label, &f, x + bx + (bw - w) / 2.0, cy + if glyph { 1.0 } else { 0.0 }, if on { fg } else { dim });
+            boxes.push((hit, [bx, top - y, bw, TIMER_H]));
+        }
+        *self.boxes.borrow_mut() = boxes;
+    }
+    fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
+        let h = at.and_then(|p| self.timer_hit(p));
+        let changed = h != self.hovered;
+        self.hovered = h;
+        changed
+    }
+    fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
+        if button != Button::Left {
+            return Reply::None;
+        }
+        let Some(hit) = self.timer_hit(at) else { return Reply::None };
+        let now = Instant::now();
+        let next = match (hit, timer()) {
+            (TimerHit::Preset(m), _) => Some(Timer::Countdown { end: now + Duration::from_secs(m * 60), left: None }),
+            (TimerHit::Stopwatch, _) => Some(Timer::Stopwatch { since: Some(now), acc: Duration::ZERO }),
+            (TimerHit::Pause, Some(t @ Timer::Countdown { end, left })) => Some(match left {
+                None => Timer::Countdown { end, left: Some(shown(t, now)) },
+                Some(l) => Timer::Countdown { end: now + l, left: None },
+            }),
+            (TimerHit::Pause, Some(Timer::Stopwatch { since, acc })) => Some(match since {
+                Some(s) => Timer::Stopwatch { since: None, acc: acc + now.saturating_duration_since(s) },
+                None => Timer::Stopwatch { since: Some(now), acc },
+            }),
+            (TimerHit::AddMinute, Some(Timer::Countdown { end, left })) => Some(Timer::Countdown { end: end + Duration::from_secs(60), left: left.map(|l| l + Duration::from_secs(60)) }),
+            (TimerHit::Reset, Some(Timer::Stopwatch { since, .. })) => Some(Timer::Stopwatch { since: since.map(|_| now), acc: Duration::ZERO }),
+            (TimerHit::Stop, _) => None,
+            (_, t) => t,
+        };
+        set_timer(next);
+        Reply::Redraw
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timer_times() {
+        // A countdown rounds up (4:59.4 left shows 5:00), a stopwatch down.
+        assert_eq!(clock_text(Duration::from_millis(299_400), true), "5:00");
+        assert_eq!(clock_text(Duration::from_millis(299_400), false), "4:59");
+        assert_eq!(clock_text(Duration::from_secs(3723), false), "1:02:03");
+        let now = Instant::now();
+        // Paused: what was left stays; running: counts down to the end.
+        let paused = Timer::Countdown { end: now, left: Some(Duration::from_secs(90)) };
+        assert_eq!(shown(paused, now + Duration::from_secs(30)), Duration::from_secs(90));
+        let on = Timer::Countdown { end: now + Duration::from_secs(60), left: None };
+        assert_eq!(shown(on, now + Duration::from_secs(20)), Duration::from_secs(40));
+        assert!(running(on) && !running(paused));
+        let sw = Timer::Stopwatch { since: Some(now), acc: Duration::from_secs(5) };
+        assert_eq!(shown(sw, now + Duration::from_secs(3)), Duration::from_secs(8));
+        // Run out: cleared once.
+        set_timer(Some(Timer::Countdown { end: now, left: None }));
+        assert!(take_expired(now + Duration::from_millis(1)));
+        assert!(!take_expired(now + Duration::from_millis(2)));
+        assert_eq!(timer(), None);
+    }
 
     #[test]
     fn strftime_formats() {

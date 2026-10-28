@@ -411,7 +411,9 @@ impl Surface {
     fn opts_for(&self, name: &str) -> Opts {
         let l = &self.layout;
         let owner = if name.starts_with("calendar") { name.replacen("calendar", "clock", 1) } else { name.to_string() };
-        let table = l.widgets.get(name).and_then(|v| v.as_table()).cloned().unwrap_or_default();
+        // A panel of another widget's (the clock's calendar) takes that widget's options too.
+        let mut table = if owner != name { l.widgets.get(&owner).and_then(|v| v.as_table()).cloned().unwrap_or_default() } else { toml::Table::new() };
+        table.extend(l.widgets.get(name).and_then(|v| v.as_table()).cloned().unwrap_or_default());
         let own = l.widgets.get(&owner).and_then(|v| v.as_table());
         let anim = |key: &str, global: bool| own.and_then(|t| t.get(&format!("anim_{key}"))).and_then(|v| v.as_bool()).unwrap_or(global);
         let a = &l.animation;

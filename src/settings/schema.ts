@@ -290,7 +290,16 @@ export const pages: Page[] = [
         title: "Clock",
         collapsible: true,
         icon: 0xe823,
-        fields: [{ kind: "custom", editor: "clockFormat" }],
+        fields: [
+          { kind: "custom", editor: "clockFormat" },
+          {
+            kind: "toggle",
+            label: "Timers",
+            help: "Under the calendar: start a countdown (1 min to 1 hour) or a stopwatch. While one runs, the clock shows its time; when a countdown ends, a pop-up and a sound.",
+            path: ["widgets", "clock", "timers"],
+            default: false,
+          },
+        ],
       },
       {
         title: "PC temps",

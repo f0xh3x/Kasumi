@@ -640,7 +640,7 @@ pub fn create(name: &str, opts: Opts) -> Box<dyn Widget> {
 
 pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
     Some(match widget_type(name) {
-        "calendar" => Box::new(clock::Calendar::default()),
+        "calendar" => Box::new(clock::Calendar::new(opts)),
         "menu" => Box::new(menu::Menu::new(opts)),
         "weather" => Box::new(panels::WeatherPanel::new(opts)),
         "temps" => Box::new(panels::TempsPanel::new(opts)),
