@@ -740,6 +740,13 @@ export const pages: Page[] = [
             default: false,
           },
           { kind: "custom", editor: "quickTiles" },
+          {
+            kind: "toggle",
+            label: "Wi-Fi and Bluetooth tiles switch",
+            help: "Their tiles turn Wi-Fi and Bluetooth on and off (lit while on) instead of opening Settings. The Dark mode tile always switches.",
+            path: ["widgets", "quick", "switches"],
+            default: false,
+          },
         ],
       },
       {

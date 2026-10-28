@@ -9,6 +9,7 @@ pub mod extras;
 pub mod komorebi;
 pub mod media;
 pub mod notifications;
+pub mod switches;
 pub mod systray;
 pub mod system;
 pub mod tasks;

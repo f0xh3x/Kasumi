@@ -27,6 +27,8 @@ windows-numerics = "0.2"  # Direct2D's vectors and matrices (the native renderer
 version = "0.61"
 features = [
   "Foundation",
+  "Foundation_Collections",
+  "Devices_Radios",
   "Networking_Connectivity",
   "Win32_NetworkManagement_IpHelper",
   "Win32_NetworkManagement_Ndis",

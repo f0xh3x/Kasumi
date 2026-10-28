@@ -16,7 +16,7 @@ use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply};
 use crate::native::gfx::{rect, white, with_alpha, Color, Font, Gfx};
 
 /// Tiles: id -> (label, glyph, what it opens) (src/quick-tiles.ts).
-const TILES: [(&str, &str, &str, &str); 16] = [
+const TILES: [(&str, &str, &str, &str); 17] = [
     ("wifi", "Wi-Fi", "\u{E701}", "ms-settings:network-wifi"),
     ("bluetooth", "Bluetooth", "\u{E702}", "ms-settings:bluetooth"),
     ("display", "Display", "\u{E7F4}", "ms-settings:display"),
@@ -33,6 +33,8 @@ const TILES: [(&str, &str, &str, &str); 16] = [
     ("taskmgr", "Task Manager", "\u{E9D9}", "taskmgr.exe"),
     ("explorer", "Explorer", "\u{E838}", "explorer.exe"),
     ("kasumi", "Kasumi", "", "kasumi:settings"),
+    // Switches Windows between light and dark (switches.rs).
+    ("darkmode", "Dark mode", "\u{E708}", "kasumi:dark"),
 ];
 const DEFAULT_TILES: [&str; 6] = ["wifi", "bluetooth", "display", "sound", "power", "settings"];
 
@@ -115,6 +117,10 @@ pub struct QuickPanel {
     power_row: bool,
     /// A power tile clicked once (restart, shut down, sign out): it asks to confirm.
     armed: Option<usize>,
+    /// The switches' states (switches.rs state: wifi, bluetooth, dark) and when they
+    /// were last asked for.
+    switches: Value,
+    switches_asked: Option<Instant>,
 }
 
 const W: f32 = 540.0;
@@ -144,7 +150,24 @@ impl QuickPanel {
             width: W,
             power_row: false,
             armed: None,
+            switches: Value::Null,
+            switches_asked: None,
         }
+    }
+
+    /// A tile that switches something rather than opening Settings: Wi-Fi and Bluetooth
+    /// with [widgets.quick] switches, Dark mode always. Its state: on, off, or unknown.
+    fn switch(&self, id: &str) -> Option<Option<bool>> {
+        match id {
+            "wifi" | "bluetooth" if self.opts.flag("switches") == Some(true) => Some(self.switches.get(id).and_then(|v| v.as_bool())),
+            "darkmode" => Some(self.switches.get("dark").and_then(|v| v.as_bool())),
+            _ => None,
+        }
+    }
+
+    /// Asks for the switches' states (they come back as data).
+    fn fetch_switches() -> Act {
+        Act::call(|_| crate::native::post(crate::native::Msg::Data("quick:switches".into(), crate::providers::switches::state())))
     }
 
     fn tiles(&self) -> Vec<&'static (&'static str, &'static str, &'static str, &'static str)> {
@@ -274,11 +297,12 @@ impl QuickPanel {
 
 impl Panel for QuickPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["system", "quick:outputs", "quick:apps"]
+        &["system", "quick:outputs", "quick:apps", "quick:switches"]
     }
     fn data(&mut self, key: &str, v: &Value) -> bool {
         match key {
             "system" => self.system = v.clone(),
+            "quick:switches" => self.switches = v.clone(),
             "quick:outputs" => {
                 self.outputs = v
                     .as_array()
@@ -332,6 +356,12 @@ impl Panel for QuickPanel {
         if !moving && self.list.is_none() {
             self.shown_list = None;
             self.slide = None;
+        }
+        // The switches' states: asked for as the panel is measured (it opens), at most
+        // every two seconds.
+        if self.tiles().iter().any(|t| self.switch(t.0).is_some()) && self.switches_asked.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) && self.pending.is_none() {
+            self.switches_asked = Some(Instant::now());
+            self.pending = Some(Self::fetch_switches());
         }
         self.box_h = self.list_h(g, cx);
         let more = if self.shown_list.is_some() { (self.box_h + 14.0) * open } else { 0.0 };
@@ -479,11 +509,22 @@ impl Panel for QuickPanel {
             let tw = (W - (n - 1.0) * 8.0) / n;
             let th = self.tiles_h(g, cx);
             let pills = tiles.len() <= 3;
-            for (i, (_, label, glyph, _)) in tiles.iter().enumerate() {
+            for (i, (id, label, glyph, _)) in tiles.iter().enumerate() {
                 let tx = x + i as f32 * (tw + 8.0);
                 let hovered = self.hovered == Some(Hit::Tile(i));
-                let bg = if hovered { if cx.opts.accent { cx.hover_bg(0.14) } else { white(0.14) } } else { white(0.06) };
+                // A switch that's on: filled (the accent, else the text colour), its icon and
+                // name in the background's colour.
+                let on = self.switch(id) == Some(Some(true));
+                let bg = if on {
+                    let c = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
+                    with_alpha(c, if hovered { 0.85 } else { 1.0 })
+                } else if hovered {
+                    if cx.opts.accent { cx.hover_bg(0.14) } else { white(0.14) }
+                } else {
+                    white(0.06)
+                };
                 g.fill_round(rect(tx, y, tw, th), if pills { th / 2.0 } else { 12.0 }, with_alpha(bg, alpha));
+                let (fg, dim) = if on { (with_alpha(cx.look.bg, alpha), with_alpha(cx.look.bg, alpha)) } else { (fg, dim) };
                 boxes.push((Hit::Tile(i), tx - ox, y - oy, tw, th));
                 let lf = if pills { cx.secondary(12.0) } else { cx.secondary(11.0) };
                 let lw = g.measure(label, &lf);
@@ -591,6 +632,22 @@ impl Panel for QuickPanel {
             Some(Hit::Tile(i)) => {
                 let id = self.tiles().get(i).map(|t| t.0).unwrap_or("");
                 let target = self.tiles().get(i).map(|t| t.3).unwrap_or("");
+                // A switch: flipped (shown at once, then read back from Windows).
+                if let Some(state) = self.switch(id) {
+                    let on = !state.unwrap_or(false);
+                    let key = if id == "darkmode" { "dark" } else { id };
+                    if let Some(map) = self.switches.as_object_mut() {
+                        map.insert(key.into(), Value::Bool(on));
+                    }
+                    let id = id.to_string();
+                    return Reply::Do(Act::call(move |_| {
+                        let r = if id == "darkmode" { crate::providers::switches::set_dark(on) } else { crate::providers::switches::set_radio(&id, on) };
+                        if let Err(e) = r {
+                            eprintln!("[kasumi] {id}: {e}");
+                        }
+                        crate::native::post(crate::native::Msg::Data("quick:switches".into(), crate::providers::switches::state()));
+                    }));
+                }
                 if id == "power" {
                     self.armed = None;
                     self.power_row = true;

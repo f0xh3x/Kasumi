@@ -17,6 +17,8 @@ export const QUICK_TILES: Record<string, [label: string, glyph: number, target: 
   explorer: ["Explorer", 0xe838, "explorer.exe"],
   // Kasumi's own settings (glyph 0: its logo).
   kasumi: ["Kasumi", 0, "kasumi:settings"],
+  // Switches Windows between light and dark (native quick settings).
+  darkmode: ["Dark mode", 0xe708, "kasumi:dark"],
 };
 
 /** Kasumi's logo (src-tauri/icons/kasumi-mark.svg) in the text colour, glyph-sized. */
