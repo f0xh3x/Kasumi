@@ -167,6 +167,13 @@ pub async fn context_menu_info() -> serde_json::Value {
             seen[format!("sub:{}", e.key)] = serde_json::Value::Array(entries_json(items));
         }
     }
+    // The launcher's menu: Windows' entries as seen, and Kasumi's (before it was ever opened).
+    let launcher = seen.get("launcher").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    if !launcher.iter().any(|e| e.get("verb").and_then(|v| v.as_str()) == Some("kasumi.dock_pin")) {
+        let mut v = launcher;
+        v.push(serde_json::json!({ "text": "Pin to dock", "verb": "kasumi.dock_pin", "sub": false, "glyph": "E718" }));
+        seen["launcher"] = serde_json::Value::Array(v);
+    }
     serde_json::json!({ "seen": seen, "default": layout::default_layout() })
 }
 
@@ -244,6 +251,8 @@ thread_local! {
 struct Open {
     /// An Explorer menu: its view and Windows' menu (none: Kasumi's bar menu).
     shell: Option<(Target, Built)>,
+    /// Windows' menu for an app in the launcher (no view).
+    item: Option<Built>,
     /// Kasumi's bar menu: the app its entries run in, and its click (for its commands).
     app: Option<tauri::AppHandle>,
     bar_ctx: Option<layout::Ctx>,
@@ -621,7 +630,7 @@ fn request(defview: HWND, pt: POINT) {
         None => None,
     };
     let entries = layout::arrange(&menu_cfg, built.entries.clone(), &built.ctx, Some(&target), &children);
-    show(entries, pt, Some((target, built)), None, None, look, icons, anim);
+    show(entries, pt, Some((target, built)), None, None, None, look, icons, anim);
 }
 
 // --- Tray icons' menus -----------------------------------------------------------------
@@ -692,7 +701,7 @@ fn popup(hwnd: HWND) {
     let pt = crate::win::cursor_pos().map(|(x, y)| POINT { x, y }).unwrap_or_default();
     let icons = cfg.as_ref().is_some_and(|c| c.context_menu.icons);
     let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
-    show(entries, pt, None, None, None, look(cfg.as_ref()), icons, anim);
+    show(entries, pt, None, None, None, None, look(cfg.as_ref()), icons, anim);
     if !OPEN.load(Ordering::Relaxed) {
         return; // Kasumi's didn't show: the app's stays
     }
@@ -795,6 +804,7 @@ fn show(
     entries: Vec<shell::Entry>,
     pt: POINT,
     shell: Option<(Target, Built)>,
+    item: Option<Built>,
     app: Option<tauri::AppHandle>,
     bar_ctx: Option<layout::Ctx>,
     look: Look,
@@ -811,7 +821,7 @@ fn show(
         let mut root = Level::new(&u.gfx, style.clone(), entries, None, mon.scale as f32).ok()?;
         root.place_root(pt, &mon);
         root.draw(&u.gfx).ok()?;
-        u.open = Some(Open { shell, app, bar_ctx, armed: None, levels: vec![root], style, pt, mon, switch: None });
+        u.open = Some(Open { shell, item, app, bar_ctx, armed: None, levels: vec![root], style, pt, mon, switch: None });
         Some(())
     })
     .flatten();
@@ -832,20 +842,24 @@ fn open_sub(u: &mut Ui, li: usize, row: usize, first: bool) {
     let entry = &mut o.levels[li].entries[row];
     let items = match entry.sub.clone() {
         Some(Sub::Pending(h, pos)) => {
-            let Some((target, built)) = &o.shell else { return };
+            let (built, target) = match (&o.shell, &o.item) {
+                (Some((t, b)), _) => (b, Some(t)),
+                (None, Some(b)) => (b, None),
+                _ => return,
+            };
             let items = built.populate(h, pos);
             // Remembered for the editor (by the submenu's own key), then arranged by its rules.
             if !entry.key.is_empty() {
                 remember(&format!("sub:{}", entry.key), &items);
             }
-            let items = if entry.rules.is_empty() { items } else { layout::arrange_sub(&entry.rules, items, &built.ctx, Some(target)) };
+            let items = if entry.rules.is_empty() { items } else { layout::arrange_sub(&entry.rules, items, &built.ctx, target) };
             entry.sub = Some(Sub::Ready(items.clone()));
             items
         }
         // One of Kasumi's (the bar menu's Presets...): arranged by its rules, once.
         Some(Sub::Ready(v)) if !entry.rules.is_empty() => {
             let rules = std::mem::take(&mut entry.rules);
-            let ctx = o.shell.as_ref().map(|(_, b)| &b.ctx).or(o.bar_ctx.as_ref());
+            let ctx = o.shell.as_ref().map(|(_, b)| &b.ctx).or(o.item.as_ref().map(|b| &b.ctx)).or(o.bar_ctx.as_ref());
             let v = match ctx {
                 Some(ctx) => layout::arrange_sub(&rules, v, ctx, o.shell.as_ref().map(|(t, _)| t)),
                 None => v,
@@ -933,6 +947,16 @@ fn run(chosen: Option<(Open, Run)>) {
     let Some((open, run)) = chosen else { return };
     match (run, &open.shell, &open.app) {
         (Run::Shell(off, verb), Some((t, b)), _) => b.invoke(t, off, &verb, open.pt),
+        // An app in the launcher: Start's pins are read again after a pin or unpin (its
+        // pin entries may come without a verb).
+        (Run::Shell(off, verb), None, _) => {
+            if let Some(b) = &open.item {
+                b.invoke_in(HWND::default(), off, &verb, open.pt);
+                if verb.is_empty() || verb.to_lowercase().contains("pin") {
+                    crate::launcher::pins_changed();
+                }
+            }
+        }
         (Run::View(cmd), Some((t, _)), _) => shell::run_view(t, cmd),
         (Run::Kasumi(cmd), shell, _) => {
             let ctx = shell.as_ref().map(|(_, b)| &b.ctx).or(open.bar_ctx.as_ref());
@@ -1222,7 +1246,62 @@ pub fn bar_menu(app: tauri::AppHandle) {
         _ => None,
     };
     let entries = layout::arrange_with(&rules, &[], bar_entries(crate::presets::names()), &ctx, None, &children);
-    show(entries, POINT { x, y }, None, Some(app), Some(ctx), look(cfg.as_ref()), true, anim);
+    show(entries, POINT { x, y }, None, None, Some(app), Some(ctx), look(cfg.as_ref()), true, anim);
+}
+
+// --- The launcher's menu (right-click an app; on the native thread) -------------------
+
+/// The menu for an app in the launcher (its id: launcher.rs) at the cursor: Windows' own
+/// entries for it, as in Start, and Kasumi's (the dock's pin), arranged by
+/// [launcher_menu] layout.
+pub fn launcher_menu(app: tauri::AppHandle, id: String) {
+    if !init_ui() {
+        return;
+    }
+    close();
+    let Some((x, y)) = crate::win::cursor_pos() else { return };
+    let cfg = crate::config::load().ok();
+    let anim = cfg.as_ref().map(|c| c.animation.clone()).unwrap_or_default();
+    let shift = unsafe { GetAsyncKeyState(VK_SHIFT.0 as i32) } < 0;
+    let path = crate::launcher::shell_path(&id);
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let ctx = layout::Ctx { kind: layout::Kind::Launcher, paths: vec![path.clone()], dir: home.clone(), here: home, shift };
+    // Settings pages open a link: no menu of Windows' for them.
+    let item = if id.starts_with("ms-settings:") || id.starts_with("calc:") { None } else { shell::build_item(&path, ctx.clone(), shift) };
+    let mut entries = item.as_ref().map(|b| b.entries.clone()).unwrap_or_default();
+    let own = launcher_entries(&app, &id);
+    if !own.is_empty() {
+        if !entries.is_empty() {
+            entries.push(shell::Entry::separator());
+        }
+        entries.extend(own);
+    }
+    if entries.is_empty() {
+        return;
+    }
+    remember("launcher", &entries);
+    let mut rules = cfg.as_ref().map(|c| c.launcher_menu.layout.clone()).unwrap_or_default();
+    if rules.is_empty() {
+        rules.push(crate::config::MenuNode { rest: true, ..Default::default() });
+    }
+    let children = |e: &shell::Entry| match &e.sub {
+        Some(Sub::Ready(v)) => Some(v.clone()),
+        _ => None,
+    };
+    let entries = layout::arrange_with(&rules, &[], entries, &ctx, None, &children);
+    show(entries, POINT { x, y }, None, item, Some(app), Some(ctx), look(cfg.as_ref()), true, anim);
+}
+
+/// Kasumi's own entries in the launcher's menu: the dock's pin (when the dock can hold
+/// the app and pinning is on).
+fn launcher_entries(app: &tauri::AppHandle, id: &str) -> Vec<shell::Entry> {
+    let Some(entry) = crate::launcher::dock_entry(id) else { return Vec::new() };
+    let (text, glyph) = match crate::providers::tasks::dock_pinned(app, &entry) {
+        Some(true) => ("Unpin from dock", '\u{E77A}'),
+        Some(false) => ("Pin to dock", '\u{E718}'),
+        None => return Vec::new(),
+    };
+    vec![named_as(shell::Entry::named(text, Action::App(format!("dock:{entry}")), Some(shell::Icon::Glyph(glyph))), "dock_pin")]
 }
 
 /// An entry's name in layouts: `verb:kasumi.<id>` (the editor places it by that).
@@ -1317,6 +1396,11 @@ fn run_app(app: &tauri::AppHandle, id: &str) {
         "taskmgr" => {
             let _ = std::process::Command::new("taskmgr.exe").spawn();
         }
+        // The launcher's menu: an app pinned to the dock, or unpinned.
+        "dock" => {
+            let (app, entry) = (app.clone(), arg.to_string());
+            std::thread::spawn(move || crate::providers::tasks::dock_toggle(&app, &entry));
+        }
         "desktop" => crate::win::toggle_desktop(),
         "hide" => crate::engine::snooze(arg.parse().unwrap_or(0)),
         "power" => {
@@ -1330,5 +1414,31 @@ fn run_app(app: &tauri::AppHandle, id: &str) {
         "restart" => app.restart(),
         "quit" => app.exit(0),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Windows' menu for a few apps as the launcher's menu reads it (nothing is run):
+    /// `cargo test launcher_menu_reads -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn launcher_menu_reads() {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED);
+        }
+        for id in ["308046B0AF4A39CB", "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\notepad.exe"] {
+            let path = crate::launcher::shell_path(id);
+            let ctx = super::layout::Ctx { kind: super::layout::Kind::Launcher, paths: vec![path.clone()], dir: String::new(), here: String::new(), shift: false };
+            println!("{id} -> dock {:?}", crate::launcher::dock_entry(id));
+            match super::shell::build_item(&path, ctx, false) {
+                Some(b) => {
+                    for e in &b.entries {
+                        println!("  {:<28} verb {:?}{}", if e.separator { "----" } else { &e.text }, e.verb, if e.sub.is_some() { " (submenu)" } else { "" });
+                    }
+                }
+                None => println!("  no menu"),
+            }
+        }
     }
 }

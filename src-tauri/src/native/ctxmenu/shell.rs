@@ -341,6 +341,30 @@ pub fn build(t: &Target, hit: &Hit, shift: bool) -> Option<Built> {
     }
 }
 
+/// Windows' menu for one item by its parsing name (an app in the launcher:
+/// `shell:AppsFolder\<id>`, a program, a shortcut), as Start asks for it: Pin to Start,
+/// Pin to taskbar, Run as administrator, Open file location, Uninstall...
+pub fn build_item(path: &str, ctx: Ctx, shift: bool) -> Option<Built> {
+    unsafe {
+        let item: IShellItem = SHCreateItemFromParsingName(&windows::core::HSTRING::from(path), None).ok()?;
+        let cm: IContextMenu = item.BindToHandler(None, &BHID_SFUIObject).ok()?;
+        let hmenu = CreatePopupMenu().ok()?;
+        let mut flags = CMF_NORMAL | CMF_ITEMMENU;
+        if shift {
+            flags |= CMF_EXTENDEDVERBS;
+        }
+        if cm.QueryContextMenu(hmenu, 0, FIRST, LAST, flags).is_err() {
+            let _ = DestroyMenu(hmenu);
+            return None;
+        }
+        let mut entries = read_menu(&cm, hmenu);
+        tidy(&mut entries);
+        let mut dir: Vec<u16> = ctx.dir.encode_utf16().collect();
+        dir.push(0);
+        Some(Built { cm, hmenu, entries, dir, ctx })
+    }
+}
+
 /// What the selection is (and its paths): one file, folder or drive, or several.
 unsafe fn selection_kind(sel: &IShellItemArray, paths: &mut Vec<String>) -> Kind {
     let n = sel.GetCount().unwrap_or(0);
@@ -418,6 +442,13 @@ impl Built {
                 }
                 return;
             }
+        }
+        self.invoke_in(t.root, off, verb, pt);
+    }
+
+    /// Runs a command of Windows' menu, its windows (a prompt) owned by `hwnd`.
+    pub fn invoke_in(&self, hwnd: HWND, off: u32, verb: &str, pt: POINT) {
+        unsafe {
             let mut mask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
             if GetAsyncKeyState(VK_SHIFT.0 as i32) < 0 {
                 mask |= CMIC_MASK_SHIFT_DOWN;
@@ -428,7 +459,7 @@ impl Built {
             let info = CMINVOKECOMMANDINFOEX {
                 cbSize: std::mem::size_of::<CMINVOKECOMMANDINFOEX>() as u32,
                 fMask: mask,
-                hwnd: t.root,
+                hwnd,
                 lpVerb: PCSTR(off as usize as *const u8),
                 lpVerbW: PCWSTR(off as usize as *const u16),
                 lpDirectoryW: PCWSTR(self.dir.as_ptr()),

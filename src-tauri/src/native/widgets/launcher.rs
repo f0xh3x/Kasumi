@@ -987,6 +987,17 @@ impl Panel for LauncherPanel {
         changed
     }
     fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
+        // A right-click on an app: its menu (the native thread opens it, take_menu).
+        if button == Button::Right {
+            if let Some(Hit::Row(i)) = self.hit(at) {
+                let id = S.with(|s| {
+                    let s = s.borrow();
+                    s.results.get(i).map(|&k| entry(&s, k).0)
+                });
+                MENU.with(|m| *m.borrow_mut() = id.filter(|id| !id.starts_with("calc:")));
+            }
+            return Reply::None;
+        }
         if button != Button::Left {
             return Reply::None;
         }
@@ -1009,6 +1020,16 @@ impl Panel for LauncherPanel {
         self.hovered = None;
         self.armed = None;
     }
+}
+
+thread_local! {
+    /// An app right-clicked in the launcher: its menu, once the click is done.
+    static MENU: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// The app whose menu a right-click asked for (ctxmenu::launcher_menu shows it).
+pub fn take_menu() -> Option<String> {
+    MENU.with(|m| m.borrow_mut().take())
 }
 
 /// Starts an app (or copies the sum's answer) and closes the launcher.

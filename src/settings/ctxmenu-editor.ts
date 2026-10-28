@@ -50,8 +50,11 @@ const KINDS: [string, string][] = [
   ["background", "Folder background"],
   ["desktop", "Desktop"],
 ];
-/** The tabs: each kind of Explorer click, and Kasumi's bar menu (its own layout). */
-const TABS: [string, string][] = [...KINDS, ["bar", "Kasumi bar"]];
+/** The tabs: each kind of Explorer click, and Kasumi's bar menu and launcher menu (each
+ *  its own layout). */
+const TABS: [string, string][] = [...KINDS, ["bar", "Kasumi bar"], ["launcher", "Launcher apps"]];
+/** Kasumi's own menus: a layout of their own ([bar_menu] / [launcher_menu] layout). */
+const OWN: Record<string, string> = { bar: "bar_menu", launcher: "launcher_menu" };
 const SELECTION = ["file", "folder", "drive", "multiple"];
 const SPACE = ["background", "desktop"];
 
@@ -153,12 +156,13 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
    *  one on the tab shown. */
   let mainLayout: MenuNode[] = [];
   let barLayout: MenuNode[] = [{ rest: true }];
-  const pick = () => (layout = state.kind === "bar" ? barLayout : mainLayout);
+  let launcherLayout: MenuNode[] = [{ rest: true }];
+  const pick = () => (layout = state.kind === "bar" ? barLayout : state.kind === "launcher" ? launcherLayout : mainLayout);
   let seenAll: Record<string, Seen[]> = {};
   let drag: Row | null = null;
 
   const save = () => {
-    if (state.kind === "bar") return ctx.save(["bar_menu", "layout"], barLayout.map(clean)).catch((e) => ctx.toast(String(e), true));
+    if (OWN[state.kind]) return ctx.save([OWN[state.kind], "layout"], layout.map(clean)).catch((e) => ctx.toast(String(e), true));
     const hasCustom = ((ctx.cfg as any).context_menu?.custom ?? []).length > 0;
     const value = mainLayout.map(clean);
     const done = hasCustom
@@ -519,11 +523,11 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     // The eye: shown or hidden for this kind of click (a submenu's entries: in it).
     const eye = iconButton(
       row.off ? 0xed1a : 0xe7b3,
-      row.owner || state.kind === "bar" ? (row.off ? "Show" : "Hide") : row.off ? `Show on ${here}` : `Hide on ${here}`,
+      row.owner || OWN[state.kind] ? (row.off ? "Show" : "Hide") : row.off ? `Show on ${here}` : `Hide on ${here}`,
       edit(row, (node) => {
         const all = KINDS.map(([k]) => k);
         const set = new Set(node.where ? node.where.split("|") : all);
-        if (row.owner || state.kind === "bar") {
+        if (row.owner || OWN[state.kind]) {
           node.hide = !node.hide;
           return;
         }
@@ -597,6 +601,14 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     const table = $("div", "cm-rows");
     if (state.kind === "bar") {
       table.append($("p", "card-help", "The menu you get by right-clicking a bar's empty space. Power is hidden at first: its eye shows it."));
+    } else if (state.kind === "launcher") {
+      table.append(
+        $(
+          "p",
+          "card-help",
+          "The menu you get by right-clicking an app in the launcher: Windows' own entries for it (as in Start: Pin to Start, Run as administrator, Open file location, Uninstall…) and Kasumi's Pin to dock. Windows' entries show here once you've right-clicked an app.",
+        ),
+      );
     } else if (!seen.length) {
       table.append($("p", "card-help", "Kasumi hasn't seen this kind of menu yet: right-click one once (with Kasumi's menu on), then come back."));
     }
@@ -611,7 +623,7 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       return !has(layout);
     });
     const addKasumi = select([["", "Add Kasumi's entry…"], ...missing.map((id) => [id, KASUMI[id].label] as [string, string])], "");
-    addKasumi.hidden = !missing.length || state.kind === "bar";
+    addKasumi.hidden = !missing.length || !!OWN[state.kind];
     addKasumi.addEventListener("change", () => addKasumi.value && add({ kasumi: addKasumi.value }));
     const bFolder = $("button", "button", "New folder");
     const bCmd = $("button", "button", "New command");
@@ -627,8 +639,8 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     bReset.addEventListener("click", async () => {
       if (!confirm("Go back to Kasumi's default menu? Your changes and your own entries go.")) return;
       await ctx.saveMany(
-        state.kind === "bar"
-          ? [{ path: ["bar_menu", "layout"], value: null }]
+        OWN[state.kind]
+          ? [{ path: [OWN[state.kind], "layout"], value: null }]
           : [
               { path: ["context_menu", "layout"], value: null },
               { path: ["context_menu", "custom"], value: null },
@@ -654,6 +666,8 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     const cm = (ctx.cfg as any).context_menu ?? {};
     const bm = (ctx.cfg as any).bar_menu ?? {};
     barLayout = structuredClone(bm.layout?.length ? bm.layout : bm.power ? [{ rest: true }] : [{ rest: true }, { match: ["verb:kasumi.power"], hide: true }]);
+    const lm = (ctx.cfg as any).launcher_menu ?? {};
+    launcherLayout = structuredClone(lm.layout?.length ? lm.layout : [{ rest: true }]);
     layout = mainLayout = structuredClone(cm.layout?.length ? cm.layout : info.default);
     // Your own entries (`custom`) become part of the layout where it said `custom`.
     const custom: MenuNode[] = structuredClone(cm.custom ?? []);

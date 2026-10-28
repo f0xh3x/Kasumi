@@ -156,7 +156,7 @@ fn settings_keys(id: &str) -> Option<&'static str> {
 /// The shell path an id opens: Control Panel ids are absolute ("::{...}"), programs
 /// on the PATH and Start's pinned shortcuts their file, Settings pages their link, app
 /// ids are AppsFolder parsing names.
-fn shell_path(id: &str) -> String {
+pub(crate) fn shell_path(id: &str) -> String {
     if id.starts_with("::") {
         format!("shell:{id}")
     } else if id.starts_with(SETTINGS) {
@@ -247,6 +247,44 @@ fn apps() -> Vec<(String, String)> {
     let apps = enumerate();
     *INDEX.lock().unwrap() = Some(Index { at: Instant::now(), apps: apps.clone() });
     apps
+}
+
+/// What the dock's pin list ([widgets.tasks] pins) calls an app of the launcher's: its
+/// AppUserModelID, or its program / shortcut (an Apps folder path under a known folder,
+/// `{GUID}\app.exe`, made a real one). None for what the dock can't hold (Settings
+/// pages, Control Panel items, sums).
+pub fn dock_entry(id: &str) -> Option<String> {
+    if id.starts_with("::") || id.starts_with(SETTINGS) || id.starts_with("calc:") {
+        return None;
+    }
+    if let Some(path) = id.strip_prefix(RUN).or_else(|| id.strip_prefix(LNK)) {
+        return Some(path.to_string());
+    }
+    if let Some(rest) = id.strip_prefix('{') {
+        let (guid, tail) = rest.split_once("}\\")?;
+        let guid = windows::core::GUID::try_from(guid).ok()?;
+        let base = unsafe { windows::Win32::UI::Shell::SHGetKnownFolderPath(&guid, windows::Win32::UI::Shell::KF_FLAG_DEFAULT, None) }.ok()?;
+        let base = unsafe {
+            let s = base.to_string().ok();
+            CoTaskMemFree(Some(base.0 as *const _));
+            s?
+        };
+        return Some(format!("{base}\\{tail}"));
+    }
+    (!id.contains('\\')).then(|| id.to_string())
+}
+
+/// Start's pins changed (pinned or unpinned from the launcher's menu): read again, and
+/// the launcher told.
+pub fn pins_changed() {
+    *PINS.lock().unwrap() = None;
+    std::thread::spawn(|| {
+        // Start writes its layout a moment after the command.
+        std::thread::sleep(Duration::from_millis(700));
+        sta();
+        let pins = start_pins().into_iter().map(|(id, name)| json!({ "id": id, "name": name })).collect();
+        crate::native::post(crate::native::Msg::Data("launcher:pinned".into(), Value::Array(pins)));
+    });
 }
 
 /// Shortcuts pinned to Start that no app in the index has the name of: `lnk:<path>`.
@@ -510,6 +548,19 @@ mod tests {
         println!("{} pins in {} ms", pins.len(), t.elapsed().as_millis());
         for p in pins {
             println!("  {p:?}");
+        }
+    }
+
+    #[test]
+    fn dock_entries() {
+        assert_eq!(dock_entry("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App").as_deref(), Some("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"));
+        assert_eq!(dock_entry("run:C:\\Windows\\regedit.exe").as_deref(), Some("C:\\Windows\\regedit.exe"));
+        assert_eq!(dock_entry("lnk:C:\\x\\Zen.lnk").as_deref(), Some("C:\\x\\Zen.lnk"));
+        // System32 (FOLDERID_System) made a real folder.
+        let notepad = dock_entry("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\notepad.exe").unwrap_or_default().to_lowercase();
+        assert!(notepad.ends_with("\\system32\\notepad.exe"), "{notepad}");
+        for none in ["ms-settings:display", "::{26EE0668-A00A-44D7-9371-BEB064C98683}\\0\\x", "calc:4", "{not-a-guid}\\a.exe"] {
+            assert_eq!(dock_entry(none), None, "{none}");
         }
     }
 

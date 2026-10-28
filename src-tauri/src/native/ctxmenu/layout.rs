@@ -23,6 +23,8 @@ pub enum Kind {
     Desktop,
     /// Kasumi's bar menu (a bar's empty space).
     Bar,
+    /// An app in the launcher.
+    Launcher,
 }
 
 impl Kind {
@@ -36,11 +38,12 @@ impl Kind {
             Kind::Background => "background",
             Kind::Desktop => "desktop",
             Kind::Bar => "bar",
+            Kind::Launcher => "launcher",
         }
     }
 
     fn selection(self) -> bool {
-        !matches!(self, Kind::Background | Kind::Desktop | Kind::Bar)
+        !matches!(self, Kind::Background | Kind::Desktop | Kind::Bar | Kind::Launcher)
     }
 }
 

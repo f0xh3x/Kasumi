@@ -923,9 +923,14 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                 if let Some(act) = act {
                     run_act(act, app.clone());
                 }
-                // A right-click on a bar's empty space: Kasumi's bar menu.
-                if let (true, Some(app)) = (bar_menu, app) {
-                    ctxmenu::bar_menu(app);
+                // A right-click on a bar's empty space: Kasumi's bar menu; on an app in the
+                // launcher: its menu.
+                if let Some(app) = app {
+                    if bar_menu {
+                        ctxmenu::bar_menu(app);
+                    } else if let Some(id) = widgets::launcher::take_menu() {
+                        ctxmenu::launcher_menu(app, id);
+                    }
                 }
             }
             LRESULT(0)

@@ -194,6 +194,41 @@ fn pins(app: &AppHandle) -> Vec<Pin> {
     }
 }
 
+/// Whether the dock has `entry` (a pin list entry: launcher.rs dock_entry) pinned; None
+/// while pinning is off ([widgets.tasks] pinning / pinned).
+pub fn dock_pinned(app: &AppHandle, entry: &str) -> Option<bool> {
+    use tauri::Manager;
+    let on = {
+        let cfg = app.state::<super::SharedConfig>();
+        let cfg = cfg.read().unwrap();
+        let t = cfg.widgets.get("tasks").and_then(|v| v.as_table());
+        let off = |k: &str| t.and_then(|t| t.get(k)).and_then(|v| v.as_bool()) == Some(false);
+        !off("pinning") && !off("pinned")
+    };
+    if !on {
+        return None;
+    }
+    let key = own_pin(entry)?.key;
+    Some(pins(app).iter().any(|p| p.key.eq_ignore_ascii_case(&key) || p.entry.eq_ignore_ascii_case(entry)))
+}
+
+/// Pins `entry` to the dock, or unpins it (Kasumi's pin list from then on, as the tasks
+/// widget's own Pin does).
+pub fn dock_toggle(app: &AppHandle, entry: &str) {
+    let Some(key) = own_pin(entry).map(|p| p.key) else { return };
+    let current = pins(app);
+    let same = |p: &Pin| p.key.eq_ignore_ascii_case(&key) || p.entry.eq_ignore_ascii_case(entry);
+    let pinned = current.iter().any(same);
+    let mut list: Vec<String> = current.into_iter().filter(|p| !(pinned && same(p))).map(|p| p.entry).collect();
+    if !pinned {
+        list.push(entry.to_string());
+    }
+    let path = vec![crate::config_edit::Seg::Key("widgets".into()), crate::config_edit::Seg::Key("tasks".into()), crate::config_edit::Seg::Key("pins".into())];
+    if let Err(e) = tauri::async_runtime::block_on(crate::config_edit::config_write(path, Some(serde_json::json!(list)))) {
+        eprintln!("[kasumi] pins: {e}");
+    }
+}
+
 /// One entry of Kasumi's pin list: an app key (AppUserModelID or exe), or a
 /// file dropped onto the tasks widget (a shortcut, a program, an internet link).
 fn own_pin(entry: &str) -> Option<Pin> {

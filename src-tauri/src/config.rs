@@ -52,6 +52,8 @@ pub struct Config {
     #[serde(default)]
     pub bar_menu: BarMenuCfg,
     #[serde(default)]
+    pub launcher_menu: LauncherMenuCfg,
+    #[serde(default)]
     pub theme: Theme,
     #[serde(default)]
     pub osd: Osd,
@@ -256,6 +258,15 @@ pub struct BarMenuCfg {
     /// Lock, Sleep, Restart and Shut down in it (each but Lock asks for a second click).
     pub power: bool,
     /// How it's arranged (the context menu's layout format; empty: as Kasumi lists it).
+    pub layout: Vec<MenuNode>,
+}
+
+/// `[launcher_menu]`: the menu on an app in the launcher (right-click): Windows' own
+/// entries for it (as Start's) and Kasumi's.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct LauncherMenuCfg {
+    /// How it's arranged (the context menu's layout format; empty: as Windows lists it).
     pub layout: Vec<MenuNode>,
 }
 
