@@ -5,6 +5,7 @@
 
 pub mod alttab;
 mod basic;
+mod batteries;
 pub mod launcher;
 pub use basic::language_code;
 pub mod clock;
@@ -606,7 +607,7 @@ pub fn widget_type(name: &str) -> &str {
 pub fn panel_for(name: &str) -> Option<String> {
     match widget_type(name) {
         "clock" => Some(name.replacen("clock", "calendar", 1)),
-        "menu" | "tray" | "media" | "weather" | "temps" | "tasks" | "quick" | "launcher" | "privacy" | "claude" | "clipboard" | "notifications" => Some(name.to_string()),
+        "menu" | "tray" | "media" | "weather" | "temps" | "tasks" | "quick" | "launcher" | "privacy" | "claude" | "clipboard" | "notifications" | "batteries" => Some(name.to_string()),
         _ => None,
     }
 }
@@ -632,6 +633,7 @@ pub fn create(name: &str, opts: Opts) -> Box<dyn Widget> {
         "media" => Box::new(shell::Media::new(opts)),
         "quick" => Box::new(shell::Quick::new(opts)),
         "tray" => Box::new(shell::Tray::new(opts)),
+        "batteries" => Box::new(batteries::Batteries::new(opts)),
         _ => Box::new(Unknown(name.to_string())),
     }
 }
@@ -651,6 +653,7 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
         "notifications" => Box::new(panels3::NotificationsPanel::new(opts)),
         "tasks" => Box::new(panels3::TasksPanel::new(opts)),
         "launcher" => Box::new(launcher::LauncherPanel::new(opts, false)),
+        "batteries" => Box::new(batteries::BatteriesPanel::new()),
         _ => return None,
     })
 }

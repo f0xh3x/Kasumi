@@ -742,6 +742,13 @@ export const pages: Page[] = [
           { kind: "custom", editor: "quickTiles" },
           {
             kind: "toggle",
+            label: "Device batteries",
+            help: "A line under battery and network: your Bluetooth mice, keyboards and headphones, and how charged they are.",
+            path: ["widgets", "quick", "devices"],
+            default: false,
+          },
+          {
+            kind: "toggle",
             label: "Wi-Fi and Bluetooth tiles switch",
             help: "Their tiles turn Wi-Fi and Bluetooth on and off (lit while on) instead of opening Settings. The Dark mode tile always switches.",
             path: ["widgets", "quick", "switches"],
@@ -754,6 +761,25 @@ export const pages: Page[] = [
         collapsible: true,
         icon: 0xe7e8,
         fields: [{ kind: "custom", editor: "buttonsWidgets" }],
+      },
+      {
+        title: "Batteries",
+        collapsible: true,
+        icon: 0xe83f,
+        help: "This PC's battery (laptops) and your Bluetooth devices' (mice, keyboards, headphones). Click it for the list.",
+        fields: [
+          {
+            kind: "select",
+            label: "Shows",
+            path: ["widgets", "batteries", "show"],
+            default: "lowest",
+            options: [
+              { value: "lowest", label: "The lowest battery" },
+              { value: "all", label: "Every battery" },
+            ],
+          },
+          { kind: "toggle", label: "This PC's battery", help: "Counted in the bar too (laptops).", path: ["widgets", "batteries", "laptop"], default: true },
+        ],
       },
       {
         title: "Tasks",

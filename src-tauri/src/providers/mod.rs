@@ -3,6 +3,7 @@
 //! "weather"); the latest one is kept so a freshly loaded page can catch up.
 
 pub mod audio;
+pub mod batteries;
 pub mod claude;
 pub mod clipboard;
 pub mod extras;
@@ -189,6 +190,7 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     systray::start(app);
     tasks::start(app);
     system::start(app);
+    batteries::start(app);
     extras::start(app);
     claude::start(app);
     clipboard::start(app);

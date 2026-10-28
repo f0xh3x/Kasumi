@@ -121,6 +121,9 @@ pub struct QuickPanel {
     /// were last asked for.
     switches: Value,
     switches_asked: Option<Instant>,
+    /// Bluetooth devices' batteries (name, percent; providers/batteries.rs), listed under
+    /// battery and network with [widgets.quick] devices.
+    devices: Vec<(String, f64)>,
 }
 
 const W: f32 = 540.0;
@@ -152,7 +155,13 @@ impl QuickPanel {
             armed: None,
             switches: Value::Null,
             switches_asked: None,
+            devices: Vec::new(),
         }
+    }
+
+    /// The devices line: shown with [widgets.quick] devices when there are any.
+    fn devices_line(&self) -> bool {
+        self.opts.flag("devices") == Some(true) && !self.devices.is_empty()
     }
 
     /// A tile that switches something rather than opening Settings: Wi-Fi and Bluetooth
@@ -279,7 +288,7 @@ impl QuickPanel {
         if h > 0.0 {
             h += 12.0;
         }
-        h + status
+        h + status + if self.devices_line() { 10.0 + status } else { 0.0 }
     }
 
     fn tiles_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
@@ -297,12 +306,19 @@ impl QuickPanel {
 
 impl Panel for QuickPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["system", "quick:outputs", "quick:apps", "quick:switches"]
+        &["system", "quick:outputs", "quick:apps", "quick:switches", "batteries"]
     }
     fn data(&mut self, key: &str, v: &Value) -> bool {
         match key {
             "system" => self.system = v.clone(),
             "quick:switches" => self.switches = v.clone(),
+            "batteries" => {
+                self.devices = v
+                    .get("devices")
+                    .and_then(|d| d.as_array())
+                    .map(|a| a.iter().filter_map(|d| Some((d.get("name")?.as_str()?.to_string(), d.get("percent")?.as_f64()?))).collect())
+                    .unwrap_or_default();
+            }
             "quick:outputs" => {
                 self.outputs = v
                     .as_array()
@@ -466,6 +482,30 @@ impl Panel for QuickPanel {
         };
         status(nx, network_glyph(&n), &net, nw);
         y += sh;
+        // The devices' batteries: one line, each its icon and level (low ones warn).
+        if self.devices_line() {
+            y += 10.0;
+            let cy = y + sh / 2.0;
+            let f = Font::icons(14.0);
+            let gw = g.measure("\u{E702}", &f);
+            g.text_at("\u{E702}", &f, x + (18.0 - gw) / 2.0, cy + 1.0, fg);
+            let mut tx = x + 30.0;
+            for (k, (name, p)) in self.devices.iter().enumerate() {
+                let text = format!("{name} {}%", p.round());
+                let w = g.measure(&text, &sf);
+                if tx + w > x + W {
+                    g.text_at("…", &sf, tx, cy, dim);
+                    break;
+                }
+                let color = if *p <= 20.0 { with_alpha(cx.look.warn, alpha) } else { dim };
+                g.text_at(&text, &sf, tx, cy, color);
+                tx += w;
+                if k + 1 < self.devices.len() {
+                    tx += g.text_at("  ·  ", &sf, tx, cy, dim);
+                }
+            }
+            y += sh;
+        }
         if !bottom && more_h > 0.0 {
             y += 14.0;
             self.draw_list(cx, x, y, more_h - 14.0, alpha, &mut boxes, (ox, oy));

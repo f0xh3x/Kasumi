@@ -98,7 +98,7 @@ fn run(app: AppHandle) {
 }
 
 /// None on PCs without a battery.
-fn battery() -> Value {
+pub(crate) fn battery() -> Value {
     let mut s = SYSTEM_POWER_STATUS::default();
     if unsafe { GetSystemPowerStatus(&mut s) }.is_err() || s.BatteryFlag == 128 || s.BatteryFlag == 255 {
         return Value::Null;
