@@ -117,9 +117,11 @@ pub struct Clock {
     format: String,
     text: String,
     next: Instant,
-    /// A running timer's time beside the clock ([widgets.clock] timers).
+    /// A running timer's time beside the clock ([widgets.clock] timers), and when it's
+    /// looked at next.
     timers: bool,
     timer_text: String,
+    beat: Instant,
     pending: Option<Act>,
 }
 
@@ -131,7 +133,7 @@ impl Clock {
             f => f.to_string(),
         };
         let timers = opts.flag("timers") == Some(true);
-        let mut c = Clock { format, text: String::new(), next: Instant::now(), timers, timer_text: String::new(), pending: None };
+        let mut c = Clock { format, text: String::new(), next: Instant::now(), timers, timer_text: String::new(), beat: Instant::now(), pending: None };
         c.tick(Instant::now());
         c
     }
@@ -145,7 +147,7 @@ impl Clock {
 impl Widget for Clock {
     fn wake(&self) -> Option<Instant> {
         if self.timers && timer().is_some_and(running) {
-            return Some(self.next.min(Instant::now() + TIMER_TICK));
+            return Some(self.next.min(self.beat));
         }
         Some(self.next)
     }
@@ -158,6 +160,7 @@ impl Widget for Clock {
         let text = strftime(&self.format, &t);
         let mut changed = text != self.text;
         self.text = text;
+        self.beat = now + TIMER_TICK;
         if self.timers {
             if take_expired(now) {
                 self.pending = Some(times_up());
@@ -235,7 +238,6 @@ fn iso_week(days: i64) -> i64 {
 /// Month view, Monday first, with ISO week numbers; today in the accent. With
 /// [widgets.clock] timers, a row under it: a countdown's presets and a stopwatch, or
 /// the one running with its buttons.
-#[derive(Default)]
 pub struct Calendar {
     /// The title's and the weekday row's heights as last measured.
     heights: (f32, f32),
@@ -243,6 +245,14 @@ pub struct Calendar {
     /// The timer row's buttons as last laid out (content px), and the one hovered.
     boxes: std::cell::RefCell<Vec<(TimerHit, [f32; 4])>>,
     hovered: Option<TimerHit>,
+    /// When it looks again (a running timer's time, today at midnight).
+    beat: Instant,
+}
+
+impl Default for Calendar {
+    fn default() -> Calendar {
+        Calendar { heights: (0.0, 0.0), timers: false, boxes: Default::default(), hovered: None, beat: Instant::now() }
+    }
 }
 
 /// The timer row's buttons.
@@ -317,13 +327,12 @@ impl Calendar {
 
 impl Panel for Calendar {
     fn wake(&self) -> Option<Instant> {
-        // A running timer: its time. Else today moves at midnight: every minute.
-        if self.timers && timer().is_some_and(running) {
-            return Some(Instant::now() + TIMER_TICK);
-        }
-        Some(Instant::now() + Duration::from_secs(60))
+        // A running timer: its time; else today moves at midnight: every minute.
+        Some(self.beat)
     }
-    fn tick(&mut self, _now: Instant) -> bool {
+    fn tick(&mut self, now: Instant) -> bool {
+        let running = self.timers && timer().is_some_and(running);
+        self.beat = now + if running { TIMER_TICK } else { Duration::from_secs(60) };
         true
     }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
@@ -445,6 +454,7 @@ impl Panel for Calendar {
             (_, t) => t,
         };
         set_timer(next);
+        self.beat = now;
         Reply::Redraw
     }
     fn tooltip(&self) -> Option<String> {

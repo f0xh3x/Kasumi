@@ -954,6 +954,12 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                     }
                 }
             }
+            // A click may have started something that ticks (a timer from the calendar):
+            // the widgets' timer is set again (WM_WAKE runs tick_widgets).
+            let wake = WAKE.load(Ordering::Relaxed);
+            if wake != 0 {
+                let _ = PostMessageW(Some(HWND(wake as *mut _)), WM_WAKE, WPARAM(0), LPARAM(0));
+            }
             LRESULT(0)
         }
         // Clicks are handled on release; nothing should take the focus.

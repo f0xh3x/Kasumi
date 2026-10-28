@@ -242,6 +242,8 @@ const KEYS_W: f32 = 3.0 * 32.0 + 2.0 * 10.0;
 /// Now playing: album art, title and artist, a seek bar to drag, the keys.
 pub struct MediaPanel {
     m: Value,
+    /// When the position moves on next (between the player's updates).
+    beat: Instant,
     art: Option<String>,
     picture: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
     picture_for: Option<String>,
@@ -257,7 +259,7 @@ pub struct MediaPanel {
 
 impl MediaPanel {
     pub fn new() -> MediaPanel {
-        MediaPanel { m: Value::Null, art: None, picture: None, picture_for: None, dragging: None, hover_seek: false, hovered_key: None, rows: (0.0, 0.0, 0.0, 0.0, ART), track: (0.0, 0.0) }
+        MediaPanel { m: Value::Null, beat: Instant::now(), art: None, picture: None, picture_for: None, dragging: None, hover_seek: false, hovered_key: None, rows: (0.0, 0.0, 0.0, 0.0, ART), track: (0.0, 0.0) }
     }
     fn f(&self, k: &str) -> f64 {
         self.m.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0)
@@ -306,9 +308,10 @@ impl Panel for MediaPanel {
     }
     fn wake(&self) -> Option<Instant> {
         // The position moves on between the player's updates.
-        self.b("playing").then(|| Instant::now() + Duration::from_millis(500))
+        self.b("playing").then_some(self.beat)
     }
-    fn tick(&mut self, _now: Instant) -> bool {
+    fn tick(&mut self, now: Instant) -> bool {
+        self.beat = now + Duration::from_millis(500);
         true
     }
     fn tick_resizes(&self) -> bool {

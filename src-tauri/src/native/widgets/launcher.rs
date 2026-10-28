@@ -457,12 +457,14 @@ fn draw_field(g: &Gfx, cx: &Ctx, x: f32, cy: f32, w: f32, alpha: f32) {
 pub struct LauncherWidget {
     inline: bool,
     surface: String,
+    /// The caret's next blink.
+    beat: Instant,
 }
 
 impl LauncherWidget {
     pub fn new(opts: &Opts, inline: bool) -> LauncherWidget {
         set_opts(opts);
-        LauncherWidget { inline, surface: opts.surface.clone() }
+        LauncherWidget { inline, surface: opts.surface.clone(), beat: Instant::now() }
     }
     fn searching(&self) -> bool {
         searching_on(&self.surface)
@@ -481,9 +483,10 @@ impl Widget for LauncherWidget {
         true
     }
     fn wake(&self) -> Option<Instant> {
-        self.searching().then(|| Instant::now() + Duration::from_millis(265))
+        self.searching().then_some(self.beat)
     }
-    fn tick(&mut self, _now: Instant) -> bool {
+    fn tick(&mut self, now: Instant) -> bool {
+        self.beat = now + Duration::from_millis(265);
         true
     }
     fn tick_resizes(&self) -> bool {
@@ -563,6 +566,8 @@ pub struct LauncherPanel {
     boxes: Vec<(Hit, [f32; 4])>,
     hovered: Option<Hit>,
     armed: Option<(Hit, Instant)>,
+    /// Its own field's caret's next blink.
+    beat: Instant,
 }
 
 const ROW_H: f32 = 34.0;
@@ -635,6 +640,7 @@ impl LauncherPanel {
             boxes: Vec::new(),
             hovered: None,
             armed: None,
+            beat: Instant::now(),
         }
     }
 
@@ -842,12 +848,15 @@ impl Panel for LauncherPanel {
     }
     fn wake(&self) -> Option<Instant> {
         // The own field's caret blinks; an armed button disarms after 3 s.
-        let caret = (self.own_field && searching_on(&self.surface)).then(|| Instant::now() + Duration::from_millis(265));
+        let caret = (self.own_field && searching_on(&self.surface)).then_some(self.beat);
         [caret, self.armed.map(|a| a.1)].into_iter().flatten().min()
     }
     fn tick(&mut self, now: Instant) -> bool {
         if self.armed.is_some_and(|a| now >= a.1) {
             self.armed = None;
+        }
+        if now >= self.beat {
+            self.beat = now + Duration::from_millis(265);
         }
         true
     }
