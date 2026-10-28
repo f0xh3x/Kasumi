@@ -85,7 +85,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     let Some(app) = APP.get() else { return DefWindowProcW(hwnd, msg, wparam, lparam) };
     match msg {
         WM_TIMER => {
-            let want = super::placed(app, "clipboard");
+            // Kept while the widget is on a bar, or the launcher searches it.
+            let want = super::placed(app, "clipboard") || super::widget_opts(app, "launcher").get("clipboard").and_then(|v| v.as_bool()) == Some(true);
             if want != LISTENING.load(Ordering::Relaxed) {
                 LISTENING.store(want, Ordering::Relaxed);
                 if want {

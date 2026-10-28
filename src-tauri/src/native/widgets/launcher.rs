@@ -33,6 +33,10 @@ struct State {
     pins: Vec<(String, String)>,
     pinned: bool,
     user: bool,
+    /// The clipboard's history (id, text; images "Image"), searched after a comma
+    /// ([widgets.launcher] clipboard).
+    clip: Vec<(u64, String)>,
+    clipboard: bool,
     /// When the caret last moved (it shows solid for a moment, then blinks).
     typed: Instant,
     /// The surface it's open on (every surface draws on this thread: the others keep
@@ -41,7 +45,7 @@ struct State {
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, typed: Instant::now(), owner: String::new() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, typed: Instant::now(), owner: String::new() });
 }
 
 /// Higher is better; -1: no match (launcher.ts score).
@@ -75,6 +79,7 @@ fn command_score(name: &str, q: &str) -> f64 {
 /// pins' indices begin.
 const CALC: usize = usize::MAX;
 const PIN: usize = 1 << 40;
+const CLIP: usize = 1 << 41;
 
 /// A sum typed into the field ([widgets.launcher] calculator): `24*7`, `(3+4)^2`,
 /// `1,5 / 3`, `2 x 8`, `sqrt(2)`, `pi*2`. None unless it's a whole sum with at least one
@@ -205,6 +210,10 @@ fn entry(s: &State, i: usize) -> (String, String) {
         let v = s.calc.clone().unwrap_or_default();
         return (format!("calc:{v}"), format!("= {v}"));
     }
+    if i >= CLIP {
+        let (id, text) = &s.clip[i - CLIP];
+        return (format!("clip:{id}"), text.clone());
+    }
     if i >= PIN {
         return s.pins[i - PIN].clone();
     }
@@ -233,6 +242,12 @@ fn search(s: &mut State) {
     // Nothing typed yet: Start's pins.
     if q.is_empty() && s.pinned {
         s.results = (0..s.pins.len().min(s.max)).map(|k| PIN + k).collect();
+    }
+    // A comma first: the clipboard's history (newest first), what follows it searched.
+    if let Some(rest) = q.strip_prefix(',').filter(|_| s.clipboard) {
+        let rest = rest.trim();
+        s.calc = None;
+        s.results = (0..s.clip.len()).filter(|&k| rest.is_empty() || s.clip[k].1.to_lowercase().contains(rest)).take(s.max).map(|k| CLIP + k).collect();
     }
     s.selected = 0;
 }
@@ -273,6 +288,7 @@ fn set_opts(opts: &Opts) {
         s.settings = on("settings");
         s.pinned = on("pinned");
         s.user = on("user");
+        s.clipboard = on("clipboard");
     });
 }
 
@@ -318,6 +334,23 @@ fn take_list(key: &str, v: &Value) {
         match key {
             "launcher:apps" => s.apps = list(true),
             "launcher:pinned" => s.pins = list(false).into_iter().map(|(id, name, _)| (id, name)).collect(),
+            "clipboard" => {
+                s.clip = v
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| {
+                                let id = x.get("id")?.as_u64()?;
+                                let text = match x.get("kind").and_then(|k| k.as_str()) {
+                                    Some("image") => "Image".to_string(),
+                                    _ => x.get("text").and_then(|t| t.as_str()).unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "),
+                                };
+                                Some((id, text))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
             _ => return,
         }
         search(&mut s);
@@ -438,7 +471,7 @@ impl LauncherWidget {
 
 impl Widget for LauncherWidget {
     fn keys(&self) -> &'static [&'static str] {
-        &["launcher:apps", "launcher:pinned"]
+        &["launcher:apps", "launcher:pinned", "clipboard"]
     }
     fn tooltip(&self) -> Option<String> {
         (!self.searching()).then(|| "Search apps".into())
@@ -774,7 +807,7 @@ impl LauncherPanel {
 
 impl Panel for LauncherPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["appIcons", "launcher:apps", "launcher:pinned", "launcher:user"]
+        &["appIcons", "launcher:apps", "launcher:pinned", "launcher:user", "clipboard"]
     }
     fn data(&mut self, key: &str, v: &Value) -> bool {
         match key {
@@ -837,7 +870,7 @@ impl Panel for LauncherPanel {
         }
         let (results, query, ids) = S.with(|s| {
             let s = s.borrow();
-            (s.results.len(), s.query.clone(), s.results.iter().filter(|&&i| i != CALC).map(|&i| entry(&s, i).0).collect::<Vec<_>>())
+            (s.results.len(), s.query.clone(), s.results.iter().filter(|&&i| i != CALC && !(CLIP..CALC).contains(&i)).map(|&i| entry(&s, i).0).collect::<Vec<_>>())
         });
         // Icons for results not asked for yet.
         let wanted: Vec<String> = ids.into_iter().filter(|id| !self.asked.contains(id)).collect();
@@ -897,10 +930,17 @@ impl Panel for LauncherPanel {
                         g.fill_round(rect(lx, top, lw, ROW_H), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
                     }
                     let cy = top + ROW_H / 2.0;
-                    if id.starts_with("calc:") {
+                    let glyph = if id.starts_with("calc:") {
+                        Some("\u{E8EF}")
+                    } else if id.starts_with("clip:") {
+                        Some(if name == "Image" { "\u{EB9F}" } else { "\u{E77F}" })
+                    } else {
+                        None
+                    };
+                    if let Some(gl) = glyph {
                         let f = Font::icons(16.0);
-                        let w = g.measure("\u{E8EF}", &f);
-                        g.text_at("\u{E8EF}", &f, lx + 8.0 + (22.0 - w) / 2.0, cy, fg);
+                        let w = g.measure(gl, &f);
+                        g.text_at(gl, &f, lx + 8.0 + (22.0 - w) / 2.0, cy, fg);
                     } else if let Some(icon) = self.icons.get(id) {
                         icon.draw(g, lx + 8.0, top + 6.0, 22.0, alpha);
                     }
@@ -909,6 +949,8 @@ impl Panel for LauncherPanel {
                         "Settings"
                     } else if id.starts_with("calc:") {
                         "Copy"
+                    } else if id.starts_with("clip:") {
+                        "Paste"
                     } else {
                         ""
                     };
@@ -919,7 +961,9 @@ impl Panel for LauncherPanel {
                     g.text_at(&fit_text(g, name, &body, lw - 48.0 - tw), &body, lx + 40.0, cy, fg);
                 }
                 Part::Hint => {
-                    g.text_at("No apps found", &cx.secondary(cx.look.font_size), lx + 8.0, top + 6.0 + lh / 2.0, dim);
+                    let clip = S.with(|s| s.borrow().clipboard) && query.trim_start().starts_with(',');
+                    let hint = if clip { "Nothing copied matches" } else { "No apps found" };
+                    g.text_at(hint, &cx.secondary(cx.look.font_size), lx + 8.0, top + 6.0 + lh / 2.0, dim);
                 }
             }
         }
@@ -994,7 +1038,7 @@ impl Panel for LauncherPanel {
                     let s = s.borrow();
                     s.results.get(i).map(|&k| entry(&s, k).0)
                 });
-                MENU.with(|m| *m.borrow_mut() = id.filter(|id| !id.starts_with("calc:")));
+                MENU.with(|m| *m.borrow_mut() = id.filter(|id| !id.starts_with("calc:") && !id.starts_with("clip:")));
             }
             return Reply::None;
         }
@@ -1036,6 +1080,13 @@ pub fn take_menu() -> Option<String> {
 pub fn launch(id: String) -> Act {
     if let Some(v) = id.strip_prefix("calc:").map(String::from) {
         return Act::call(move |_| crate::win::set_clipboard_text(&v)).then(Act::Launcher { open: false, refocus: false });
+    }
+    // A clipboard item: the launcher hands the focus back, then it's pasted there.
+    if let Some(clip) = id.strip_prefix("clip:").and_then(|n| n.parse::<u64>().ok()) {
+        return Act::Launcher { open: false, refocus: true }.then(Act::call(move |_| {
+            std::thread::sleep(Duration::from_millis(250));
+            let _ = tauri::async_runtime::block_on(crate::providers::clipboard::clipboard_paste(clip));
+        }));
     }
     Act::call(move |_| {
         let _ = tauri::async_runtime::block_on(crate::launcher::launcher_launch(id));

@@ -131,7 +131,7 @@ pub fn run(args: &[String]) {
                 surface.data(&gfx, "launcher:apps", &Value::Array(list));
                 // A name, a sum (with [widgets.launcher] calculator) and a Settings page's
                 // search word (with [widgets.launcher] settings).
-                for (query, shot) in [("o", "search"), ("24*7", "calc"), ("wallpaper", "settings")] {
+                for (query, shot) in [("o", "search"), ("24*7", "calc"), ("wallpaper", "settings"), (",re", "clipboard")] {
                     super::widgets::launcher::set_open(true, &label);
                     for c in query.chars() {
                         super::widgets::launcher::type_char(c);

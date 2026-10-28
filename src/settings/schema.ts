@@ -443,6 +443,13 @@ export const pages: Page[] = [
             path: ["widgets", "launcher", "pinned"],
             default: false,
           },
+          {
+            kind: "toggle",
+            label: "Clipboard history",
+            help: "Type a comma (,) to search what you've copied; Enter pastes it into the app you were in. Kasumi keeps the history (in memory only) while this is on.",
+            path: ["widgets", "launcher", "clipboard"],
+            default: false,
+          },
           { kind: "toggle", label: "User button", help: "Your account picture and name; opens Settings › Your info.", path: ["widgets", "launcher", "user"], default: false },
           { kind: "custom", editor: "launcherPower" },
           { kind: "custom", editor: "launcherButtons" },
