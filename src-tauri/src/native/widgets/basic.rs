@@ -220,100 +220,225 @@ struct Item {
     action: String,
     target: Option<String>,
     confirm: bool,
+    /// A group's entries (`items`): they slide out of it when it's clicked.
+    kids: Vec<Item>,
 }
 
-/// A row of icon buttons running menu actions (`items`); destructive ones take a second click.
+impl Item {
+    /// From config: a button (`action`), or a group (`items`, any action ignored).
+    fn parse(it: &toml::Value, nested: bool) -> Option<Item> {
+        let s = |k: &str| it.get(k).and_then(|v| v.as_str()).map(String::from);
+        let group = !nested && it.get("items").is_some();
+        let kids: Vec<Item> = if group { it.get("items").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|k| Item::parse(k, true)).collect()).unwrap_or_default() } else { Vec::new() };
+        Some(Item {
+            label: s("label"),
+            action: if group { "group".into() } else { s("action")? },
+            icon: s("icon").unwrap_or_else(|| BUTTON.into()),
+            target: s("target"),
+            confirm: it.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
+            kids,
+        })
+    }
+}
+
+/// A button's place: its index, and its index among its group's entries.
+type At = (usize, Option<usize>);
+
+/// Where a button is drawn (local x) and how far it has come out (a group's entries).
+struct Slot {
+    at: At,
+    x: f32,
+    alpha: f32,
+}
+
+/// A group coming out or going back in.
+const SLIDE: Duration = Duration::from_millis(220);
+/// The cursor gone this long: an open group goes back in.
+const LINGER: Duration = Duration::from_millis(1200);
+
+/// A row of icon buttons running menu actions (`items`); destructive ones take a second
+/// click. A group (an item with `items`) slides its entries out beside it when clicked,
+/// and back in when clicked again, when one of them runs, or when the cursor has left.
 pub struct Buttons {
     items: Vec<Item>,
-    hovered: Option<usize>,
-    armed: Option<(usize, Instant)>,
+    hovered: Option<At>,
+    armed: Option<(At, Instant)>,
     /// The row height as last drawn (buttons size with it).
     h: f32,
+    /// The group out (or going back in), and its slide: from, to, since.
+    group: Option<usize>,
+    slide: (f32, f32, Instant),
+    /// The slide's last frame drawn.
+    settled: bool,
+    /// The cursor left at (an open group goes back in after LINGER).
+    left: Option<Instant>,
+    /// The next frame while it slides.
+    beat: Instant,
 }
 
 impl Buttons {
     pub fn new(opts: Opts) -> Buttons {
-        let items = opts
-            .table
-            .get("items")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|it| {
-                        let s = |k: &str| it.get(k).and_then(|v| v.as_str()).map(String::from);
-                        Some(Item { label: s("label"), action: s("action")?, icon: s("icon").unwrap_or_else(|| BUTTON.into()), target: s("target"), confirm: it.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false) })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        Buttons { items, hovered: None, armed: None, h: 30.0 }
+        let items = opts.table.get("items").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|it| Item::parse(it, false)).collect()).unwrap_or_default();
+        let now = Instant::now();
+        Buttons { items, hovered: None, armed: None, h: 30.0, group: None, slide: (0.0, 0.0, now), settled: true, left: None, beat: now }
     }
-    fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
-        // .btn: 0.8 h square, 0.45 h icon, 0.1 h apart.
-        let h = cx.h;
+
+    fn item(&self, at: At) -> Option<&Item> {
+        let it = self.items.get(at.0)?;
+        match at.1 {
+            Some(k) => it.kids.get(k),
+            None => Some(it),
+        }
+    }
+
+    /// How far the group is out (0..1, eased).
+    fn out(&self, now: Instant) -> f32 {
+        let (from, to, since) = self.slide;
+        let k = (now.saturating_duration_since(since).as_secs_f32() / SLIDE.as_secs_f32()).min(1.0);
+        let k = 1.0 - (1.0 - k).powi(3);
+        from + (to - from) * k
+    }
+
+    fn sliding(&self, now: Instant) -> bool {
+        now < self.slide.2 + SLIDE && self.slide.0 != self.slide.1
+    }
+
+    /// Sends the group `g` out (`true`) or back in, from where it is now.
+    fn slide_to(&mut self, g: usize, open: bool) {
+        let now = Instant::now();
+        let from = if self.group == Some(g) { self.out(now) } else { 0.0 };
+        self.group = Some(g);
+        self.slide = (from, if open { 1.0 } else { 0.0 }, now);
+        self.settled = false;
+        self.beat = now;
+        self.left = None;
+    }
+
+    /// The group that's out (or coming out).
+    fn open(&self) -> Option<usize> {
+        self.group.filter(|_| self.slide.1 > 0.5)
+    }
+
+    /// The buttons' places now, and the row's width. A group's entries spread out from
+    /// behind it (fading in) as it opens; the buttons after it make room.
+    fn slots(&self, h: f32, now: Instant) -> (Vec<Slot>, f32) {
+        let (side, gap) = (h * 0.8, h * 0.1);
+        let e = self.out(now);
         let mut out = Vec::new();
+        let mut x = 0.0;
         for (i, it) in self.items.iter().enumerate() {
             if i > 0 {
-                out.push(Piece::Gap(h * 0.1));
+                x += gap;
             }
-            let bg = if self.armed.is_some_and(|(a, _)| a == i) {
-                Some(rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.35))
-            } else if self.hovered == Some(i) {
-                Some(cx.hover_bg(0.12))
-            } else {
-                None
-            };
-            out.push(Piece::Button { side: h * 0.8, glyph: it.icon.clone(), size: h * 0.45, color: cx.look.fg, bg });
+            out.push(Slot { at: (i, None), x, alpha: 1.0 });
+            x += side;
+            if self.group == Some(i) && e > 0.001 {
+                for k in 0..it.kids.len() {
+                    out.push(Slot { at: (i, Some(k)), x: x + (gap + k as f32 * (side + gap)) * e, alpha: e });
+                }
+                x += it.kids.len() as f32 * (side + gap) * e;
+            }
         }
-        out
+        (out, x)
     }
-    /// The button under a local x.
-    fn at(&self, x: f32) -> Option<usize> {
-        let (side, gap) = (self.h * 0.8, self.h * 0.1);
-        let i = (x / (side + gap)).floor();
-        (i >= 0.0 && (i as usize) < self.items.len() && x - i * (side + gap) < side).then_some(i as usize)
+
+    /// The button under a local x (not one still mostly hidden).
+    fn at(&self, x: f32) -> Option<At> {
+        let side = self.h * 0.8;
+        let (slots, _) = self.slots(self.h, Instant::now());
+        // The last drawn wins (entries over their group while they come out).
+        slots.iter().rev().find(|s| s.alpha > 0.5 && x >= s.x && x < s.x + side).map(|s| s.at)
     }
 }
 
 impl Widget for Buttons {
     fn tooltip(&self) -> Option<String> {
-        let i = self.hovered?;
-        let it = self.items.get(i)?;
+        let at = self.hovered?;
+        let it = self.item(at)?;
         let label = it.label.clone().unwrap_or_else(|| it.action.clone());
-        Some(if self.armed.is_some_and(|(a, _)| a == i) { format!("Click again: {label}") } else { label })
+        Some(if self.armed.is_some_and(|(a, _)| a == at) { format!("Click again: {label}") } else { label })
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
         self.h = cx.h;
-        row_width(cx.gfx, &self.pieces(cx))
+        self.slots(cx.h, Instant::now()).1
     }
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
-        row_draw(cx.gfx, &self.pieces(cx), x, cy, alpha);
+        // .btn: 0.8 h square, 0.45 h icon.
+        let h = cx.h;
+        let (slots, _) = self.slots(h, Instant::now());
+        for s in &slots {
+            let Some(it) = self.item(s.at) else { continue };
+            let bg = if self.armed.is_some_and(|(a, _)| a == s.at) {
+                Some(rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.35))
+            } else if self.hovered == Some(s.at) || (s.at.1.is_none() && self.open() == Some(s.at.0)) {
+                // Hovered, or a group that's out.
+                Some(cx.hover_bg(0.12))
+            } else {
+                None
+            };
+            let piece = Piece::Button { side: h * 0.8, glyph: it.icon.clone(), size: h * 0.45, color: cx.look.fg, bg };
+            row_draw(cx.gfx, &[piece], x + s.x, cy, alpha * s.alpha);
+        }
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
         let h = at.and_then(|(x, _)| self.at(x));
+        // Gone: an open group goes back in a little later (back in time: it stays).
+        match at {
+            None if self.open().is_some() && self.left.is_none() => self.left = Some(Instant::now()),
+            Some(_) => self.left = None,
+            _ => {}
+        }
         let changed = h != self.hovered;
         self.hovered = h;
         changed
     }
     fn wake(&self) -> Option<Instant> {
-        self.armed.map(|(_, t)| t)
+        let slide = (!self.settled).then_some(self.beat);
+        let linger = self.left.filter(|_| self.open().is_some()).map(|t| t + LINGER);
+        [self.armed.map(|(_, t)| t), slide, linger].into_iter().flatten().min()
     }
     fn tick(&mut self, now: Instant) -> bool {
+        let mut changed = false;
         if self.armed.is_some_and(|(_, t)| now >= t) {
             self.armed = None;
-            return true;
+            changed = true;
         }
-        false
+        if let (Some(t), Some(g)) = (self.left, self.open()) {
+            if now >= t + LINGER {
+                self.slide_to(g, false);
+            }
+        }
+        if !self.settled {
+            // A frame of the slide; at its end, the last one.
+            if self.sliding(now) {
+                self.beat = now + Duration::from_millis(15);
+            } else {
+                self.settled = true;
+            }
+            changed = true;
+        }
+        changed
     }
     fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
-        let Some(i) = self.at(at.0).filter(|_| button == Button::Left) else { return Reply::None };
-        let it = &self.items[i];
-        if it.confirm && !self.armed.is_some_and(|(a, _)| a == i) {
-            self.armed = Some((i, Instant::now() + Duration::from_secs(3)));
+        let Some(a) = self.at(at.0).filter(|_| button == Button::Left) else { return Reply::None };
+        let Some(it) = self.item(a) else { return Reply::None };
+        // A group: out, or back in (another one out goes in at once).
+        if a.1.is_none() && it.action == "group" {
+            let open = self.open() != Some(a.0);
+            self.slide_to(a.0, open);
             return Reply::Redraw;
         }
+        if it.confirm && !self.armed.is_some_and(|(x, _)| x == a) {
+            self.armed = Some((a, Instant::now() + Duration::from_secs(3)));
+            return Reply::Redraw;
+        }
+        let act = Act::Run { action: it.action.clone(), target: it.target.clone() };
         self.armed = None;
-        Reply::Do(Act::Run { action: it.action.clone(), target: it.target.clone() })
+        // One of a group's entries: the group goes back in.
+        if a.1.is_some() {
+            self.slide_to(a.0, false);
+        }
+        Reply::Do(act)
     }
 }
 

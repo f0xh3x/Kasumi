@@ -1038,10 +1038,15 @@ const DEFAULT_ICON: Record<string, number> = {
 };
 const DESTRUCTIVE = new Set(["restart", "shutdown", "sign_out"]);
 
-/** Editor for a widget's `items` (menu entries, buttons). */
-const itemsEditor = (widget: string, separators = true, key = "items"): Editor => (ctx) => {
+/** Editor for a widget's `items` (menu entries, buttons). With `groups` (the Buttons
+ *  widget), an item can be a group: its own `items`, which slide out of it. */
+const itemsEditor = (widget: string, separators = true, key = "items", groups = false): Editor => (ctx) => {
   const items: any[] = structuredClone(ctx.cfg.widgets?.[widget]?.[key] ?? []);
-  const save = () => ctx.save(["widgets", widget, key], items);
+  return itemRows(items, () => ctx.save(["widgets", widget, key], items), separators, groups);
+};
+
+/** The rows of `items` (edited in place; `save` writes them all), and its add buttons. */
+function itemRows(items: any[], save: () => void, separators: boolean, groups: boolean): HTMLElement {
   const list = $("div", "menu-editor");
 
   const render = () => {
@@ -1069,6 +1074,24 @@ const itemsEditor = (widget: string, separators = true, key = "items"): Editor =
       );
       if (it.separator) {
         list.append($("div", "menu-row sep-row", $("div", "sep-line"), controls));
+        return;
+      }
+      if (Array.isArray(it.items)) {
+        // A group: its icon and name, then its own entries (they slide out of it).
+        const [gIcon, gGrid] = iconPicker(it.icon ?? String.fromCharCode(0xe8b7), (ch) => {
+          it.icon = ch;
+          save();
+        });
+        const gLabel = input(it.label ?? "", "Group name");
+        gLabel.addEventListener("change", () => {
+          it.label = gLabel.value;
+          save();
+        });
+        const tag = $("span", "card-help", "Group: its buttons slide out of it");
+        list.append($("div", "menu-row", gIcon, gLabel, tag, controls), gGrid);
+        const inner = itemRows(it.items, save, false, false);
+        inner.style.marginLeft = "28px";
+        list.append(inner);
         return;
       }
       const [iconBtn, iconGrid] = iconPicker(it.icon ?? String.fromCharCode(DEFAULT_ICON[it.action] ?? 0xe8b7), (ch) => {
@@ -1115,14 +1138,20 @@ const itemsEditor = (widget: string, separators = true, key = "items"): Editor =
     $("button", "button", "Add folder"),
     $("button", "button", "Add action"),
     $("button", "button", "Add separator"),
+    $("button", "button", "Add group"),
   );
-  const [bFolder, bAction, bSep] = [...buttons.children] as HTMLButtonElement[];
+  const [bFolder, bAction, bSep, bGroup] = [...buttons.children] as HTMLButtonElement[];
   bFolder.addEventListener("click", add({ label: "Folder", icon: String.fromCharCode(0xe8b7), action: "open", target: "C:/" }));
   bAction.addEventListener("click", add({ label: "Lock", icon: String.fromCharCode(0xe72e), action: "lock" }));
   bSep.addEventListener("click", add({ separator: true }));
+  bGroup.addEventListener("click", add({ label: "Folders", icon: String.fromCharCode(0xe8b7), items: [{ label: "Downloads", icon: String.fromCharCode(0xe896), action: "open", target: "shell:Downloads" }] }));
   bSep.hidden = !separators;
-  return $("div", "stack-tight", list, buttons, $("p", "card-help", "Restart, shut down and sign out ask for a second click."));
-};
+  bGroup.hidden = !groups;
+  const help = groups
+    ? "Restart, shut down and sign out ask for a second click. A group's buttons slide out of it when you click it, and back in when you click it again, pick one, or move away."
+    : "Restart, shut down and sign out ask for a second click.";
+  return $("div", "stack-tight", list, buttons, $("p", "card-help", help));
+}
 
 const menuItems = itemsEditor("menu");
 
@@ -1289,7 +1318,7 @@ const buttonsWidgets: Editor = (ctx) => {
       });
       head.append(remove);
     }
-    box.append($("div", "buttons-card", head, itemsEditor(id, false)(ctx)));
+    box.append($("div", "buttons-card", head, itemsEditor(id, false, "items", true)(ctx)));
   }
   const add = $("button", "button", "Add another Buttons widget") as HTMLButtonElement;
   add.addEventListener("click", () => {
