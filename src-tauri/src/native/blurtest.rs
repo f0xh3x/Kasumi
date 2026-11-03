@@ -34,7 +34,7 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::UI::Color;
 use windows::UI::Composition::Desktop::DesktopWindowTarget;
-use windows::UI::Composition::{CompositionBrush, CompositionColorBrush, CompositionDrawingSurface, CompositionGraphicsDevice, Compositor};
+use windows::UI::Composition::{CompositionBrush, CompositionDrawingSurface, CompositionGraphicsDevice, Compositor};
 use windows::core::{implement, Ref};
 use windows::Graphics::IGeometrySource2D;
 use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1Geometry};
@@ -44,21 +44,30 @@ use windows_numerics::{Matrix3x2, Vector2};
 
 /// A Direct2D geometry handed to composition (a path for its clip).
 #[implement(IGeometrySource2D, IGeometrySource2DInterop)]
-struct Shape(ID2D1Geometry);
+struct Shape {
+    geom: ID2D1Geometry,
+    /// Width, height, top (concave) and bottom radii: to build it again with
+    /// composition's own factory when it asks for that.
+    dims: (f32, f32, f32, f32),
+}
 
 impl windows::Graphics::IGeometrySource2D_Impl for Shape_Impl {}
 
 impl IGeometrySource2DInterop_Impl for Shape_Impl {
     fn GetGeometry(&self) -> windows::core::Result<ID2D1Geometry> {
-        Ok(self.0.clone())
+        note("composition asked for the shape");
+        Ok(self.geom.clone())
     }
-    fn TryGetGeometryUsingFactory(&self, _factory: Ref<'_, ID2D1Factory>) -> windows::core::Result<ID2D1Geometry> {
-        Err(windows::Win32::Foundation::E_NOTIMPL.into())
+    fn TryGetGeometryUsingFactory(&self, factory: Ref<'_, ID2D1Factory>) -> windows::core::Result<ID2D1Geometry> {
+        note("composition asked for the shape from its own factory");
+        let (w, h, rc, r) = self.dims;
+        let f = factory.ok()?;
+        unsafe { notch(f, w, h, rc, r)?.cast() }
     }
 }
 
-/// The tint's strengths a right-click goes through (black, Kasumi's background).
-const TINTS: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 0.9];
+/// The tint (black, Kasumi's background).
+const TINT: f32 = 0.6;
 
 struct State {
     _queue: DispatcherQueueController,
@@ -66,8 +75,13 @@ struct State {
     _target: DesktopWindowTarget,
     _device: CompositionGraphicsDevice,
     text: CompositionDrawingSurface,
-    tint: CompositionColorBrush,
-    tint_at: usize,
+    /// The blur and tint's layer, cut to the notch or a plain rectangle (right-click).
+    back: windows::UI::Composition::ContainerVisual,
+    shape_clip: windows::UI::Composition::CompositionClip,
+    rect_clip: windows::UI::Composition::CompositionClip,
+    clipped: bool,
+    /// The notch's outline, drawn with the text (always visible: where the shape is).
+    outline: ID2D1Geometry,
     big: IDWriteTextFormat,
     small: IDWriteTextFormat,
     size: (f32, f32),
@@ -97,12 +111,19 @@ pub fn run() {
 }
 
 /// What came of the blur, in %TEMP%\kasumi-blur-test.txt.
+/// A line added to the report.
+fn note(line: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(std::env::temp_dir().join("kasumi-blur-test.txt")) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn report(r: &Result<(), String>) {
-    let text = match r {
+    note(&match r {
         Ok(()) => "blur: ok".to_string(),
         Err(e) => format!("blur: failed, {e}"),
-    };
-    let _ = std::fs::write(std::env::temp_dir().join("kasumi-blur-test.txt"), text);
+    });
 }
 
 fn black(a: f32) -> Color {
@@ -112,6 +133,7 @@ fn black(a: f32) -> Color {
 unsafe fn start() -> windows::core::Result<()> {
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+        let _ = std::fs::write(std::env::temp_dir().join("kasumi-blur-test.txt"), "");
         // Composition needs a dispatcher queue on its thread.
         let queue = CreateDispatcherQueueController(DispatcherQueueOptions {
             dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
@@ -149,6 +171,9 @@ unsafe fn start() -> windows::core::Result<()> {
         let y = r.top + (r.bottom - r.top) / 4;
         let (x, y) = if std::env::args().any(|a| a == "--offscreen") { (-30000, -30000) } else { (x, y) };
         SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w as i32, h as i32, SWP_NOACTIVATE)?;
+        // Windows 11 shows a host backdrop only for windows that ask for it.
+        let on = windows::Win32::Foundation::TRUE;
+        let dwm = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(hwnd, windows::Win32::Graphics::Dwm::DWMWA_USE_HOSTBACKDROPBRUSH, &on as *const _ as *const _, 4);
 
         // Direct3D → Direct2D → composition's drawing device.
         let mut d3d: Option<ID3D11Device> = None;
@@ -165,8 +190,10 @@ unsafe fn start() -> windows::core::Result<()> {
 
         // The notch's shape: a clip on the layers under the text (a mask brush won't take
         // the backdrop as its source: "Unsupported source brush type").
-        let geom = notch(&d2f, w, h, 18.0 * scale, 22.0 * scale)?;
-        let source: IGeometrySource2D = Shape(geom.cast()?).into();
+        let dims = (w, h, 18.0 * scale, 22.0 * scale);
+        let geom = notch(&d2f, dims.0, dims.1, dims.2, dims.3)?;
+        let source: IGeometrySource2D = Shape { geom: geom.cast()?, dims }.into();
+
         let clip = compositor.CreateGeometricClipWithGeometry(&compositor.CreatePathGeometryWithPath(&CompositionPath::Create(&source)?)?)?;
 
         let root = compositor.CreateContainerVisual()?;
@@ -187,7 +214,8 @@ unsafe fn start() -> windows::core::Result<()> {
             Err(e) => Err(format!("the host backdrop: {e}")),
         };
         report(&backdrop);
-        let tint = compositor.CreateColorBrushWithColor(black(TINTS[2]))?;
+        note(&format!("host backdrop asked for: {dwm:?}"));
+        let tint = compositor.CreateColorBrushWithColor(black(TINT))?;
         layer(&tint.cast()?)?;
         // The text on its own surface (it stays inside the notch: no clip needed).
         let text = device.CreateDrawingSurface2(px, DirectXPixelFormat::B8G8R8A8UIntNormalized, DirectXAlphaMode::Premultiplied)?;
@@ -207,8 +235,27 @@ unsafe fn start() -> windows::core::Result<()> {
         let big = font(DWRITE_FONT_WEIGHT_SEMI_BOLD, 22.0)?;
         let small = font(DWRITE_FONT_WEIGHT_NORMAL, 11.5)?;
 
+        let rect_clip = compositor.CreateInsetClip()?.cast()?;
+        let shape_clip = clip.cast()?;
+        let outline = geom.cast()?;
         STATE.with(|s| {
-            *s.borrow_mut() = Some(State { _queue: queue, _compositor: compositor, _target: target, _device: device, text, tint, tint_at: 2, big, small, size: (w, h), scale, backdrop })
+            *s.borrow_mut() = Some(State {
+                _queue: queue,
+                _target: target,
+                _device: device,
+                text,
+                rect_clip,
+                _compositor: compositor,
+                back,
+                shape_clip,
+                clipped: true,
+                outline,
+                big,
+                small,
+                size: (w, h),
+                scale,
+                backdrop,
+            })
         });
         redraw();
         SetTimer(Some(hwnd), 1, 1000, None);
@@ -235,7 +282,7 @@ unsafe fn draw(surface: &CompositionDrawingSurface, f: impl FnOnce(&ID2D1DeviceC
 }
 
 /// A notch hanging from its top edge: concave corners up there, round ones below.
-unsafe fn notch(f: &ID2D1Factory1, w: f32, h: f32, rc: f32, r: f32) -> windows::core::Result<ID2D1PathGeometry> {
+unsafe fn notch(f: &ID2D1Factory, w: f32, h: f32, rc: f32, r: f32) -> windows::core::Result<ID2D1PathGeometry> {
     unsafe {
         let geom = f.CreatePathGeometry()?;
         let sink = geom.Open()?;
@@ -268,15 +315,16 @@ fn redraw() {
         let t = unsafe { GetLocalTime() };
         let clock = format!("{:02}:{:02}:{:02}", t.wHour, t.wMinute, t.wSecond);
         let line = match &s.backdrop {
-            Ok(()) => format!("Blur behind  ·  tint {}%", (TINTS[s.tint_at] * 100.0).round()),
+            Ok(()) => format!("{}  ·  blur + {}% black", if s.clipped { "Cut to the notch" } else { "Plain rectangle" }, (TINT * 100.0).round()),
             Err(e) => format!("No blur: {e}"),
         };
-        let hint = "drag: move  ·  right-click: tint  ·  middle-click: close";
+        let hint = "drag: move  ·  right-click: shape on / off  ·  middle-click: close";
         let (w, h, k) = (s.size.0, s.size.1, s.scale);
         let _ = unsafe {
             draw(&s.text, |dc| {
                 let white = dc.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }, None)?;
                 let dim = dc.CreateSolidColorBrush(&D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 0.62 }, None)?;
+                dc.DrawGeometry(&s.outline, &dim, 1.0, None);
                 let wide = |t: &str| t.encode_utf16().collect::<Vec<u16>>();
                 let row = |top: f32, bottom: f32| D2D_RECT_F { left: 30.0 * k, top, right: w - 30.0 * k, bottom };
                 dc.DrawText(&wide(&clock), &s.big, &row(8.0 * k, h * 0.5), &white, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
@@ -296,8 +344,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_NCRBUTTONUP => {
                 STATE.with(|s| {
                     if let Some(s) = s.borrow_mut().as_mut() {
-                        s.tint_at = (s.tint_at + 1) % TINTS.len();
-                        let _ = s.tint.SetColor(black(TINTS[s.tint_at]));
+                        s.clipped = !s.clipped;
+                        let _ = s.back.SetClip(if s.clipped { &s.shape_clip } else { &s.rect_clip });
                     }
                 });
                 redraw();
