@@ -6,6 +6,7 @@
 //! (notch widths, interactive regions) straight to the engine.
 
 pub mod apptips;
+pub mod backdrop;
 pub mod blurtest;
 pub mod ctxmenu;
 pub mod geometry;
@@ -846,6 +847,14 @@ unsafe extern "system" fn wake_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let point = || ((lp.0 & 0xffff) as i16 as i32, ((lp.0 >> 16) & 0xffff) as i16 as i32);
     match msg {
+        // Raised (the engine keeps the bars on top): its blur stays right under it.
+        WM_WINDOWPOSCHANGED => {
+            let pos = unsafe { &*(lp.0 as *const WINDOWPOS) };
+            if !pos.flags.contains(SWP_NOZORDER) {
+                backdrop::below(hwnd);
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+        }
         // Clicks never take the focus, except into the open launcher (it types there).
         WM_MOUSEACTIVATE => {
             let launcher = with_native(|n| n.surfaces.iter().find(|s| s.hwnd == hwnd).is_some_and(|s| s.launcher_open())).unwrap_or(false);

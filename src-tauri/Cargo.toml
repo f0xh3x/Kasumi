@@ -92,6 +92,7 @@ features = [
   "Win32_System_WinRT",
   "Win32_System_WinRT_Composition",
   "Win32_System_WinRT_Graphics_Direct2D",
+  "Win32_Storage_Xps",
 ]
 
 [profile.release]

@@ -413,6 +413,11 @@ pub struct Theme {
     pub font_size: f64,
     /// Opacity of the bars, notches and panels (percent); text stays solid.
     pub opacity: f64,
+    /// What's behind them: "solid" (the background, at `opacity`), "acrylic" (what's
+    /// behind, blurred) or "mica" (the wallpaper, blurred), tinted with the background
+    /// at `backdrop_tint` (percent).
+    pub backdrop: String,
+    pub backdrop_tint: f64,
 }
 
 impl Default for Theme {
@@ -429,6 +434,8 @@ impl Default for Theme {
             accent_details: false,
             font_size: 13.0,
             opacity: 100.0,
+            backdrop: "solid".into(),
+            backdrop_tint: 60.0,
         }
     }
 }

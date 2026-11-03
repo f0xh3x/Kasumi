@@ -257,6 +257,10 @@ pub struct Surface {
     /// What the engine asked for (see set_click_through).
     want_through: bool,
     offscreen: bool,
+    /// The blur under it ([theme] backdrop), and the kind it was made for (made once
+    /// per kind: one that couldn't be made isn't tried every frame).
+    backdrop: Option<super::backdrop::Backdrop>,
+    backdrop_for: Option<super::backdrop::Kind>,
     /// The window's size and position as last drawn (physical).
     size: SIZE,
     pos: POINT,
@@ -360,6 +364,8 @@ impl Surface {
             click_through: true,
             want_through: true,
             offscreen,
+            backdrop: None,
+            backdrop_for: None,
             size: SIZE { cx: w, cy: 1 },
             pos: POINT::default(),
             tracking: false,
@@ -982,6 +988,9 @@ impl Surface {
 
     pub fn set_shown(&mut self, shown: bool) {
         self.shown = shown;
+        if let Some(b) = self.backdrop.as_mut() {
+            b.set_shown(shown);
+        }
         if !shown {
             self.tip.hide();
             self.tip_since = None;
@@ -1693,12 +1702,12 @@ impl Surface {
         gfx.begin(self.dib.dc, w_px, h_px, scale)?;
         let fill = with_alpha(self.look.bg, self.look.opacity);
         let shape = gfx.path(&frame.path, flip)?;
+        let corners = if frame.corners.is_empty() { None } else { Some(gfx.path(&frame.corners, flip)?) };
         unsafe {
             gfx.brush.SetColor(&fill);
-            if frame.corners.is_empty() {
-                gfx.rt.FillGeometry(&shape, &gfx.brush, None::<&ID2D1Brush>);
-            } else {
-                gfx.fill_union(&shape, &gfx.path(&frame.corners, flip)?);
+            match &corners {
+                None => gfx.rt.FillGeometry(&shape, &gfx.brush, None::<&ID2D1Brush>),
+                Some(c) => gfx.fill_union(&shape, c),
             }
             // Content is clipped by the shape, as the page's content is by its clip path.
             let params = D2D1_LAYER_PARAMETERS {
@@ -1958,6 +1967,21 @@ impl Surface {
         }
         self.size = size;
         self.pos = pos;
+        // The blur under it, cut to the shape (corners included).
+        let want = if self.offscreen { None } else { self.look.backdrop };
+        if want != self.backdrop_for {
+            self.backdrop_for = want;
+            self.backdrop = want.and_then(|k| super::backdrop::Backdrop::new(k, self.hwnd).map_err(|e| eprintln!("[kasumi] {}: no {k:?} backdrop: {e}", self.label)).ok());
+        }
+        if let Some(b) = self.backdrop.as_mut() {
+            let whole: Option<windows::Win32::Graphics::Direct2D::ID2D1Geometry> = match &corners {
+                Some(c) => gfx.union(&shape, c).ok().map(|g| g.into()),
+                None => Some(shape.clone().into()),
+            };
+            if let Some(px) = whole.and_then(|g| gfx.scaled(&g, scale).ok()) {
+                b.update(pos.x, pos.y, w_px, h_px, &px, self.shown);
+            }
+        }
         self.sync_thumbs();
         self.publish_icons();
         Ok(())

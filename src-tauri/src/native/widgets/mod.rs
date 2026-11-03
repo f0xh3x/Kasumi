@@ -36,8 +36,10 @@ pub mod glyph {
 #[derive(Clone)]
 pub struct Look {
     pub bg: Color,
-    /// Opacity of the shape ([theme] opacity), 0..1.
+    /// Opacity of the shape ([theme] opacity; over a blur, backdrop_tint), 0..1.
     pub opacity: f32,
+    /// A blur under the shape ([theme] backdrop).
+    pub backdrop: Option<crate::native::backdrop::Kind>,
     pub fg: Color,
     pub dim: f32,
     pub accent: Color,
@@ -57,7 +59,8 @@ impl Look {
     pub fn from_theme(t: &crate::config::Theme, bottom: bool) -> Look {
         Look {
             bg: hex(&t.background).unwrap_or(rgba(0.0, 0.0, 0.0, 1.0)),
-            opacity: (t.opacity as f32 / 100.0).clamp(0.0, 1.0),
+            opacity: (if crate::native::backdrop::Kind::from_config(&t.backdrop).is_some() { t.backdrop_tint } else { t.opacity } as f32 / 100.0).clamp(0.0, 1.0),
+            backdrop: crate::native::backdrop::Kind::from_config(&t.backdrop),
             fg: hex(&t.text).unwrap_or(white(1.0)),
             dim: t.dim_opacity as f32,
             accent: hex(&t.accent).unwrap_or(white(1.0)),

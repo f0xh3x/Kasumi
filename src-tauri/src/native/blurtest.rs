@@ -94,7 +94,85 @@ thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
 }
 
+/// `--blur-test --probe`: does composition draw on a layered (click-through) window?
+/// Plain red in an off-screen window, layered and not, read back with PrintWindow
+/// (PW_RENDERFULLCONTENT); the centre pixels go to the report.
+fn probe() {
+    let _ = std::fs::write(std::env::temp_dir().join("kasumi-blur-test.txt"), "");
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let Ok(_queue) = CreateDispatcherQueueController(DispatcherQueueOptions {
+            dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
+            threadType: DQTYPE_THREAD_CURRENT,
+            apartmentType: DQTAT_COM_STA,
+        }) else {
+            note("probe: no dispatcher queue");
+            return;
+        };
+        let Ok(comp) = Compositor::new() else { return };
+        let inst = GetModuleHandleW(None).unwrap_or_default();
+        let class = windows::core::w!("KasumiBlurProbe");
+        RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: inst.into(), lpszClassName: class, ..Default::default() });
+        let mut keep = Vec::new();
+        let mut wins = Vec::new();
+        for layered in [false, true] {
+            let mut ex = WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+            if layered {
+                ex |= WS_EX_LAYERED | WS_EX_TRANSPARENT;
+            }
+            let Ok(h) = CreateWindowExW(ex, class, windows::core::w!("probe"), WS_POPUP, -30000, -30000, 64, 64, None, None, Some(inst.into()), None) else { continue };
+            if layered {
+                let _ = SetLayeredWindowAttributes(h, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
+            }
+            let made = (|| -> windows::core::Result<_> {
+                let target = comp.cast::<ICompositorDesktopInterop>()?.CreateDesktopWindowTarget(h, true)?;
+                let v = comp.CreateSpriteVisual()?;
+                v.SetSize(Vector2 { X: 64.0, Y: 64.0 })?;
+                v.SetBrush(&comp.CreateColorBrushWithColor(Color { A: 255, R: 255, G: 0, B: 0 })?)?;
+                target.SetRoot(&v)?;
+                Ok((target, v))
+            })();
+            match made {
+                Ok(m) => keep.push(m),
+                Err(e) => note(&format!("probe layered={layered}: {e}")),
+            }
+            let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
+            wins.push((layered, h));
+        }
+        // Let composition commit and DWM draw.
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(700);
+        let mut msg = MSG::default();
+        while std::time::Instant::now() < until {
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        use windows::Win32::Graphics::Gdi::*;
+        for (layered, h) in wins {
+            let screen = GetDC(None);
+            let dc = CreateCompatibleDC(Some(screen));
+            let bmp = CreateCompatibleBitmap(screen, 64, 64);
+            let old = SelectObject(dc, bmp.into());
+            let ok = windows::Win32::Storage::Xps::PrintWindow(h, dc, windows::Win32::Storage::Xps::PRINT_WINDOW_FLAGS(2)).as_bool();
+            let px = GetPixel(dc, 32, 32);
+            note(&format!("probe layered={layered}: PrintWindow {ok}, centre pixel {:06x} (BGR; 0000ff = red)", px.0));
+            SelectObject(dc, old);
+            let _ = DeleteObject(bmp.into());
+            let _ = DeleteDC(dc);
+            ReleaseDC(None, screen);
+            let _ = DestroyWindow(h);
+        }
+        drop(keep);
+    }
+}
+
 pub fn run() {
+    if std::env::args().any(|a| a == "--probe") {
+        probe();
+        return;
+    }
     if let Err(e) = unsafe { start() } {
         unsafe {
             let _ = MessageBoxW(None, &HSTRING::from(format!("The blur test couldn't start:\n{e:?}")), windows::core::w!("Kasumi blur test"), MB_OK);
