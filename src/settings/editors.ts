@@ -1126,6 +1126,38 @@ const itemsEditor = (widget: string, separators = true, key = "items"): Editor =
 
 const menuItems = itemsEditor("menu");
 
+/** Explorer's folder options (Windows' own settings, not config.toml): read and set
+ *  through explorer_options / explorer_option_set. */
+const explorerOptions: Editor = () => {
+  const box = $("div", "stack-tight", $("p", "card-help", "Reading Explorer's settings…"));
+  const set = (name: string, value: unknown) => invoke("explorer_option_set", { name, value }).catch((e) => console.error(e));
+  invoke<Record<string, any>>("explorer_options")
+    .then((o) => {
+      const sw = (label: string, help: string | undefined, name: string) => row(label, help, toggleSwitch(!!o[name], (on) => set(name, on)).el);
+      const launch = select(
+        [
+          ["2", "Home"],
+          ["1", "This PC"],
+          ["3", "Downloads"],
+        ],
+        String(o.launch_to ?? 2),
+      );
+      launch.addEventListener("change", () => set("launch_to", Number(launch.value)));
+      box.replaceChildren(
+        sw("File name extensions", undefined, "extensions"),
+        sw("Hidden files and folders", undefined, "hidden"),
+        sw("Protected system files", "Windows' own files it hides; leave off unless you need them.", "system"),
+        sw("Item check boxes", undefined, "checkboxes"),
+        sw("Status bar", "The line of item counts at the bottom.", "status_bar"),
+        sw("Compact view", "Less space between items.", "compact"),
+        sw("Full path in the title bar", undefined, "full_path"),
+        row("Open File Explorer to", undefined, launch),
+      );
+    })
+    .catch((e) => box.replaceChildren($("p", "card-help", `Couldn't read Explorer's settings: ${e}`)));
+  return box;
+};
+
 /** The batteries the widget shows ([widgets.batteries] show = "chosen", ids in
  *  `shown`): the ones there are now, each with a switch; ids picked earlier but not
  *  connected now are kept. */
@@ -1883,4 +1915,5 @@ export const editors: Record<string, Editor> = {
   menuItems,
   launcherButtons,
   batteryPicks,
+  explorerOptions,
 };

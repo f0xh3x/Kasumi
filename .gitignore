@@ -5,3 +5,6 @@ src-tauri/gen/
 .scratch/
 
 native-test/target/
+
+# Kasumi's library inside File Explorer
+explorer-tap/target/

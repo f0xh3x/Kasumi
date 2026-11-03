@@ -50,6 +50,8 @@ pub struct Config {
     #[serde(default)]
     pub context_menu: ContextMenuCfg,
     #[serde(default)]
+    pub explorer: ExplorerCfg,
+    #[serde(default)]
     pub bar_menu: BarMenuCfg,
     #[serde(default)]
     pub launcher_menu: LauncherMenuCfg,
@@ -268,6 +270,55 @@ pub struct BarMenuCfg {
 pub struct LauncherMenuCfg {
     /// How it's arranged (the context menu's layout format; empty: as Windows lists it).
     pub layout: Vec<MenuNode>,
+}
+
+/// `[explorer]`: File Explorer styling (explorer.rs; experimental).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ExplorerCfg {
+    pub enabled: bool,
+    /// Folder windows' frames (and Explorer's dialogs', with `dialogs`): `backdrop`
+    /// ("default" | "none" | "mica" | "mica_alt" | "acrylic"), `title_bar` ("default" |
+    /// "dark" | "light"), `corners` ("default" | "round" | "small" | "square"), `border`
+    /// ("default" | "accent" | "none" | "color": `border_color`), `caption_color` and
+    /// `caption_text` ("" = Windows').
+    pub frames: bool,
+    pub dialogs: bool,
+    pub backdrop: String,
+    pub title_bar: String,
+    pub corners: String,
+    pub border: String,
+    pub border_color: String,
+    pub caption_color: String,
+    pub caption_text: String,
+    /// Parts of the folder windows' header hidden (Kasumi's library inside Explorer):
+    /// `hide` (explorer::PARTS names), `hide_custom` (the library's specs), `map` (it
+    /// writes the header's parts to %TEMP%\kasumi-explorer-<pid>.txt).
+    pub hide_parts: bool,
+    pub hide: Vec<String>,
+    pub hide_custom: Vec<String>,
+    pub map: bool,
+}
+
+impl Default for ExplorerCfg {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            frames: true,
+            dialogs: true,
+            backdrop: "default".into(),
+            title_bar: "default".into(),
+            corners: "default".into(),
+            border: "default".into(),
+            border_color: String::new(),
+            caption_color: String::new(),
+            caption_text: String::new(),
+            hide_parts: false,
+            hide: Vec::new(),
+            hide_custom: Vec::new(),
+            map: false,
+        }
+    }
 }
 
 /// `[context_menu]`: Kasumi's own right-click menus in Explorer and on the desktop

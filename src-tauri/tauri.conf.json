@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && cargo build --release --manifest-path explorer-tap/Cargo.toml",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,6 +26,9 @@
       "icons/128x128.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../explorer-tap/target/release/kasumi_explorer.dll": "kasumi_explorer.dll"
+    },
     "shortDescription": "A notch-style taskbar, Start menu and status bar for Windows",
     "longDescription": "Kasumi: notches at the edges of the screen that open into a status bar, a dock with your apps, a launcher and pop-ups, in place of the Windows taskbar.",
     "copyright": "© 2026 Kip",

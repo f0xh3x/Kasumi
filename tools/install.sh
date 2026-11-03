@@ -18,6 +18,10 @@ if [[ "${1:-}" == "--test" ]]; then
   cargo test --features tauri/custom-protocol 2>&1 | grep -E -A6 "^error|test result|FAILED|panicked"
 fi
 cargo build --release --features tauri/custom-protocol 2>&1 | grep -E "^(warning|error)|Finished"
+# Kasumi's library inside File Explorer ([explorer] hide), installed beside Kasumi.exe.
+cargo build --release --manifest-path ../explorer-tap/Cargo.toml 2>&1 | grep -E "^error|Finished"
+cp ../explorer-tap/target/release/kasumi_explorer.dll target/release/
+cp ../explorer-tap/target/release/kasumi_explorer.dll "$APP/kasumi_explorer.dll"
 
 rm -f "$APP/Kasumi.old.exe"
 mv "$APP/Kasumi.exe" "$APP/Kasumi.old.exe"

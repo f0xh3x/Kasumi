@@ -6,6 +6,7 @@ mod config;
 mod corners;
 mod config_edit;
 mod engine;
+mod explorer;
 mod instance;
 mod keyhook;
 mod launcher;
@@ -39,6 +40,10 @@ fn main() {
         native::blurtest::run();
         return;
     }
+    // Loads Kasumi's library into a folder window's Explorer (explorer.rs): nothing else.
+    if args.iter().any(|a| a == "--explorer-inject") {
+        std::process::exit(explorer::helper(&args));
+    }
     // Native bars drawn off screen into PNGs (native/snapshot.rs): nothing else of the app.
     if args.iter().any(|a| a == "--native-snapshot") {
         native::snapshot::run(&args);
@@ -55,7 +60,7 @@ fn main() {
         default_hook(info);
     }));
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![engine::fe_log, actions::run_action, config_edit::config_read, config_edit::config_write, config_edit::config_reset, autostart::autostart_get, autostart::autostart_set, settings::open_settings, settings::open_setup_window, settings::open_notes_window, updater::release_notes, presets::presets_shipped, settings::app_version, updater::update_check, updater::update_install, settings::monitors_list, settings::fonts_list, settings::lhm_sensors, config_edit::config_write_many, presets::presets_list, presets::preset_save, presets::preset_apply, presets::preset_rename, presets::preset_delete, providers::extras::disk_list, providers::batteries::batteries_list, providers::notifications::notifications_windows_on, providers::notifications::taskbar_all_displays, native::ctxmenu::context_menu_info])
+        .invoke_handler(tauri::generate_handler![engine::fe_log, actions::run_action, config_edit::config_read, config_edit::config_write, config_edit::config_reset, autostart::autostart_get, autostart::autostart_set, settings::open_settings, settings::open_setup_window, settings::open_notes_window, updater::release_notes, presets::presets_shipped, settings::app_version, updater::update_check, updater::update_install, settings::monitors_list, settings::fonts_list, settings::lhm_sensors, config_edit::config_write_many, presets::presets_list, presets::preset_save, presets::preset_apply, presets::preset_rename, presets::preset_delete, providers::extras::disk_list, providers::batteries::batteries_list, explorer::explorer_options, explorer::explorer_option_set, providers::notifications::notifications_windows_on, providers::notifications::taskbar_all_displays, native::ctxmenu::context_menu_info])
         .setup(|app| {
             // A first run: no config yet (the engine writes the defaults when it starts).
             let first_run = !config::path().exists();
@@ -73,6 +78,7 @@ fn main() {
             keyhook::on_lang(native::lang_switch);
             native::ctxmenu::watch(app.handle().clone());
             native::apptips::start(app.handle());
+            explorer::start(app.handle());
             autostart::refresh();
             updater::start(app.handle());
             settings::startup(app.handle(), first_run);
@@ -86,7 +92,10 @@ fn main() {
             match event {
                 tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
                 // Quitting: give the Windows taskbar back.
-                tauri::RunEvent::Exit => taskbar::restore(),
+                tauri::RunEvent::Exit => {
+                    taskbar::restore();
+                    explorer::restore();
+                }
                 _ => {}
             }
         });
