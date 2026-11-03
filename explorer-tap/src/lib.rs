@@ -63,6 +63,30 @@ pub struct VisualElement {
     pub num_children: u32,
 }
 
+/// One of an element's properties (GetPropertyValuesChain; its strings are the caller's).
+#[repr(C)]
+pub struct PropertyChainValue {
+    pub index: u32,
+    pub ty: *mut u16,
+    pub declaring_type: *mut u16,
+    pub value_type: *mut u16,
+    pub item_type: *mut u16,
+    pub value: *mut u16,
+    pub overridden: i32,
+    pub metadata_bits: i64,
+    pub property_name: *mut u16,
+    pub property_chain_index: u32,
+}
+
+#[repr(C)]
+pub struct PropertyChainSource {
+    pub handle: u64,
+    pub target_type: *mut u16,
+    pub name: *mut u16,
+    pub source: i32,
+    pub src: SourceInfo,
+}
+
 #[interface("18C9E2B6-3F43-4116-9F2B-FF935D7770D2")]
 unsafe trait IXamlDiagnostics: IUnknown {
     fn GetDispatcher(&self, out: *mut *mut c_void) -> HRESULT;
@@ -115,6 +139,17 @@ fn log(line: &str) {
     let path = std::env::temp_dir().join("kasumi-explorer.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(path) {
         let _ = writeln!(f, "[{}] {line}", std::process::id());
+    }
+}
+
+/// A failure logged once per process (not for every element).
+fn note_once(line: &str) {
+    use std::sync::Mutex;
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if !seen.iter().any(|s| s == line) {
+        seen.push(line.to_string());
+        log(line);
     }
 }
 
@@ -241,24 +276,71 @@ impl Watcher {
         Some(h)
     }
 
+    /// The element's Visibility property: by name, else from its property list.
+    fn visibility_index(&self, h: u64) -> Option<u32> {
+        let mut index = 0u32;
+        let name: Vec<u16> = "Visibility\0".encode_utf16().collect();
+        let hr = unsafe { self.tree.GetPropertyIndex(h, PCWSTR(name.as_ptr()), &mut index) };
+        if hr.is_ok() {
+            return Some(index);
+        }
+        let (mut sc, mut pc) = (0u32, 0u32);
+        let (mut ps, mut pv): (*mut c_void, *mut c_void) = (std::ptr::null_mut(), std::ptr::null_mut());
+        let hr2 = unsafe { self.tree.GetPropertyValuesChain(h, &mut sc, &mut ps, &mut pc, &mut pv) };
+        if hr2.is_err() {
+            note_once(&format!("no Visibility index: by name {hr:?}, by list {hr2:?}"));
+            return None;
+        }
+        let mut found = None;
+        unsafe {
+            // Their strings and arrays are ours to free.
+            let free = |p: *mut u16| {
+                if !p.is_null() {
+                    drop(BSTR::from_raw(p));
+                }
+            };
+            if !pv.is_null() {
+                for v in std::slice::from_raw_parts(pv as *const PropertyChainValue, pc as usize) {
+                    if found.is_none() && wide(v.property_name) == "Visibility" {
+                        found = Some(v.index);
+                    }
+                    for p in [v.ty, v.declaring_type, v.value_type, v.item_type, v.value, v.property_name] {
+                        free(p);
+                    }
+                }
+                windows::Win32::System::Com::CoTaskMemFree(Some(pv));
+            }
+            if !ps.is_null() {
+                for src in std::slice::from_raw_parts(ps as *const PropertyChainSource, sc as usize) {
+                    for p in [src.target_type, src.name, src.src.file_name as *mut u16, src.src.hash as *mut u16] {
+                        free(p);
+                    }
+                }
+                windows::Win32::System::Com::CoTaskMemFree(Some(ps));
+            }
+        }
+        if found.is_none() {
+            note_once(&format!("no Visibility among {pc} properties"));
+        }
+        found
+    }
+
     fn hide(&self, h: u64) {
         if self.hidden.borrow().contains_key(&h) {
             return;
         }
+        let what = self.elems.borrow().get(&h).map(|e| format!("{}#{}", e.ty, e.name)).unwrap_or_default();
         let Some(collapsed) = self.collapsed() else { return };
-        let mut index = 0u32;
-        let name: Vec<u16> = "Visibility\0".encode_utf16().collect();
+        let Some(index) = self.visibility_index(h) else { return };
         unsafe {
-            if self.tree.GetPropertyIndex(h, PCWSTR(name.as_ptr()), &mut index).is_err() {
-                return;
-            }
             let mut own = 0u64;
             let own = self.tree.GetProperty(h, index, &mut own).is_ok().then_some(own).filter(|&v| v != 0);
             let hr = self.tree.SetProperty(h, collapsed, index);
             if hr.is_ok() {
                 self.hidden.borrow_mut().insert(h, (index, own));
+                log(&format!("hid {what}"));
             } else {
-                log(&format!("couldn't hide {h:x}: {hr:?}"));
+                log(&format!("couldn't hide {what}: {hr:?}"));
             }
         }
     }
@@ -408,7 +490,7 @@ impl IObjectWithSite_Impl for Tap_Impl {
                 let _ = diag.GetInitializationData(&mut data);
             }
             let rules_path = data.to_string();
-            log(&format!("loaded; rules {rules_path}"));
+            log(&format!("loaded; rules {rules_path}: {} to hide", read_rules(&rules_path).hide.len()));
             let watcher = Watcher {
                 tree: tree.clone(),
                 rules: RefCell::new(read_rules(&rules_path)),

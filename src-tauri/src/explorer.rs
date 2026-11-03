@@ -240,8 +240,8 @@ fn colorref(s: &str) -> Option<u32> {
 }
 
 fn set_u32(h: HWND, attr: i32, v: u32) {
-    unsafe {
-        let _ = DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(attr), &v as *const u32 as *const _, 4);
+    if let Err(e) = unsafe { DwmSetWindowAttribute(h, DWMWINDOWATTRIBUTE(attr), &v as *const u32 as *const _, 4) } {
+        note(&format!("frame attribute {attr} = {v:#x} refused: {e}"));
     }
 }
 
