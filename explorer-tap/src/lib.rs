@@ -12,8 +12,9 @@
 //! Every entry point catches panics: nothing here may take Explorer down.
 //!
 //! Rules file, one per line: `dump` (write the tree to %TEMP%\kasumi-explorer-<pid>.txt),
-//! `hide <spec>`; a spec is `Name`, `Type`, `Type#Name`, or `<parent spec> > <spec>`
-//! (its direct parent), `*` matching any type.
+//! `hide <spec>`; a spec is `Name`, a dotted `Type`, `Type#Name` or `Type#` (a type by its
+//! full name or its last part: `AppBarSeparator#`), or a chain `<spec> > <spec> > ...` (each the direct
+//! parent of the next), `*` matching any type.
 
 #![allow(non_snake_case)]
 
@@ -137,21 +138,24 @@ impl One {
         let s = s.trim();
         let (ty, name) = match s.split_once('#') {
             Some((t, n)) => (Some(t.trim().to_string()), Some(n.trim().to_string())),
-            // A dot: a type ("Microsoft.UI.Xaml.Controls.Button"); else a name.
+            // A dot: a type ("Microsoft.UI.Xaml.Controls.Button"); else a name. A short type
+            // alone is written `AppBarSeparator#`.
             None if s.contains('.') || s == "*" => (Some(s.to_string()), None),
             None => (None, Some(s.to_string())),
         };
         One { ty: ty.filter(|t| t != "*" && !t.is_empty()), name: name.filter(|n| !n.is_empty()) }
     }
     fn matches(&self, e: &Elem) -> bool {
-        self.ty.as_ref().is_none_or(|t| *t == e.ty) && self.name.as_ref().is_none_or(|n| *n == e.name)
+        // A type by its full name, or by its last part.
+        let ty_ok = |t: &String| *t == e.ty || e.ty.rsplit('.').next() == Some(t.as_str());
+        self.ty.as_ref().is_none_or(ty_ok) && self.name.as_ref().is_none_or(|n| *n == e.name)
     }
 }
 
+/// The last part is the element; the ones before, its parent, grandparent...
 #[derive(Clone, Debug, PartialEq)]
 struct Rule {
-    parent: Option<One>,
-    this: One,
+    chain: Vec<One>,
 }
 
 #[derive(Default, PartialEq)]
@@ -167,11 +171,7 @@ fn read_rules(path: &str) -> Rules {
         if line == "dump" {
             r.dump = true;
         } else if let Some(spec) = line.strip_prefix("hide ") {
-            let rule = match spec.split_once(" > ") {
-                Some((p, c)) => Rule { parent: Some(One::parse(p)), this: One::parse(c) },
-                None => Rule { parent: None, this: One::parse(spec) },
-            };
-            r.hide.push(rule);
+            r.hide.push(Rule { chain: spec.split(" > ").map(One::parse).collect() });
         }
     }
     r
@@ -209,13 +209,19 @@ thread_local! {
 impl Watcher {
     fn matches(&self, h: u64) -> bool {
         let elems = self.elems.borrow();
-        let Some(e) = elems.get(&h) else { return false };
+        if !elems.contains_key(&h) {
+            return false;
+        }
         self.rules.borrow().hide.iter().any(|r| {
-            r.this.matches(e)
-                && match &r.parent {
-                    None => true,
-                    Some(p) => elems.get(&e.parent).is_some_and(|pe| p.matches(pe)),
+            // From the element up: each part of the chain, the next parent up.
+            let mut at = Some(h);
+            r.chain.iter().rev().all(|one| match at.and_then(|x| elems.get(&x)) {
+                Some(e) if one.matches(e) => {
+                    at = Some(e.parent);
+                    true
                 }
+                _ => false,
+            })
         })
     }
 

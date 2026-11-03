@@ -1126,6 +1126,47 @@ const itemsEditor = (widget: string, separators = true, key = "items"): Editor =
 
 const menuItems = itemsEditor("menu");
 
+/** [explorer] hide: the header's parts (explorer::PARTS), a switch each, in groups. */
+const explorerParts: Editor = (ctx) => {
+  const ex = (ctx.cfg as any).explorer ?? {};
+  if (!ex.enabled) return $("p", "card-help", "Switch on Style File Explorer above first.");
+  const hidden = new Set<string>(Array.isArray(ex.hide) ? ex.hide : []);
+  const groups: [string, [string, string, string?][]][] = [
+    [
+      "Command bar",
+      [
+        ["command_bar", "Command bar", "The whole row: New, Cut, Copy, Rename, Share, Delete, Sort, View, Details."],
+        ["details_button", "Details button", "Just the Details button at its right end."],
+      ],
+    ],
+    [
+      "Navigation",
+      [
+        ["back", "Back"],
+        ["forward", "Forward"],
+        ["up", "Up"],
+        ["refresh", "Refresh"],
+        ["search", "Search box"],
+        ["new_tab", "New tab button (+)"],
+      ],
+    ],
+    ["Lines", [["lines", "Separator lines", "Under the tabs, between tabs, and between the command bar's groups."]]],
+  ];
+  const box = $("div", "stack-tight");
+  for (const [title, parts] of groups) {
+    box.append($("div", "row-label", title));
+    for (const [key, label, help] of parts) {
+      const sw = toggleSwitch(hidden.has(key), (on) => {
+        if (on) hidden.add(key);
+        else hidden.delete(key);
+        ctx.save(["explorer", "hide"], [...hidden]);
+      });
+      box.append(row(label, help, sw.el));
+    }
+  }
+  return box;
+};
+
 /** Explorer's folder options (Windows' own settings, not config.toml): read and set
  *  through explorer_options / explorer_option_set. */
 const explorerOptions: Editor = () => {
@@ -1916,4 +1957,5 @@ export const editors: Record<string, Editor> = {
   launcherButtons,
   batteryPicks,
   explorerOptions,
+  explorerParts,
 };

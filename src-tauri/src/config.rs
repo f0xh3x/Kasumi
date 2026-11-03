@@ -291,9 +291,10 @@ pub struct ExplorerCfg {
     pub border_color: String,
     pub caption_color: String,
     pub caption_text: String,
-    /// Parts of the folder windows' header hidden (Kasumi's library inside Explorer):
-    /// `hide` (explorer::PARTS names), `hide_custom` (the library's specs), `map` (it
-    /// writes the header's parts to %TEMP%\kasumi-explorer-<pid>.txt).
+    /// Parts of the folder windows' header hidden (Kasumi's library inside Explorer,
+    /// loaded while there's any): `hide` (explorer::PARTS names), `hide_custom` (the
+    /// library's specs), `map` (it writes the header's parts to
+    /// %TEMP%\kasumi-explorer-<pid>.txt). `hide_parts`: unused (the first page's switch).
     pub hide_parts: bool,
     pub hide: Vec<String>,
     pub hide_custom: Vec<String>,

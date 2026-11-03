@@ -23,9 +23,26 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 const CLSID_TAP: GUID = GUID::from_u128(0x6c1f2b84_5a1e_4c62_9f5e_3d8a7b2c1e90);
 const DLL: &str = "kasumi_explorer.dll";
 
-/// Parts of the header, by name in Settings → the library's specs (`hide <spec>`):
-/// found in Explorer's tree (the library's `dump`).
-pub const PARTS: &[(&str, &[&str])] = &[];
+/// Parts of the header, by name in Settings → the library's specs (`hide <spec>`), as
+/// Explorer's tree has them (Windows 11 26100, mapped with the library's `dump`).
+pub const PARTS: &[(&str, &[&str])] = &[
+    // The command bar's whole row (New, Cut, Copy... Sort, View, Details).
+    ("command_bar", &["FileExplorerExtensions.CommandBarControl_Wave1"]),
+    ("details_button", &["CommandBar#FileExplorerSecondaryCommandBar"]),
+    ("back", &["AppBarButton#backButton"]),
+    ("forward", &["AppBarButton#forwardButton"]),
+    ("up", &["AppBarButton#upButton"]),
+    ("refresh", &["AppBarButton#refreshButton", "AppBarButton#stopButton"]),
+    ("search", &["AutoSuggestBox#FileExplorerSearchBox"]),
+    ("new_tab", &["Button#AddButton"]),
+    // Under the tabs, between tabs, between the command bar's groups.
+    ("lines", &["Border#LeftBottomBorderLine", "Border#RightBottomBorderLine", "Border#TabSeparator", "AppBarSeparator#"]),
+];
+
+/// Hiding is on: something to hide (or to map).
+fn parts_on(cfg: &crate::config::ExplorerCfg) -> bool {
+    cfg.enabled && (!cfg.hide.is_empty() || cfg.hide_custom.iter().any(|s| !s.trim().is_empty()) || cfg.map)
+}
 
 /// The rules file the library reads (%APPDATA%\Kasumi\explorer-rules.txt).
 pub fn rules_path() -> std::path::PathBuf {
@@ -33,7 +50,7 @@ pub fn rules_path() -> std::path::PathBuf {
 }
 
 fn rules_text(cfg: &crate::config::ExplorerCfg) -> String {
-    if !cfg.enabled || !cfg.hide_parts {
+    if !parts_on(cfg) {
         return String::new();
     }
     let mut out = String::new();
@@ -305,7 +322,7 @@ unsafe extern "system" fn on_show(_hook: HWINEVENTHOOK, _event: u32, h: HWND, id
     if cfg.frames {
         style(h, &cfg, false);
     }
-    if folder && cfg.hide_parts {
+    if folder && parts_on(&cfg) {
         load_into(pid_of(h));
     }
 }
@@ -339,7 +356,7 @@ pub fn start(app: &AppHandle) {
                 let cfg = app.state::<SharedConfig>().read().unwrap().explorer.clone();
                 if last.as_ref() != Some(&cfg) {
                     let frames = cfg.enabled && cfg.frames;
-                    let parts = cfg.enabled && cfg.hide_parts;
+                    let parts = parts_on(&cfg);
                     // The rules (an empty file: the library gives everything back).
                     let rules = rules_text(&cfg);
                     if rules_written.as_ref() != Some(&rules) {
