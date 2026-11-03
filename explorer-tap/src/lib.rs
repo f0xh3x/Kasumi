@@ -447,6 +447,12 @@ impl Watcher {
                     _ => header,
                 };
                 CABS.with(|c| c.borrow_mut().insert(key, Band { header, target }));
+                // Cut: its header no longer measures true (the measurer leaves it be).
+                if target < header {
+                    lock(&CUT).insert(key);
+                } else {
+                    lock(&CUT).remove(&key);
+                }
                 let _ = windows::Win32::UI::Shell::SetWindowSubclass(content, Some(content_proc), 0x4b41, key as usize);
                 let _ = windows::Win32::UI::Shell::SetWindowSubclass(bridge, Some(bridge_proc), 0x4b42, key as usize);
                 let r = client_rect(cab, content);
@@ -486,6 +492,9 @@ static ROWS: Mutex<std::collections::BTreeMap<isize, i32>> = Mutex::new(std::col
 /// (kept on disk: each folder window is often a new process, which then needn't wait).
 static OFFSETS: Mutex<Option<std::collections::BTreeMap<u32, i32>>> = Mutex::new(None);
 static MEASURER: std::sync::Once = std::sync::Once::new();
+/// Folder windows whose header is cut: measured before, not again (cutting the header
+/// moves the address row up, and measuring that would cut it again, smaller each time).
+static CUT: Mutex<std::collections::BTreeSet<isize>> = Mutex::new(std::collections::BTreeSet::new());
 const WM_BAND: u32 = WM_APP + 2;
 
 fn offsets_path() -> Option<std::path::PathBuf> {
@@ -539,7 +548,7 @@ fn ensure_measurer() {
                 let mut missing = false;
                 for cab in process_cabinets() {
                     let t = GetWindowThreadProcessId(cab, None);
-                    if !wanted.contains(&t) || IsIconic(cab).as_bool() {
+                    if !wanted.contains(&t) || IsIconic(cab).as_bool() || lock(&CUT).contains(&(cab.0 as isize)) {
                         continue;
                     }
                     let measured = (|| {
@@ -553,7 +562,9 @@ fn ensure_measurer() {
                             .max()?;
                         let mut p = windows::Win32::Foundation::POINT { x: 0, y: bottom };
                         let _ = windows::Win32::Graphics::Gdi::ScreenToClient(cab, &mut p);
-                        Some((p.y, client_rect(cab, bridge).top))
+                        let b = client_rect(cab, bridge);
+                        // Only a header at Explorer's height, with the row inside it.
+                        (p.y > b.top + 20 && p.y < b.bottom).then_some((p.y, b.top))
                     })();
                     match measured {
                         Some((row, top)) => {
