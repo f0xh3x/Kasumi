@@ -1567,117 +1567,6 @@ export const pages: Page[] = [
     ],
   },
   {
-    id: "explorer",
-    label: "File Explorer",
-    icon: 0xe8b7,
-    sections: [
-      {
-        title: "File Explorer (experimental)",
-        help: "Kasumi tidies File Explorer's folder windows: hides the parts of the top you don't use and styles the window. Hiding works from inside Explorer (a small library of Kasumi's, loaded into each folder window through Windows' XAML diagnostics); if a Windows update renames a part, it just stops being hidden.",
-        fields: [{ kind: "toggle", label: "Style File Explorer", path: ["explorer", "enabled"], default: false }],
-      },
-      {
-        title: "Hide",
-        help: "Ticked parts disappear from every folder window, open ones too (within a second); unticked, they come back.",
-        fields: [{ kind: "custom", editor: "explorerParts" }],
-      },
-      {
-        title: "Window",
-        help: "The frame around folder windows. A backdrop shows where Explorer lets it through (the title, tabs and toolbar).",
-        fields: [
-          {
-            kind: "select",
-            label: "Backdrop",
-            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "backdrop"] : null),
-            default: "default",
-            options: [
-              { value: "default", label: "As Windows has it" },
-              { value: "mica", label: "Mica" },
-              { value: "mica_alt", label: "Mica Alt" },
-              { value: "acrylic", label: "Acrylic" },
-              { value: "none", label: "None" },
-            ],
-          },
-          {
-            kind: "select",
-            label: "Title bar",
-            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "title_bar"] : null),
-            default: "default",
-            options: [
-              { value: "default", label: "As Windows has it" },
-              { value: "dark", label: "Dark" },
-              { value: "light", label: "Light" },
-            ],
-          },
-          {
-            kind: "select",
-            label: "Corners",
-            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "corners"] : null),
-            default: "default",
-            options: [
-              { value: "default", label: "As Windows has it" },
-              { value: "round", label: "Round" },
-              { value: "small", label: "Slightly round" },
-              { value: "square", label: "Square" },
-            ],
-          },
-          {
-            kind: "select",
-            label: "Border",
-            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "border"] : null),
-            default: "default",
-            options: [
-              { value: "default", label: "As Windows has it" },
-              { value: "accent", label: "Accent colour" },
-              { value: "color", label: "A colour of your own" },
-              { value: "none", label: "None" },
-            ],
-          },
-          {
-            kind: "color",
-            label: "Border colour",
-            path: (cfg) => (cfg.explorer?.enabled && cfg.explorer?.border === "color" ? ["explorer", "border_color"] : null),
-            default: "#ffffff",
-          },
-          {
-            kind: "toggle",
-            label: "Explorer's dialogs too",
-            help: "Properties, copying, confirmations get the same frame.",
-            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "dialogs"] : null),
-            default: true,
-          },
-        ],
-      },
-      {
-        title: "Folder options",
-        help: "Windows' own Explorer settings, in one place (as in Explorer's Folder Options); they work without Kasumi's styling too. The first ones change open windows at once, the rest the windows opened after.",
-        fields: [{ kind: "custom", editor: "explorerOptions" }],
-      },
-      {
-        title: "Advanced",
-        collapsible: true,
-        help: "For parts not in the list above.",
-        fields: [
-          {
-            kind: "list",
-            label: "More parts to hide",
-            help: "Names from Explorer's map (Type#Name, a name, or Parent > Part), comma separated.",
-            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "hide_custom"] : null),
-            default: [],
-            placeholder: "AppBarButton#upButton",
-          },
-          {
-            kind: "toggle",
-            label: "Map Explorer's parts",
-            help: "Writes each folder window's parts to %TEMP%\\kasumi-explorer-<process>.txt, to find their names.",
-            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "map"] : null),
-            default: false,
-          },
-        ],
-      },
-    ],
-  },
-  {
     id: "switchers",
     label: "Switchers",
     icon: 0xe7c4,
@@ -1865,3 +1754,117 @@ export const pages: Page[] = [
     ],
   },
 ];
+
+/** File Explorer styling (explorer.rs, explorer-tap/): not offered yet (the header's band
+ *  isn't right); put it back in `pages` to show it. */
+export const explorerPage: Page = {
+    id: "explorer",
+    label: "File Explorer",
+    icon: 0xe8b7,
+    sections: [
+      {
+        title: "File Explorer (experimental)",
+        help: "Kasumi tidies File Explorer's folder windows: hides the parts of the top you don't use and styles the window. Hiding works from inside Explorer (a small library of Kasumi's, loaded into each folder window through Windows' XAML diagnostics); if a Windows update renames a part, it just stops being hidden.",
+        fields: [{ kind: "toggle", label: "Style File Explorer", path: ["explorer", "enabled"], default: false }],
+      },
+      {
+        title: "Hide",
+        help: "Ticked parts disappear from every folder window, open ones too (within a second); unticked, they come back.",
+        fields: [{ kind: "custom", editor: "explorerParts" }],
+      },
+      {
+        title: "Window",
+        help: "The frame around folder windows. A backdrop shows where Explorer lets it through (the title, tabs and toolbar).",
+        fields: [
+          {
+            kind: "select",
+            label: "Backdrop",
+            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "backdrop"] : null),
+            default: "default",
+            options: [
+              { value: "default", label: "As Windows has it" },
+              { value: "mica", label: "Mica" },
+              { value: "mica_alt", label: "Mica Alt" },
+              { value: "acrylic", label: "Acrylic" },
+              { value: "none", label: "None" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Title bar",
+            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "title_bar"] : null),
+            default: "default",
+            options: [
+              { value: "default", label: "As Windows has it" },
+              { value: "dark", label: "Dark" },
+              { value: "light", label: "Light" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Corners",
+            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "corners"] : null),
+            default: "default",
+            options: [
+              { value: "default", label: "As Windows has it" },
+              { value: "round", label: "Round" },
+              { value: "small", label: "Slightly round" },
+              { value: "square", label: "Square" },
+            ],
+          },
+          {
+            kind: "select",
+            label: "Border",
+            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "border"] : null),
+            default: "default",
+            options: [
+              { value: "default", label: "As Windows has it" },
+              { value: "accent", label: "Accent colour" },
+              { value: "color", label: "A colour of your own" },
+              { value: "none", label: "None" },
+            ],
+          },
+          {
+            kind: "color",
+            label: "Border colour",
+            path: (cfg) => (cfg.explorer?.enabled && cfg.explorer?.border === "color" ? ["explorer", "border_color"] : null),
+            default: "#ffffff",
+          },
+          {
+            kind: "toggle",
+            label: "Explorer's dialogs too",
+            help: "Properties, copying, confirmations get the same frame.",
+            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "dialogs"] : null),
+            default: true,
+          },
+        ],
+      },
+      {
+        title: "Folder options",
+        help: "Windows' own Explorer settings, in one place (as in Explorer's Folder Options); they work without Kasumi's styling too. The first ones change open windows at once, the rest the windows opened after.",
+        fields: [{ kind: "custom", editor: "explorerOptions" }],
+      },
+      {
+        title: "Advanced",
+        collapsible: true,
+        help: "For parts not in the list above.",
+        fields: [
+          {
+            kind: "list",
+            label: "More parts to hide",
+            help: "Names from Explorer's map (Type#Name, a name, or Parent > Part), comma separated.",
+            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "hide_custom"] : null),
+            default: [],
+            placeholder: "AppBarButton#upButton",
+          },
+          {
+            kind: "toggle",
+            label: "Map Explorer's parts",
+            help: "Writes each folder window's parts to %TEMP%\\kasumi-explorer-<process>.txt, to find their names.",
+            path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "map"] : null),
+            default: false,
+          },
+        ],
+      },
+    ],
+  };
