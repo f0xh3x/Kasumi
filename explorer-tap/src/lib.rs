@@ -249,9 +249,6 @@ struct Watcher {
 thread_local! {
     /// This UI thread's message window and the watcher, for its window procedure.
     static LOCAL: RefCell<Option<(HWND, IVisualTreeServiceCallback2)>> = const { RefCell::new(None) };
-    /// This thread's folder windows' contents: where Explorer puts their top (under the
-    /// header) and where they go instead (the command bar's row hidden).
-    static BANDS: RefCell<HashMap<isize, (i32, i32)>> = RefCell::new(HashMap::new());
 }
 
 /// Every UI thread's message window (the rules thread pokes them all).
@@ -426,9 +423,11 @@ impl Watcher {
         hidden
     }
 
-    /// This thread's folder windows: their contents under the address row while the
-    /// command bar's row is hidden (Explorer keeps the header's height), back where
-    /// Explorer puts them when it isn't. The row's bottom is measured on screen (ROWS).
+    /// This thread's folder windows: while the command bar's row is hidden, the header
+    /// (the XAML island) ends under the address row and the contents start there
+    /// (Explorer keeps the header's height, and the island draws over windows below it);
+    /// otherwise both where Explorer puts them. The row's bottom is measured on screen
+    /// (ROWS), or this scale's last one (OFFSETS) until it is.
     fn fix_bands(&self) {
         let up = self.bar_hidden();
         ensure_measurer();
@@ -437,34 +436,88 @@ impl Watcher {
                 let Ok(content) = FindWindowExW(Some(cab), None, windows::core::w!("ShellTabWindowClass"), None) else { continue };
                 let Ok(bridge) = FindWindowExW(Some(cab), None, windows::core::w!("Microsoft.UI.Content.DesktopChildSiteBridge"), None) else { continue };
                 let b = client_rect(cab, bridge);
-                let scale = windows::Win32::UI::HiDpi::GetDpiForWindow(cab) as f32 / 96.0;
-                let row = lock(&ROWS).get(&(cab.0 as isize)).copied();
+                let dpi = windows::Win32::UI::HiDpi::GetDpiForWindow(cab);
+                let scale = dpi as f32 / 96.0;
+                let key = cab.0 as isize;
+                // Where Explorer wants the header to end (kept from its own placements).
+                let header = CABS.with(|c| c.borrow().get(&key).map(|band| band.header)).unwrap_or(b.bottom);
+                let row = lock(&ROWS).get(&key).copied().or_else(|| last_offset(dpi).map(|o| b.top + o));
                 let target = match (up, row) {
-                    (true, Some(row)) => (row + (8.0 * scale).round() as i32).clamp(b.top, b.bottom),
-                    _ => b.bottom,
+                    (true, Some(row)) => (row + (8.0 * scale).round() as i32).clamp(b.top, header),
+                    _ => header,
                 };
-                BANDS.with(|m| m.borrow_mut().insert(content.0 as isize, (b.bottom, target)));
-                let _ = windows::Win32::UI::Shell::SetWindowSubclass(content, Some(content_proc), 0x4b41, 0);
+                CABS.with(|c| c.borrow_mut().insert(key, Band { header, target }));
+                let _ = windows::Win32::UI::Shell::SetWindowSubclass(content, Some(content_proc), 0x4b41, key as usize);
+                let _ = windows::Win32::UI::Shell::SetWindowSubclass(bridge, Some(bridge_proc), 0x4b42, key as usize);
                 let r = client_rect(cab, content);
+                OURS.with(|o| o.set(true));
+                if b.bottom != target {
+                    let _ = SetWindowPos(bridge, None, b.left, b.top, b.right - b.left, target - b.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 if r.top != target {
                     let _ = SetWindowPos(content, None, r.left, target, r.right - r.left, r.bottom - target, SWP_NOZORDER | SWP_NOACTIVATE);
                 }
+                OURS.with(|o| o.set(false));
             }
         }
     }
+}
+
+/// A folder window's header: where Explorer wants it to end, where it ends instead
+/// (client px).
+#[derive(Clone, Copy)]
+struct Band {
+    header: i32,
+    target: i32,
+}
+
+thread_local! {
+    /// This thread's folder windows' bands.
+    static CABS: RefCell<HashMap<isize, Band>> = RefCell::new(HashMap::new());
+    /// Our own moves (not Explorer's placements to correct).
+    static OURS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Threads whose command bar row is hidden (their windows get measured).
 static BAR_HIDDEN: Mutex<std::collections::BTreeMap<u32, bool>> = Mutex::new(std::collections::BTreeMap::new());
 /// Folder window → its address row's bottom (client px), measured on screen.
 static ROWS: Mutex<std::collections::BTreeMap<isize, i32>> = Mutex::new(std::collections::BTreeMap::new());
+/// Scale (dpi) → the address row's bottom below the header's top (px), as last measured
+/// (kept on disk: each folder window is often a new process, which then needn't wait).
+static OFFSETS: Mutex<Option<std::collections::BTreeMap<u32, i32>>> = Mutex::new(None);
 static MEASURER: std::sync::Once = std::sync::Once::new();
+const WM_BAND: u32 = WM_APP + 2;
 
-/// A thread that measures, every 2 s, where this process's folder windows' address row
-/// ends (the address bar's and the search box's bottom, through UI Automation: XAML's
-/// own offsets aren't dependable). Only windows whose command bar is hidden; only in
-/// their header (never the file list). It never blocks a UI thread: the UI threads read
-/// ROWS when they next look.
+fn offsets_path() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Kasumi").join("explorer").join("rows.txt"))
+}
+
+fn last_offset(dpi: u32) -> Option<i32> {
+    let mut o = lock(&OFFSETS);
+    let map = o.get_or_insert_with(|| {
+        let text = offsets_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        text.lines().filter_map(|l| l.split_once(' ')).filter_map(|(d, v)| Some((d.parse().ok()?, v.parse().ok()?))).collect()
+    });
+    map.get(&dpi).copied()
+}
+
+fn save_offset(dpi: u32, offset: i32) {
+    if last_offset(dpi) == Some(offset) {
+        return;
+    }
+    let mut o = lock(&OFFSETS);
+    let map = o.get_or_insert_with(Default::default);
+    map.insert(dpi, offset);
+    if let Some(p) = offsets_path() {
+        let _ = std::fs::write(p, map.iter().map(|(d, v)| format!("{d} {v}\n")).collect::<String>());
+    }
+}
+
+/// A thread that measures where this process's folder windows' address row ends (the
+/// address bar's and the search box's bottom, through UI Automation: XAML's own offsets
+/// aren't dependable): quickly while a window hasn't been, then every 2 s. Only windows
+/// whose command bar is hidden; only their header (never the file list). It never
+/// waits on a UI thread: it posts them WM_BAND when something changed.
 fn ensure_measurer() {
     MEASURER.call_once(|| {
         std::thread::spawn(|| unsafe {
@@ -482,30 +535,43 @@ fn ensure_measurer() {
             let Ok(cond) = cond else { return };
             loop {
                 let wanted: Vec<u32> = lock(&BAR_HIDDEN).iter().filter(|(_, &v)| v).map(|(&t, _)| t).collect();
+                let mut changed = false;
+                let mut missing = false;
                 for cab in process_cabinets() {
                     let t = GetWindowThreadProcessId(cab, None);
                     if !wanted.contains(&t) || IsIconic(cab).as_bool() {
                         continue;
                     }
-                    let Ok(bridge) = FindWindowExW(Some(cab), None, windows::core::w!("Microsoft.UI.Content.DesktopChildSiteBridge"), None) else { continue };
-                    let Ok(el) = uia.ElementFromHandle(bridge) else { continue };
-                    let Ok(all) = el.FindAll(TreeScope_Descendants, &cond) else { continue };
-                    let bottom = (0..all.Length().unwrap_or(0))
-                        .filter_map(|i| all.GetElement(i).ok())
-                        .filter_map(|e| e.CurrentBoundingRectangle().ok())
-                        .filter(|r| r.bottom > r.top)
-                        .map(|r| r.bottom)
-                        .max();
-                    if let Some(bottom) = bottom {
+                    let measured = (|| {
+                        let bridge = FindWindowExW(Some(cab), None, windows::core::w!("Microsoft.UI.Content.DesktopChildSiteBridge"), None).ok()?;
+                        let all = uia.ElementFromHandle(bridge).ok()?.FindAll(TreeScope_Descendants, &cond).ok()?;
+                        let bottom = (0..all.Length().unwrap_or(0))
+                            .filter_map(|i| all.GetElement(i).ok())
+                            .filter_map(|e| e.CurrentBoundingRectangle().ok())
+                            .filter(|r| r.bottom > r.top)
+                            .map(|r| r.bottom)
+                            .max()?;
                         let mut p = windows::Win32::Foundation::POINT { x: 0, y: bottom };
                         let _ = windows::Win32::Graphics::Gdi::ScreenToClient(cab, &mut p);
-                        let old = lock(&ROWS).insert(cab.0 as isize, p.y);
-                        if old != Some(p.y) {
-                            note_once(&format!("address row ends at {} px", p.y));
+                        Some((p.y, client_rect(cab, bridge).top))
+                    })();
+                    match measured {
+                        Some((row, top)) => {
+                            if lock(&ROWS).insert(cab.0 as isize, row) != Some(row) {
+                                changed = true;
+                                note_once(&format!("address row ends at {row} px"));
+                                save_offset(windows::Win32::UI::HiDpi::GetDpiForWindow(cab), row - top);
+                            }
                         }
+                        None => missing = true,
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_millis(2000));
+                if changed {
+                    for &h in lock(&WINDOWS).iter() {
+                        let _ = PostMessageW(Some(HWND(h as *mut _)), WM_BAND, WPARAM(0), LPARAM(0));
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(if missing { 150 } else { 2000 }));
             }
         });
     });
@@ -560,32 +626,59 @@ fn thread_cabinets() -> Vec<HWND> {
     out
 }
 
-/// A folder window's contents: Explorer placing them right under the header goes under
-/// the address row instead (BANDS), before it's drawn.
-unsafe extern "system" fn content_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
-    if msg == WM_WINDOWPOSCHANGING {
+/// A folder window's contents (subclassed; `cab` its window): Explorer placing them right
+/// under the header goes where the header ends instead (CABS), before it's drawn.
+unsafe extern "system" fn content_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, cab: usize) -> LRESULT {
+    if msg == WM_WINDOWPOSCHANGING && !OURS.with(|o| o.get()) {
         let _ = catch_unwind(|| {
-            let Some((b_bottom, target)) = BANDS.with(|b| b.borrow().get(&(hwnd.0 as isize)).copied()) else { return };
-            if target == b_bottom {
+            let Some(band) = CABS.with(|c| c.borrow().get(&(cab as isize)).copied()) else { return };
+            if band.target == band.header {
                 return;
             }
             let pos = unsafe { &mut *(lp.0 as *mut WINDOWPOS) };
             if !pos.flags.contains(SWP_NOMOVE) {
-                // Explorer's own placement (right under the header): moved up, as much taller.
-                if (pos.y - b_bottom).abs() <= 2 {
-                    let d = pos.y - target;
-                    pos.y = target;
+                // Explorer's own placement (right under its header): up, as much taller.
+                if (pos.y - band.header).abs() <= 2 {
+                    let d = pos.y - band.target;
+                    pos.y = band.target;
                     if !pos.flags.contains(SWP_NOSIZE) {
                         pos.cy += d;
                     }
                 }
             } else if !pos.flags.contains(SWP_NOSIZE) {
-                // Resized where it is (already moved up): as much taller as it's higher.
-                if let Ok(parent) = unsafe { GetParent(hwnd) } {
-                    let r = client_rect(parent, hwnd);
-                    if r.top < b_bottom - 2 {
-                        pos.cy += b_bottom - r.top;
-                    }
+                // Resized where it is (already up): as much taller as it's higher.
+                let r = client_rect(HWND(cab as *mut _), hwnd);
+                if r.top < band.header - 2 {
+                    pos.cy += band.header - r.top;
+                }
+            }
+        });
+    }
+    unsafe { windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wp, lp) }
+}
+
+/// A folder window's header (the XAML island; subclassed): Explorer's height for it is
+/// kept (CABS header) and cut to where the contents start instead.
+unsafe extern "system" fn bridge_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, cab: usize) -> LRESULT {
+    if msg == WM_WINDOWPOSCHANGING && !OURS.with(|o| o.get()) {
+        let _ = catch_unwind(|| {
+            let pos = unsafe { &mut *(lp.0 as *mut WINDOWPOS) };
+            if pos.flags.contains(SWP_NOSIZE) {
+                return;
+            }
+            let top = if pos.flags.contains(SWP_NOMOVE) { client_rect(HWND(cab as *mut _), hwnd).top } else { pos.y };
+            let wanted = top + pos.cy;
+            let target = CABS.with(|c| {
+                let mut c = c.borrow_mut();
+                let band = c.get_mut(&(cab as isize))?;
+                // Explorer's new height: the header's end it wants (the target can't pass it).
+                band.header = wanted;
+                band.target = band.target.min(wanted);
+                Some(band.target)
+            });
+            if let Some(t) = target {
+                if t < wanted {
+                    pos.cy = t - top;
                 }
             }
         });
@@ -594,7 +687,7 @@ unsafe extern "system" fn content_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
 }
 
 unsafe extern "system" fn rules_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg == WM_RULES || (msg == WM_TIMER && wp.0 == TIMER_BAND) {
+    if msg == WM_RULES || msg == WM_BAND || (msg == WM_TIMER && wp.0 == TIMER_BAND) {
         let _ = catch_unwind(|| {
             LOCAL.with(|l| {
                 if let Some((_, cb)) = l.borrow().as_ref() {
