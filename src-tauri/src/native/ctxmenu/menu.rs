@@ -184,6 +184,9 @@ impl Default for Shape {
 pub struct Level {
     pub hwnd: HWND,
     dib: Option<Dib>,
+    /// The blur under it ([theme] backdrop / the menus' own), made with its first frame.
+    backdrop: Option<crate::native::backdrop::Backdrop>,
+    backdrop_tried: bool,
     style: Rc<Style>,
     pub entries: Vec<Entry>,
     bitmaps: Vec<Option<AppIcon>>,
@@ -258,6 +261,8 @@ impl Level {
         let mut l = Level {
             hwnd,
             dib: None,
+            backdrop: None,
+            backdrop_tried: false,
             style,
             entries,
             bitmaps,
@@ -435,6 +440,8 @@ impl Level {
             _ => (0.0, 0.0, self.bw, self.bh),
         };
         gfx.begin(dc, w_px, h_px, self.scale)?;
+        // The body's shape in px (for the blur under it).
+        let mut body = None;
         if vw > 0.5 && vh > 0.5 {
             // Its own corners, squared (or rounded less) where it joins either neighbour.
             let corners: [f32; 4] = std::array::from_fn(|i| self.as_sub.corners[i].min(self.as_menu.corners[i]));
@@ -446,10 +453,13 @@ impl Level {
                 }
             }
             if let Ok(g) = gfx.path(&shape, None) {
+                // Over a blur, the tint as it's set; solid, never much see-through.
+                let a = if look.backdrop.is_some() { look.opacity } else { look.opacity.max(0.9) };
                 unsafe {
-                    gfx.brush.SetColor(&with_alpha(look.bg, look.opacity.max(0.9)));
+                    gfx.brush.SetColor(&with_alpha(look.bg, a));
                     gfx.rt.FillGeometry(&g, &gfx.brush, None::<&ID2D1Brush>);
                 }
+                body = gfx.scaled(&g.into(), self.scale).ok();
             }
             gfx.clip(rect(m + vx, m + vy, vw, vh));
             let t = self.born.elapsed().as_secs_f32() * 1000.0;
@@ -532,6 +542,21 @@ impl Level {
             if !self.closing {
                 let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            }
+        }
+        // The blur under it: its shape, fading with it, right under it.
+        if !self.backdrop_tried {
+            self.backdrop_tried = true;
+            self.backdrop = style.look.backdrop.and_then(|k| crate::native::backdrop::Backdrop::new(k, self.hwnd).map_err(|e| eprintln!("[kasumi] menu: no {k:?} backdrop: {e}")).ok());
+        }
+        if let Some(b) = self.backdrop.as_mut() {
+            match &body {
+                Some(g) => {
+                    b.set_alpha(alpha);
+                    b.update(pos.x, pos.y, w_px, h_px, g, true);
+                    b.restack();
+                }
+                None => b.set_shown(false),
             }
         }
         Ok(())

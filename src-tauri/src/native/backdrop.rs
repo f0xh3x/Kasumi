@@ -169,6 +169,20 @@ impl Backdrop {
         self.set_shown(shown);
     }
 
+    /// Fading with its window (0..1).
+    pub fn set_alpha(&self, a: f32) {
+        unsafe {
+            let _ = SetLayeredWindowAttributes(self.hwnd, COLORREF(0), (a.clamp(0.0, 1.0) * 255.0).round() as u8, LWA_ALPHA);
+        }
+    }
+
+    /// Right under its window again (one that raises itself).
+    pub fn restack(&self) {
+        if self.shown {
+            restack(self.above, self.hwnd);
+        }
+    }
+
     pub fn set_shown(&mut self, shown: bool) {
         if shown == self.shown {
             return;

@@ -584,9 +584,13 @@ fn close() {
     });
 }
 
-/// The theme's look (with Windows' accent, if it follows it).
+/// The theme's look (with Windows' accent, if it follows it), or the menus' own
+/// ([context_menu] own_style).
 fn look(cfg: Option<&crate::config::Config>) -> Look {
     let mut theme = cfg.map(|c| c.theme.clone()).unwrap_or_default();
+    if let Some(c) = cfg.filter(|c| c.context_menu.own_style) {
+        c.context_menu.style.over(&mut theme);
+    }
     if theme.accent_sync {
         if let Some(a) = crate::win::system_accent() {
             theme.accent = a;

@@ -285,6 +285,49 @@ pub struct ContextMenuCfg {
     pub layout: Vec<MenuNode>,
     /// Your own entries and folders, where the layout says `custom = true`.
     pub custom: Vec<MenuNode>,
+    /// Kasumi's menus (Explorer's, the bars', the launcher's) in their own look
+    /// (`style`) instead of [theme]'s.
+    pub own_style: bool,
+    pub style: MenuStyle,
+}
+
+/// `[context_menu.style]`: the menus' own look (with `own_style`); what's left out is
+/// [theme]'s.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct MenuStyle {
+    pub background: Option<String>,
+    pub text: Option<String>,
+    pub accent: Option<String>,
+    /// "solid" | "acrylic" | "mica", as [theme] backdrop.
+    pub backdrop: Option<String>,
+    pub backdrop_tint: Option<f64>,
+    pub opacity: Option<f64>,
+}
+
+impl MenuStyle {
+    /// [theme] with this look over it.
+    pub fn over(&self, t: &mut Theme) {
+        if let Some(v) = &self.background {
+            t.background = v.clone();
+        }
+        if let Some(v) = &self.text {
+            t.text = v.clone();
+        }
+        if let Some(v) = &self.accent {
+            t.accent = v.clone();
+            t.accent_sync = false;
+        }
+        if let Some(v) = &self.backdrop {
+            t.backdrop = v.clone();
+        }
+        if let Some(v) = self.backdrop_tint {
+            t.backdrop_tint = v;
+        }
+        if let Some(v) = self.opacity {
+            t.opacity = v;
+        }
+    }
 }
 
 /// A place in a context menu's layout: one of Windows' entries (`match`), Kasumi's
