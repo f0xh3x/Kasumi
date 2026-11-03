@@ -18,7 +18,8 @@
 
 #![allow(non_snake_case)]
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::sync::Mutex;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io::Write;
@@ -218,50 +219,78 @@ struct Elem {
     ty: String,
     name: String,
     parent: u64,
+    /// The UI thread it lives on (each folder window has its own; a process can have
+    /// several). It's changed only from there.
+    thread: u32,
+}
+
+#[derive(Default)]
+struct State {
+    rules: Rules,
+    elems: HashMap<u64, Elem>,
+    /// Collapsed by us: the Visibility property's index and its own value (to give back).
+    hidden: HashMap<u64, (u32, Option<u64>)>,
+    /// The value "Collapsed" (made once).
+    collapsed: Option<u64>,
 }
 
 const WM_RULES: u32 = WM_APP + 1;
+const TIMER_BAND: usize = 1;
 
 #[implement(IVisualTreeServiceCallback2, IVisualTreeServiceCallback)]
 struct Watcher {
     tree: IVisualTreeService2,
     rules_path: String,
-    rules: RefCell<Rules>,
-    elems: RefCell<HashMap<u64, Elem>>,
-    /// Collapsed by us: the Visibility property's index and its own value (to give back).
-    hidden: RefCell<HashMap<u64, (u32, Option<u64>)>>,
-    /// The value "Collapsed" (made once).
-    collapsed: Cell<Option<u64>>,
-    /// A window on the UI thread: rules changed → applied there.
-    window: Cell<Option<HWND>>,
+    /// Behind a lock (folder windows call in on their own threads); never held across a
+    /// call into the tree, which can call back.
+    state: Mutex<State>,
 }
 
 thread_local! {
-    /// The UI thread's watcher, for its window's procedure.
-    static WATCHER: RefCell<Option<IVisualTreeServiceCallback2>> = const { RefCell::new(None) };
+    /// This UI thread's message window and the watcher, for its window procedure.
+    static LOCAL: RefCell<Option<(HWND, IVisualTreeServiceCallback2)>> = const { RefCell::new(None) };
+    /// This thread's folder windows' contents: where Explorer puts their top (under the
+    /// header) and where they go instead (the command bar's row hidden).
+    static BANDS: RefCell<HashMap<isize, (i32, i32)>> = RefCell::new(HashMap::new());
+}
+
+/// Every UI thread's message window (the rules thread pokes them all).
+static WINDOWS: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+static RULES_THREAD: std::sync::Once = std::sync::Once::new();
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn thread() -> u32 {
+    unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }
+}
+
+fn matches(st: &State, h: u64) -> bool {
+    if !st.elems.contains_key(&h) {
+        return false;
+    }
+    st.rules.hide.iter().any(|r| {
+        // From the element up: each part of the chain, the next parent up.
+        let mut at = Some(h);
+        r.chain.iter().rev().all(|one| match at.and_then(|x| st.elems.get(&x)) {
+            Some(e) if one.matches(e) => {
+                at = Some(e.parent);
+                true
+            }
+            _ => false,
+        })
+    })
+}
+
+/// The numbers in a property's text ("0,41,0", "<0, 41, 0>", "41").
+fn numbers(s: &str) -> Vec<f32> {
+    s.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter_map(|t| t.parse().ok()).collect()
 }
 
 impl Watcher {
-    fn matches(&self, h: u64) -> bool {
-        let elems = self.elems.borrow();
-        if !elems.contains_key(&h) {
-            return false;
-        }
-        self.rules.borrow().hide.iter().any(|r| {
-            // From the element up: each part of the chain, the next parent up.
-            let mut at = Some(h);
-            r.chain.iter().rev().all(|one| match at.and_then(|x| elems.get(&x)) {
-                Some(e) if one.matches(e) => {
-                    at = Some(e.parent);
-                    true
-                }
-                _ => false,
-            })
-        })
-    }
-
     fn collapsed(&self) -> Option<u64> {
-        if let Some(v) = self.collapsed.get() {
+        if let Some(v) = lock(&self.state).collapsed {
             return Some(v);
         }
         let ty = BSTR::from("Microsoft.UI.Xaml.Visibility");
@@ -269,29 +298,23 @@ impl Watcher {
         let mut h = 0u64;
         let hr = unsafe { self.tree.CreateInstance(ty.as_ptr(), val.as_ptr(), &mut h) };
         if hr.is_err() {
-            log(&format!("no Collapsed value: {hr:?}"));
+            note_once(&format!("no Collapsed value: {hr:?}"));
             return None;
         }
-        self.collapsed.set(Some(h));
+        lock(&self.state).collapsed = Some(h);
         Some(h)
     }
 
-    /// The element's Visibility property: by name, else from its property list.
-    fn visibility_index(&self, h: u64) -> Option<u32> {
-        let mut index = 0u32;
-        let name: Vec<u16> = "Visibility\0".encode_utf16().collect();
-        let hr = unsafe { self.tree.GetPropertyIndex(h, PCWSTR(name.as_ptr()), &mut index) };
-        if hr.is_ok() {
-            return Some(index);
-        }
+    /// An element's properties: (name, index, value as text).
+    fn props(&self, h: u64) -> Vec<(String, u32, String)> {
         let (mut sc, mut pc) = (0u32, 0u32);
         let (mut ps, mut pv): (*mut c_void, *mut c_void) = (std::ptr::null_mut(), std::ptr::null_mut());
-        let hr2 = unsafe { self.tree.GetPropertyValuesChain(h, &mut sc, &mut ps, &mut pc, &mut pv) };
-        if hr2.is_err() {
-            note_once(&format!("no Visibility index: by name {hr:?}, by list {hr2:?}"));
-            return None;
+        let hr = unsafe { self.tree.GetPropertyValuesChain(h, &mut sc, &mut ps, &mut pc, &mut pv) };
+        if hr.is_err() {
+            note_once(&format!("no property list: {hr:?}"));
+            return Vec::new();
         }
-        let mut found = None;
+        let mut out = Vec::new();
         unsafe {
             // Their strings and arrays are ours to free.
             let free = |p: *mut u16| {
@@ -301,9 +324,7 @@ impl Watcher {
             };
             if !pv.is_null() {
                 for v in std::slice::from_raw_parts(pv as *const PropertyChainValue, pc as usize) {
-                    if found.is_none() && wide(v.property_name) == "Visibility" {
-                        found = Some(v.index);
-                    }
+                    out.push((wide(v.property_name), v.index, wide(v.value)));
                     for p in [v.ty, v.declaring_type, v.value_type, v.item_type, v.value, v.property_name] {
                         free(p);
                     }
@@ -319,17 +340,31 @@ impl Watcher {
                 windows::Win32::System::Com::CoTaskMemFree(Some(ps));
             }
         }
+        out
+    }
+
+    /// The element's Visibility property: by name, else from its property list.
+    fn visibility_index(&self, h: u64) -> Option<u32> {
+        let mut index = 0u32;
+        let name: Vec<u16> = "Visibility\0".encode_utf16().collect();
+        if unsafe { self.tree.GetPropertyIndex(h, PCWSTR(name.as_ptr()), &mut index) }.is_ok() {
+            return Some(index);
+        }
+        let found = self.props(h).into_iter().find(|p| p.0 == "Visibility").map(|p| p.1);
         if found.is_none() {
-            note_once(&format!("no Visibility among {pc} properties"));
+            note_once("no Visibility property");
         }
         found
     }
 
     fn hide(&self, h: u64) {
-        if self.hidden.borrow().contains_key(&h) {
-            return;
-        }
-        let what = self.elems.borrow().get(&h).map(|e| format!("{}#{}", e.ty, e.name)).unwrap_or_default();
+        let what = {
+            let st = lock(&self.state);
+            if st.hidden.contains_key(&h) {
+                return;
+            }
+            st.elems.get(&h).map(|e| format!("{}#{}", e.ty, e.name)).unwrap_or_default()
+        };
         let Some(collapsed) = self.collapsed() else { return };
         let Some(index) = self.visibility_index(h) else { return };
         unsafe {
@@ -337,16 +372,16 @@ impl Watcher {
             let own = self.tree.GetProperty(h, index, &mut own).is_ok().then_some(own).filter(|&v| v != 0);
             let hr = self.tree.SetProperty(h, collapsed, index);
             if hr.is_ok() {
-                self.hidden.borrow_mut().insert(h, (index, own));
-                log(&format!("hid {what}"));
+                lock(&self.state).hidden.insert(h, (index, own));
+                note_once(&format!("hid {what}"));
             } else {
-                log(&format!("couldn't hide {what}: {hr:?}"));
+                note_once(&format!("couldn't hide {what}: {hr:?}"));
             }
         }
     }
 
     fn show(&self, h: u64) {
-        let Some((index, own)) = self.hidden.borrow_mut().remove(&h) else { return };
+        let Some((index, own)) = lock(&self.state).hidden.remove(&h) else { return };
         unsafe {
             let _ = match own {
                 Some(v) => self.tree.SetProperty(h, v, index),
@@ -355,73 +390,157 @@ impl Watcher {
         }
     }
 
-    /// The rules file changed: hide what it names now, give back what it doesn't.
+    /// The rules file changed: this thread's elements hidden as it says now, the rest
+    /// given back.
     fn reapply(&self) {
         let rules = read_rules(&self.rules_path);
-        if rules == *self.rules.borrow() {
-            return;
-        }
-        *self.rules.borrow_mut() = rules;
-        let handles: Vec<u64> = self.elems.borrow().keys().copied().collect();
-        for h in handles {
-            if self.matches(h) {
+        let me = thread();
+        let todo: Vec<(u64, bool)> = {
+            let mut st = lock(&self.state);
+            if rules != st.rules {
+                st.rules = rules;
+            }
+            let mine: Vec<u64> = st.elems.iter().filter(|(_, e)| e.thread == me).map(|(&h, _)| h).collect();
+            mine.into_iter().map(|h| (h, matches(&st, h))).collect()
+        };
+        for (h, hide) in todo {
+            if hide {
                 self.hide(h);
             } else {
                 self.show(h);
             }
         }
+        self.fix_bands();
     }
 
-    fn dump(&self, rel: &ParentChildRelation, e: &Elem, h: u64) {
+    fn dump(rel: &ParentChildRelation, e: &Elem, h: u64) {
         let path = std::env::temp_dir().join(format!("kasumi-explorer-{}.txt", std::process::id()));
         if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(path) {
             let _ = writeln!(f, "{h:x}\t{:x}\t{}\t{}\t{}", rel.parent, rel.child_index, e.ty, e.name);
         }
     }
 
-    /// The window on the UI thread the rules thread pokes.
-    fn ensure_window(&self, me: IVisualTreeServiceCallback2) {
-        if self.window.get().is_some() {
-            return;
-        }
-        unsafe {
-            let inst = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
-            let class = windows::core::w!("KasumiExplorerRules");
-            RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(rules_proc), hInstance: inst.into(), lpszClassName: class, ..Default::default() });
-            let Ok(hwnd) = CreateWindowExW(Default::default(), class, windows::core::w!("Kasumi"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(inst.into()), None) else {
-                return;
-            };
-            self.window.set(Some(hwnd));
-            WATCHER.with(|w| *w.borrow_mut() = Some(me));
-            // Poll the rules file's time (cheap) and poke the UI thread when it changes.
-            let path = self.rules_path.clone();
-            let target = hwnd.0 as isize;
-            std::thread::spawn(move || {
-                let stamp = |p: &str| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-                let mut last = stamp(&path);
-                loop {
-                    std::thread::sleep(std::time::Duration::from_millis(700));
-                    let now = stamp(&path);
-                    if now != last {
-                        last = now;
-                        if PostMessageW(Some(HWND(target as *mut _)), WM_RULES, WPARAM(0), LPARAM(0)).is_err() {
-                            return;
-                        }
-                    }
+    /// How much of the header this thread's folder windows need (logical px from its top)
+    /// while their command bar's row is hidden: down to the address row's bottom, and a
+    /// little room. None: the row isn't hidden (Explorer's own layout).
+    fn header_needed(&self) -> Option<f32> {
+        let me = thread();
+        let nav = {
+            let st = lock(&self.state);
+            let bar_hidden = st.hidden.keys().any(|h| st.elems.get(h).is_some_and(|e| e.thread == me && e.ty.ends_with("CommandBarControl_Wave1")));
+            if !bar_hidden {
+                return None;
+            }
+            st.elems.iter().find(|(_, e)| e.thread == me && e.name == "NavigationBarControl").map(|(&h, _)| h)?
+        };
+        let props = self.props(nav);
+        let get = |n: &str| props.iter().find(|p| p.0 == n).map(|p| p.2.clone()).unwrap_or_default();
+        let (offset, height) = (get("ActualOffset"), get("ActualHeight"));
+        note_once(&format!("address row: offset {offset:?}, height {height:?}"));
+        let top = numbers(&offset).get(1).copied()?;
+        let h = numbers(&height).first().copied()?;
+        (h > 0.0).then_some(top + h + 8.0)
+    }
+
+    /// This thread's folder windows: their contents under the address row while the
+    /// command bar's row is hidden (Explorer keeps the header's height), back where
+    /// Explorer puts them when it isn't.
+    fn fix_bands(&self) {
+        let need = self.header_needed();
+        for cab in thread_cabinets() {
+            unsafe {
+                let Ok(content) = FindWindowExW(Some(cab), None, windows::core::w!("ShellTabWindowClass"), None) else { continue };
+                let Ok(bridge) = FindWindowExW(Some(cab), None, windows::core::w!("Microsoft.UI.Content.DesktopChildSiteBridge"), None) else { continue };
+                let b = client_rect(cab, bridge);
+                let scale = windows::Win32::UI::HiDpi::GetDpiForWindow(cab) as f32 / 96.0;
+                let target = match need {
+                    Some(n) => (b.top + (n * scale).round() as i32).min(b.bottom),
+                    None => b.bottom,
+                };
+                BANDS.with(|m| m.borrow_mut().insert(content.0 as isize, (b.bottom, target)));
+                let _ = windows::Win32::UI::Shell::SetWindowSubclass(content, Some(content_proc), 0x4b41, 0);
+                let r = client_rect(cab, content);
+                if r.top != target {
+                    let _ = SetWindowPos(content, None, r.left, target, r.right - r.left, r.bottom - target, SWP_NOZORDER | SWP_NOACTIVATE);
                 }
-            });
+            }
         }
     }
 }
 
-unsafe extern "system" fn rules_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg == WM_RULES {
+/// A child's rectangle in its parent's client coordinates.
+fn client_rect(parent: HWND, child: HWND) -> windows::Win32::Foundation::RECT {
+    let mut r = windows::Win32::Foundation::RECT::default();
+    unsafe {
+        let _ = GetWindowRect(child, &mut r);
+        let mut pts = [windows::Win32::Foundation::POINT { x: r.left, y: r.top }, windows::Win32::Foundation::POINT { x: r.right, y: r.bottom }];
+        windows::Win32::Graphics::Gdi::MapWindowPoints(None, Some(parent), &mut pts);
+        windows::Win32::Foundation::RECT { left: pts[0].x, top: pts[0].y, right: pts[1].x, bottom: pts[1].y }
+    }
+}
+
+/// This thread's folder windows.
+fn thread_cabinets() -> Vec<HWND> {
+    unsafe extern "system" fn each(h: HWND, lp: LPARAM) -> BOOL {
+        let mut buf = [0u16; 32];
+        let n = unsafe { GetClassNameW(h, &mut buf) };
+        if String::from_utf16_lossy(&buf[..n.max(0) as usize]) == "CabinetWClass" {
+            unsafe { (*(lp.0 as *mut Vec<HWND>)).push(h) };
+        }
+        true.into()
+    }
+    let mut out: Vec<HWND> = Vec::new();
+    unsafe {
+        let _ = EnumThreadWindows(thread(), Some(each), LPARAM(&mut out as *mut _ as isize));
+    }
+    out
+}
+
+/// A folder window's contents: Explorer placing them right under the header goes under
+/// the address row instead (BANDS), before it's drawn.
+unsafe extern "system" fn content_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    if msg == WM_WINDOWPOSCHANGING {
         let _ = catch_unwind(|| {
-            WATCHER.with(|w| {
-                if let Some(cb) = w.borrow().as_ref() {
+            let Some((b_bottom, target)) = BANDS.with(|b| b.borrow().get(&(hwnd.0 as isize)).copied()) else { return };
+            if target == b_bottom {
+                return;
+            }
+            let pos = unsafe { &mut *(lp.0 as *mut WINDOWPOS) };
+            if !pos.flags.contains(SWP_NOMOVE) {
+                // Explorer's own placement (right under the header): moved up, as much taller.
+                if (pos.y - b_bottom).abs() <= 2 {
+                    let d = pos.y - target;
+                    pos.y = target;
+                    if !pos.flags.contains(SWP_NOSIZE) {
+                        pos.cy += d;
+                    }
+                }
+            } else if !pos.flags.contains(SWP_NOSIZE) {
+                // Resized where it is (already moved up): as much taller as it's higher.
+                if let Ok(parent) = unsafe { GetParent(hwnd) } {
+                    let r = client_rect(parent, hwnd);
+                    if r.top < b_bottom - 2 {
+                        pos.cy += b_bottom - r.top;
+                    }
+                }
+            }
+        });
+    }
+    unsafe { windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wp, lp) }
+}
+
+unsafe extern "system" fn rules_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_RULES || (msg == WM_TIMER && wp.0 == TIMER_BAND) {
+        let _ = catch_unwind(|| {
+            LOCAL.with(|l| {
+                if let Some((_, cb)) = l.borrow().as_ref() {
                     // SAFETY: ours (made by `Watcher.into()`).
                     let me: &Watcher = unsafe { cb.as_impl() };
-                    me.reapply();
+                    if msg == WM_RULES {
+                        me.reapply();
+                    } else {
+                        me.fix_bands();
+                    }
                 }
             })
         });
@@ -430,24 +549,66 @@ unsafe extern "system" fn rules_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
+impl Watcher_Impl {
+    /// This UI thread's message window (rules changes and the band's check land there),
+    /// and the thread that watches the rules file (once per process).
+    fn ensure_window(&self) {
+        if LOCAL.with(|l| l.borrow().is_some()) {
+            return;
+        }
+        let me: IVisualTreeServiceCallback2 = self.to_interface();
+        unsafe {
+            let inst = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
+            let class = windows::core::w!("KasumiExplorerRules");
+            RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(rules_proc), hInstance: inst.into(), lpszClassName: class, ..Default::default() });
+            let Ok(hwnd) = CreateWindowExW(Default::default(), class, windows::core::w!("Kasumi"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(inst.into()), None) else {
+                return;
+            };
+            LOCAL.with(|l| *l.borrow_mut() = Some((hwnd, me)));
+            lock(&WINDOWS).push(hwnd.0 as isize);
+            SetTimer(Some(hwnd), TIMER_BAND, 1000, None);
+        }
+        let path = self.rules_path.clone();
+        RULES_THREAD.call_once(move || {
+            // Poll the rules file's time (cheap) and poke every UI thread when it changes.
+            std::thread::spawn(move || {
+                let stamp = |p: &str| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+                let mut last = stamp(&path);
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(700));
+                    let now = stamp(&path);
+                    if now != last {
+                        last = now;
+                        lock(&WINDOWS).retain(|&h| unsafe { PostMessageW(Some(HWND(h as *mut _)), WM_RULES, WPARAM(0), LPARAM(0)) }.is_ok());
+                    }
+                }
+            });
+        });
+    }
+}
+
 impl IVisualTreeServiceCallback_Impl for Watcher_Impl {
     unsafe fn OnVisualTreeChange(&self, relation: ParentChildRelation, element: VisualElement, mutation: i32) -> HRESULT {
         let r = catch_unwind(AssertUnwindSafe(|| {
             let h = element.handle;
             if mutation == 1 {
                 // Removed.
-                self.elems.borrow_mut().remove(&h);
-                self.hidden.borrow_mut().remove(&h);
+                let mut st = lock(&self.state);
+                st.elems.remove(&h);
+                st.hidden.remove(&h);
                 return;
             }
-            let me: IVisualTreeServiceCallback2 = self.to_interface();
-            self.ensure_window(me);
-            let e = Elem { ty: wide(element.ty), name: wide(element.name), parent: relation.parent };
-            if self.rules.borrow().dump {
-                self.dump(&relation, &e, h);
-            }
-            self.elems.borrow_mut().insert(h, e);
-            if self.matches(h) {
+            self.ensure_window();
+            let e = Elem { ty: wide(element.ty), name: wide(element.name), parent: relation.parent, thread: thread() };
+            let hide = {
+                let mut st = lock(&self.state);
+                if st.rules.dump {
+                    Watcher::dump(&relation, &e, h);
+                }
+                st.elems.insert(h, e);
+                matches(&st, h)
+            };
+            if hide {
                 self.hide(h);
             }
         }));
@@ -491,15 +652,7 @@ impl IObjectWithSite_Impl for Tap_Impl {
             }
             let rules_path = data.to_string();
             log(&format!("loaded; rules {rules_path}: {} to hide", read_rules(&rules_path).hide.len()));
-            let watcher = Watcher {
-                tree: tree.clone(),
-                rules: RefCell::new(read_rules(&rules_path)),
-                rules_path,
-                elems: RefCell::new(HashMap::new()),
-                hidden: RefCell::new(HashMap::new()),
-                collapsed: Cell::new(None),
-                window: Cell::new(None),
-            };
+            let watcher = Watcher { tree: tree.clone(), state: Mutex::new(State { rules: read_rules(&rules_path), ..Default::default() }), rules_path };
             let cb: IVisualTreeServiceCallback2 = watcher.into();
             // Subscribing from the thread that set the site deadlocks: another thread does it.
             let ptrs = SendPtr(tree.into_raw(), cb.into_raw());

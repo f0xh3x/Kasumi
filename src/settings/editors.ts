@@ -1148,6 +1148,7 @@ const explorerParts: Editor = (ctx) => {
         ["refresh", "Refresh"],
         ["search", "Search box"],
         ["new_tab", "New tab button (+)"],
+        ["tabs", "Tabs", "The tab strip; the title row with the window's buttons stays."],
       ],
     ],
     ["Lines", [["lines", "Separator lines", "Under the tabs, between tabs, and between the command bar's groups."]]],

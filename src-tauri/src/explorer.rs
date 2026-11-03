@@ -35,6 +35,8 @@ pub const PARTS: &[(&str, &[&str])] = &[
     ("refresh", &["AppBarButton#refreshButton", "AppBarButton#stopButton"]),
     ("search", &["AutoSuggestBox#FileExplorerSearchBox"]),
     ("new_tab", &["Button#AddButton"]),
+    // The tab strip (the window keeps its title row, with its buttons).
+    ("tabs", &["TabViewListView#TabListView"]),
     // Under the tabs, between tabs, between the command bar's groups.
     ("lines", &["Border#LeftBottomBorderLine", "Border#RightBottomBorderLine", "Border#TabSeparator", "AppBarSeparator#"]),
 ];
