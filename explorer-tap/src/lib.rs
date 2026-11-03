@@ -283,11 +283,6 @@ fn matches(st: &State, h: u64) -> bool {
     })
 }
 
-/// The numbers in a property's text ("0,41,0", "<0, 41, 0>", "41").
-fn numbers(s: &str) -> Vec<f32> {
-    s.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).filter_map(|t| t.parse().ok()).collect()
-}
-
 impl Watcher {
     fn collapsed(&self) -> Option<u64> {
         if let Some(v) = lock(&self.state).collapsed {
@@ -420,42 +415,33 @@ impl Watcher {
         }
     }
 
-    /// How much of the header this thread's folder windows need (logical px from its top)
-    /// while their command bar's row is hidden: down to the address row's bottom, and a
-    /// little room. None: the row isn't hidden (Explorer's own layout).
-    fn header_needed(&self) -> Option<f32> {
+    /// This thread's command bar row is hidden (its folder windows' contents go up).
+    fn bar_hidden(&self) -> bool {
         let me = thread();
-        let nav = {
+        let hidden = {
             let st = lock(&self.state);
-            let bar_hidden = st.hidden.keys().any(|h| st.elems.get(h).is_some_and(|e| e.thread == me && e.ty.ends_with("CommandBarControl_Wave1")));
-            if !bar_hidden {
-                return None;
-            }
-            st.elems.iter().find(|(_, e)| e.thread == me && e.name == "NavigationBarControl").map(|(&h, _)| h)?
+            st.hidden.keys().any(|h| st.elems.get(h).is_some_and(|e| e.thread == me && e.ty.ends_with("CommandBarControl_Wave1")))
         };
-        let props = self.props(nav);
-        let get = |n: &str| props.iter().find(|p| p.0 == n).map(|p| p.2.clone()).unwrap_or_default();
-        let (offset, height) = (get("ActualOffset"), get("ActualHeight"));
-        note_once(&format!("address row: offset {offset:?}, height {height:?}"));
-        let top = numbers(&offset).get(1).copied()?;
-        let h = numbers(&height).first().copied()?;
-        (h > 0.0).then_some(top + h + 8.0)
+        lock(&BAR_HIDDEN).insert(me, hidden);
+        hidden
     }
 
     /// This thread's folder windows: their contents under the address row while the
     /// command bar's row is hidden (Explorer keeps the header's height), back where
-    /// Explorer puts them when it isn't.
+    /// Explorer puts them when it isn't. The row's bottom is measured on screen (ROWS).
     fn fix_bands(&self) {
-        let need = self.header_needed();
+        let up = self.bar_hidden();
+        ensure_measurer();
         for cab in thread_cabinets() {
             unsafe {
                 let Ok(content) = FindWindowExW(Some(cab), None, windows::core::w!("ShellTabWindowClass"), None) else { continue };
                 let Ok(bridge) = FindWindowExW(Some(cab), None, windows::core::w!("Microsoft.UI.Content.DesktopChildSiteBridge"), None) else { continue };
                 let b = client_rect(cab, bridge);
                 let scale = windows::Win32::UI::HiDpi::GetDpiForWindow(cab) as f32 / 96.0;
-                let target = match need {
-                    Some(n) => (b.top + (n * scale).round() as i32).min(b.bottom),
-                    None => b.bottom,
+                let row = lock(&ROWS).get(&(cab.0 as isize)).copied();
+                let target = match (up, row) {
+                    (true, Some(row)) => (row + (8.0 * scale).round() as i32).clamp(b.top, b.bottom),
+                    _ => b.bottom,
                 };
                 BANDS.with(|m| m.borrow_mut().insert(content.0 as isize, (b.bottom, target)));
                 let _ = windows::Win32::UI::Shell::SetWindowSubclass(content, Some(content_proc), 0x4b41, 0);
@@ -466,6 +452,84 @@ impl Watcher {
             }
         }
     }
+}
+
+/// Threads whose command bar row is hidden (their windows get measured).
+static BAR_HIDDEN: Mutex<std::collections::BTreeMap<u32, bool>> = Mutex::new(std::collections::BTreeMap::new());
+/// Folder window → its address row's bottom (client px), measured on screen.
+static ROWS: Mutex<std::collections::BTreeMap<isize, i32>> = Mutex::new(std::collections::BTreeMap::new());
+static MEASURER: std::sync::Once = std::sync::Once::new();
+
+/// A thread that measures, every 2 s, where this process's folder windows' address row
+/// ends (the address bar's and the search box's bottom, through UI Automation: XAML's
+/// own offsets aren't dependable). Only windows whose command bar is hidden; only in
+/// their header (never the file list). It never blocks a UI thread: the UI threads read
+/// ROWS when they next look.
+fn ensure_measurer() {
+    MEASURER.call_once(|| {
+        std::thread::spawn(|| unsafe {
+            use windows::Win32::System::Com::*;
+            use windows::Win32::UI::Accessibility::*;
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let Ok(uia) = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) else {
+                log("no UI Automation: the command bar's band stays");
+                return;
+            };
+            let cond = (|| -> Result<IUIAutomationCondition> {
+                let id = |s: &str| uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &windows::Win32::System::Variant::VARIANT::from(BSTR::from(s)));
+                uia.CreateOrCondition(&id("PART_AutoSuggestBox")?, &id("FileExplorerSearchBox")?)
+            })();
+            let Ok(cond) = cond else { return };
+            loop {
+                let wanted: Vec<u32> = lock(&BAR_HIDDEN).iter().filter(|(_, &v)| v).map(|(&t, _)| t).collect();
+                for cab in process_cabinets() {
+                    let t = GetWindowThreadProcessId(cab, None);
+                    if !wanted.contains(&t) || IsIconic(cab).as_bool() {
+                        continue;
+                    }
+                    let Ok(bridge) = FindWindowExW(Some(cab), None, windows::core::w!("Microsoft.UI.Content.DesktopChildSiteBridge"), None) else { continue };
+                    let Ok(el) = uia.ElementFromHandle(bridge) else { continue };
+                    let Ok(all) = el.FindAll(TreeScope_Descendants, &cond) else { continue };
+                    let bottom = (0..all.Length().unwrap_or(0))
+                        .filter_map(|i| all.GetElement(i).ok())
+                        .filter_map(|e| e.CurrentBoundingRectangle().ok())
+                        .filter(|r| r.bottom > r.top)
+                        .map(|r| r.bottom)
+                        .max();
+                    if let Some(bottom) = bottom {
+                        let mut p = windows::Win32::Foundation::POINT { x: 0, y: bottom };
+                        let _ = windows::Win32::Graphics::Gdi::ScreenToClient(cab, &mut p);
+                        let old = lock(&ROWS).insert(cab.0 as isize, p.y);
+                        if old != Some(p.y) {
+                            note_once(&format!("address row ends at {} px", p.y));
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+            }
+        });
+    });
+}
+
+/// This process's folder windows.
+fn process_cabinets() -> Vec<HWND> {
+    unsafe extern "system" fn each(h: HWND, lp: LPARAM) -> BOOL {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+        if pid == std::process::id() {
+            let mut buf = [0u16; 32];
+            let n = unsafe { GetClassNameW(h, &mut buf) };
+            if String::from_utf16_lossy(&buf[..n.max(0) as usize]) == "CabinetWClass" {
+                unsafe { (*(lp.0 as *mut Vec<HWND>)).push(h) };
+            }
+        }
+        true.into()
+    }
+    let mut out: Vec<HWND> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(&mut out as *mut _ as isize));
+    }
+    out
 }
 
 /// A child's rectangle in its parent's client coordinates.
