@@ -6,6 +6,7 @@
 //! (notch widths, interactive regions) straight to the engine.
 
 pub mod apptips;
+pub mod blurtest;
 pub mod ctxmenu;
 pub mod geometry;
 mod drop;

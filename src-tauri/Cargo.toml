@@ -79,6 +79,19 @@ features = [
   "Win32_UI_Shell_PropertiesSystem",
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
+  # The blur prototype (native/blurtest.rs): DirectComposition.
+  "Graphics",
+  "Graphics_DirectX",
+  "System",
+  "UI",
+  "UI_Composition",
+  "UI_Composition_Desktop",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_System_WinRT",
+  "Win32_System_WinRT_Composition",
+  "Win32_System_WinRT_Graphics_Direct2D",
 ]
 
 [profile.release]

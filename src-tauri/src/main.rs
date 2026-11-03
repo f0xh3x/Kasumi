@@ -34,6 +34,11 @@ fn main() {
         native::ctxmenu::helper(args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(0));
         return;
     }
+    // The blur prototype (native/blurtest.rs): one test window, nothing else of the app.
+    if args.iter().any(|a| a == "--blur-test") {
+        native::blurtest::run();
+        return;
+    }
     // Native bars drawn off screen into PNGs (native/snapshot.rs): nothing else of the app.
     if args.iter().any(|a| a == "--native-snapshot") {
         native::snapshot::run(&args);
