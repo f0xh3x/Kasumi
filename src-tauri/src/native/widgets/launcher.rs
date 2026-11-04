@@ -2,7 +2,8 @@
 //! widget's, the dock's inline one, or the panel's own) and the matching apps
 //! (and open windows, [widgets.launcher] windows). Up / down or the wheel choose,
 //! Enter launches, Esc closes; typing goes to the field. One state for every
-//! field, as the page's `S`.
+//! field, as the page's `S`. Its look ([widgets.launcher] style): a list, a box in
+//! the middle of the screen (centre.rs draws it), a grid of pins, or a prompt.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -12,7 +13,7 @@ use serde_json::Value;
 
 use super::icon::{decode, AppIcon, Pixels, Style};
 use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply, Widget};
-use crate::native::gfx::{rect, rgba, white, with_alpha, Font, Gfx};
+use crate::native::gfx::{rect, rgba, white, with_alpha, Family, Font, Gfx};
 use windows::Win32::Graphics::Direct2D::ID2D1Bitmap;
 
 struct State {
@@ -42,6 +43,10 @@ struct State {
     /// their title or app ([widgets.launcher] windows): Enter switches to one.
     windows: Vec<(isize, String, String, String)>,
     window_search: bool,
+    /// The look ([widgets.launcher] style): "" (a list), "centre", "grid", "prompt".
+    style: String,
+    /// Grid: how many pins a row holds, as last laid out (up / down move by a row).
+    grid_cols: usize,
     /// When the caret last moved (it shows solid for a moment, then blinks).
     typed: Instant,
     /// The surface it's open on (every surface draws on this thread: the others keep
@@ -50,7 +55,38 @@ struct State {
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, windows: Vec::new(), window_search: false, typed: Instant::now(), owner: String::new() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, windows: Vec::new(), window_search: false, style: String::new(), grid_cols: 0, typed: Instant::now(), owner: String::new() });
+    /// Something shown changed since the box in the middle of the screen was drawn.
+    static CHANGED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// What it shows changed (the centred box draws again).
+pub fn touch() {
+    CHANGED.with(|c| c.set(true));
+}
+
+/// Whether what it shows changed since this was last asked.
+pub fn take_changed() -> bool {
+    CHANGED.with(|c| c.replace(false))
+}
+
+/// It opens in the middle of the screen ([widgets.launcher] style = "centre").
+pub fn centred() -> bool {
+    S.with(|s| s.borrow().style == "centre")
+}
+
+/// The surface it's open on, if it is.
+pub fn open_on() -> Option<String> {
+    S.with(|s| {
+        let s = s.borrow();
+        s.open.then(|| s.owner.clone())
+    })
+}
+
+
+/// A line of text's height in a font.
+fn line_h(g: &Gfx, f: &Font) -> f32 {
+    g.text("Ag", f).map_or(f.size * 1.21, |t| t.height)
 }
 
 /// Higher is better; -1: no match (launcher.ts score).
@@ -257,7 +293,8 @@ fn search(s: &mut State) {
     s.results = first.into_iter().chain(found.into_iter().take(room).map(|(i, _)| i)).collect();
     // Nothing typed yet: Start's pins.
     if q.is_empty() && s.pinned {
-        s.results = (0..s.pins.len().min(s.max)).map(|k| PIN + k).collect();
+        let room = if s.style == "grid" { 16 } else { s.max };
+        s.results = (0..s.pins.len().min(room)).map(|k| PIN + k).collect();
     }
     // A comma first: the clipboard's history (newest first), what follows it searched.
     if let Some(rest) = q.strip_prefix(',').filter(|_| s.clipboard) {
@@ -277,6 +314,26 @@ pub fn searching_on(surface: &str) -> bool {
     })
 }
 
+/// Whether `surface` shows the search field (not while it's in the middle of the screen).
+pub fn field_on(surface: &str) -> bool {
+    searching_on(surface) && !centred()
+}
+
+/// The rest of the chosen result's name after what's typed (the prompt's hint), when
+/// the name starts with it.
+fn ghost(s: &State) -> String {
+    let q = s.query.trim_start();
+    let Some(&i) = s.results.get(s.selected) else { return String::new() };
+    if q.is_empty() || i == CALC || i >= CLIP {
+        return String::new();
+    }
+    let name = entry(s, i).1;
+    if !name.to_lowercase().starts_with(&q.to_lowercase()) {
+        return String::new();
+    }
+    name.chars().skip(q.chars().count()).collect()
+}
+
 /// Rust opened or closed the launcher on `surface`: an empty query either way.
 pub fn set_open(open: bool, surface: &str) {
     S.with(|s| {
@@ -290,6 +347,7 @@ pub fn set_open(open: bool, surface: &str) {
         s.typed = Instant::now();
         search(&mut s);
     });
+    touch();
 }
 
 /// [widgets.launcher]: how many results, the calculator, Settings pages.
@@ -306,6 +364,9 @@ fn set_opts(opts: &Opts) {
         s.user = on("user");
         s.clipboard = on("clipboard");
         s.window_search = on("windows");
+        s.style = opts.str("style").unwrap_or("").to_string();
+        // The grid is made of Start's pins.
+        s.pinned = s.pinned || s.style == "grid";
     });
 }
 
@@ -395,11 +456,13 @@ fn take_list(key: &str, v: &Value) -> bool {
                 let sel = s.selected;
                 search(&mut s);
                 s.selected = sel.min(s.results.len().saturating_sub(1));
+                touch();
                 return true;
             }
             _ => return false,
         }
         search(&mut s);
+        touch();
         true
     })
 }
@@ -416,6 +479,9 @@ fn step(away: bool) -> bool {
         let to = if away { (s.selected + 1).min(n - 1) } else { s.selected.saturating_sub(1) };
         let moved = to != s.selected;
         s.selected = to;
+        if moved {
+            touch();
+        }
         moved
     })
 }
@@ -436,10 +502,31 @@ pub fn key(vk: u16, ctrl: bool, bottom: bool) -> Out {
             return Out::None;
         }
         s.typed = Instant::now();
+        touch();
         let n = s.results.len();
-        // On a bottom dock up moves away from the field.
+        // On a bottom dock up moves away from the field (the centred box's list is below it).
+        let bottom = bottom && s.style != "centre";
         let (away, toward) = if bottom { (0x26, 0x28) } else { (0x28, 0x26) };
+        // The grid (pins, nothing typed): the arrows move in it; the prompt's chips: left
+        // and right too.
+        let grid = s.style == "grid" && s.query.trim().is_empty() && s.grid_cols > 0;
+        let across = grid || s.style == "prompt";
+        let cols = s.grid_cols.max(1);
         match vk {
+            0x25 if across && n > 0 => s.selected = (s.selected + n - 1) % n,
+            0x27 if across && n > 0 => s.selected = (s.selected + 1) % n,
+            0x26 if grid && n > 0 => s.selected = s.selected.saturating_sub(cols),
+            0x28 if grid && n > 0 => s.selected = (s.selected + cols).min(n - 1),
+            // Tab: the prompt takes the rest of the chosen name.
+            0x09 if s.style == "prompt" => {
+                let rest = ghost(&s);
+                if rest.is_empty() {
+                    return Out::None;
+                }
+                let q = s.query.trim_start().to_string();
+                s.query = q + &rest;
+                search(&mut s);
+            }
             v if v == away && n > 0 => s.selected = (s.selected + 1) % n,
             v if v == toward && n > 0 => s.selected = (s.selected + n - 1) % n,
             0x0D => return s.results.get(s.selected).map_or(Out::None, |&i| Out::Launch(entry(&s, i).0)),
@@ -474,6 +561,7 @@ pub fn type_char(c: char) -> bool {
         s.query.push(c);
         s.typed = Instant::now();
         search(&mut s);
+        touch();
         true
     })
 }
@@ -485,6 +573,7 @@ pub fn paste(text: &str) {
         s.query.push_str(&text.replace(['\r', '\n'], " "));
         search(&mut s);
     });
+    touch();
 }
 
 /// The caret shows: solid for half a second after typing, then on and off every 530 ms.
@@ -495,10 +584,33 @@ fn caret_on() -> bool {
     })
 }
 
-/// A search field: the query (or "Search apps" dimmed) and the caret.
+/// A search field: the query (or "Search apps" dimmed) and the caret; the prompt's in a
+/// fixed-width face after "›", the rest of the chosen name faint after the caret.
 fn draw_field(g: &Gfx, cx: &Ctx, x: f32, cy: f32, w: f32, alpha: f32) {
+    let (query, open, prompt, rest) = S.with(|s| {
+        let s = s.borrow();
+        (s.query.clone(), s.open, s.style == "prompt", ghost(&s))
+    });
+    if prompt {
+        let f = Font::new(Family::from_config("Cascadia Mono"), cx.look.font_size);
+        let lh = g.text("Ag", &f).map_or(16.0, |t| t.height);
+        g.clip(rect(x, cy - lh, w, lh * 2.0));
+        let px = x + g.text_at("› ", &f, x, cy, with_alpha(cx.look.dimmed(), alpha));
+        let shown = if query.is_empty() { 0.0 } else { g.measure(&query, &f) };
+        let scroll = (shown + 2.0 - (x + w - px)).max(0.0);
+        if query.is_empty() {
+            g.text_at("type an app", &f, px, cy, with_alpha(cx.look.dimmed(), alpha * 0.6));
+        } else {
+            g.text_at(&query, &f, px - scroll, cy, with_alpha(cx.look.fg, alpha));
+            g.text_at(&rest, &f, px - scroll + shown + 1.0, cy, with_alpha(cx.look.dimmed(), alpha));
+        }
+        if open && caret_on() {
+            g.fill_rect(rect(g.snap(px + shown - scroll), cy - lh / 2.0 + 1.0, 1.0, lh - 2.0), with_alpha(cx.look.fg, alpha));
+        }
+        g.unclip();
+        return;
+    }
     let f = cx.body();
-    let (query, open) = S.with(|s| (s.borrow().query.clone(), s.borrow().open));
     let lh = g.text("Ag", &f).map_or(16.0, |t| t.height);
     g.clip(rect(x, cy - lh, w, lh * 2.0));
     let shown = if query.is_empty() { 0.0 } else { g.measure(&query, &f) };
@@ -515,11 +627,14 @@ fn draw_field(g: &Gfx, cx: &Ctx, x: f32, cy: f32, w: f32, alpha: f32) {
     g.unclip();
 }
 
-/// The search icon that becomes a field while the launcher is open (190 px).
+/// The search icon that becomes a field while the launcher is open, as wide as the panel
+/// under it (its text starts where the results' icons do).
 /// `inline`: the dock's own field (no launcher widget placed), only there then.
 pub struct LauncherWidget {
     inline: bool,
     surface: String,
+    /// The panel's width ([widgets.launcher] panel_width).
+    panel_w: f32,
     /// The caret's next blink.
     beat: Instant,
 }
@@ -527,10 +642,16 @@ pub struct LauncherWidget {
 impl LauncherWidget {
     pub fn new(opts: &Opts, inline: bool) -> LauncherWidget {
         set_opts(opts);
-        LauncherWidget { inline, surface: opts.surface.clone(), beat: Instant::now() }
+        let panel_w = opts.num("panel_width").map_or(340.0, |w| w.clamp(240.0, 700.0) as f32);
+        LauncherWidget { inline, surface: opts.surface.clone(), panel_w, beat: Instant::now() }
     }
+    /// Its field shows (searching here, not in the middle of the screen).
     fn searching(&self) -> bool {
-        searching_on(&self.surface)
+        field_on(&self.surface)
+    }
+    /// The field's width after the icon (`iw` wide): the panel's, less the rows' inset.
+    fn field_w(&self, iw: f32) -> f32 {
+        self.panel_w - 2.0 * 12.0 - iw - 8.0
     }
 }
 
@@ -559,13 +680,14 @@ impl Widget for LauncherWidget {
         if self.inline && !on {
             return 0.0;
         }
-        cx.gfx.measure("\u{E721}", &Font::icons(14.0)) + if on { 8.0 + 190.0 } else { 0.0 }
+        let iw = cx.gfx.measure("\u{E721}", &Font::icons(14.0));
+        iw + if on { 8.0 + self.field_w(iw) } else { 0.0 }
     }
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
         let f = Font::icons(14.0);
         let iw = cx.gfx.text_at("\u{E721}", &f, x, cy + 1.0, with_alpha(cx.look.fg, alpha));
         if self.searching() {
-            draw_field(cx.gfx, cx, x + iw + 8.0, cy, 190.0, alpha);
+            draw_field(cx.gfx, cx, x + iw + 8.0, cy, self.field_w(iw), alpha);
         }
     }
     fn click(&mut self, button: Button, _at: (f32, f32)) -> Reply {
@@ -636,6 +758,10 @@ pub struct LauncherPanel {
 }
 
 const ROW_H: f32 = 34.0;
+/// The grid's cells (at least this wide) and the prompt's chips.
+const CELL_W: f32 = 64.0;
+const CELL_H: f32 = 62.0;
+const CHIP_H: f32 = 28.0;
 /// An icon button, and the column's width.
 const BTN_W: f32 = 30.0;
 const BTN_H: f32 = 28.0;
@@ -647,6 +773,10 @@ enum Part {
     Field,
     Line,
     Row(usize),
+    /// The pins as a grid, so many to a row.
+    Grid(usize),
+    /// The prompt's results in a row.
+    Chips,
     Hint,
 }
 
@@ -740,9 +870,26 @@ impl LauncherPanel {
             parts.push((Part::Line, 4.0 + 26.0 + 8.0, 1.0));
             y += 4.0 + 26.0 + 8.0 + 1.0 + 4.0;
         }
-        for i in 0..results {
-            parts.push((Part::Row(i), y, ROW_H));
-            y += ROW_H + 2.0;
+        let (style, empty) = S.with(|s| {
+            let s = s.borrow();
+            (s.style.clone(), s.query.trim().is_empty())
+        });
+        if style == "grid" && empty && results > 0 {
+            let cols = (((list_w + 4.0) / (CELL_W + 4.0)).floor() as usize).max(1);
+            S.with(|s| s.borrow_mut().grid_cols = cols);
+            let h = results.div_ceil(cols) as f32 * (CELL_H + 4.0) - 4.0;
+            parts.push((Part::Grid(cols), y, h));
+            y += h + 2.0;
+        } else if style == "prompt" {
+            if results > 0 {
+                parts.push((Part::Chips, y + 2.0, CHIP_H));
+                y += 2.0 + CHIP_H + 4.0;
+            }
+        } else {
+            for i in 0..results {
+                parts.push((Part::Row(i), y, ROW_H));
+                y += ROW_H + 2.0;
+            }
         }
         if no_match {
             parts.push((Part::Hint, y, 12.0 + lh));
@@ -818,6 +965,28 @@ impl LauncherPanel {
             }
         }
         Lay { parts, h, list_x, list_w, boxes, note, divider }
+    }
+
+    /// The grid's cells: each result's box (list px: x from the list's left, y from the grid's top).
+    fn cells(n: usize, cols: usize, list_w: f32) -> Vec<[f32; 4]> {
+        let w = (list_w - (cols as f32 - 1.0) * 4.0) / cols as f32;
+        (0..n).map(|i| [(i % cols) as f32 * (w + 4.0), (i / cols) as f32 * (CELL_H + 4.0), w, CELL_H]).collect()
+    }
+
+    /// The prompt's chips: each result's x and width (from the list's left), as many as fit.
+    fn chips(g: &Gfx, cx: &Ctx, names: &[String], list_w: f32) -> Vec<(f32, f32)> {
+        let f = cx.secondary(12.0);
+        let mut out = Vec::new();
+        let mut x = 6.0;
+        for name in names {
+            let w = 4.0 + 18.0 + 6.0 + g.measure(&fit_text(g, name, &f, 160.0), &f) + 10.0;
+            if x + w > list_w - 6.0 {
+                break;
+            }
+            out.push((x, w));
+            x += w + 6.0;
+        }
+        out
     }
 
     /// What the note says: a confirmation asked for, else the hovered button's name.
@@ -946,9 +1115,10 @@ impl Panel for LauncherPanel {
                 self.user_pic = g.picture(bytes).ok();
             }
         }
-        let (results, query, ids) = S.with(|s| {
+        let (results, query, ids, names) = S.with(|s| {
             let s = s.borrow();
-            (s.results.len(), s.query.clone(), s.results.iter().filter(|&&i| i != CALC && !(CLIP..CALC).contains(&i)).map(|&i| entry(&s, i).0).collect::<Vec<_>>())
+            let ids = s.results.iter().filter(|&&i| i != CALC && !(CLIP..CALC).contains(&i)).map(|&i| entry(&s, i).0).collect::<Vec<_>>();
+            (s.results.len(), s.query.clone(), ids, s.results.iter().map(|&i| entry(&s, i).1).collect::<Vec<_>>())
         });
         // Icons for results not asked for yet.
         let wanted: Vec<String> = ids.into_iter().filter(|id| !self.asked.contains(id)).collect();
@@ -971,9 +1141,11 @@ impl Panel for LauncherPanel {
         let mut boxes: Vec<(Hit, [f32; 4])> = lay
             .parts
             .iter()
-            .filter_map(|&(part, top, ht)| match part {
-                Part::Row(i) => Some((Hit::Row(i), [lay.list_x, top, lay.list_w, ht])),
-                _ => None,
+            .flat_map(|&(part, top, ht)| match part {
+                Part::Row(i) => vec![(Hit::Row(i), [lay.list_x, top, lay.list_w, ht])],
+                Part::Grid(cols) => Self::cells(results, cols, lay.list_w).into_iter().enumerate().map(|(i, c)| (Hit::Row(i), [lay.list_x + c[0], top + c[1], c[2], c[3]])).collect(),
+                Part::Chips => Self::chips(g, cx, &names, lay.list_w).into_iter().enumerate().map(|(i, (x, w))| (Hit::Row(i), [lay.list_x + x, top, w, CHIP_H])).collect(),
+                _ => vec![],
             })
             .collect();
         boxes.extend(lay.boxes);
@@ -1046,6 +1218,39 @@ impl Panel for LauncherPanel {
                         g.text_at(tag, &small, lx + lw - 10.0 - (tw - 12.0), cy, dim);
                     }
                     g.text_at(&fit_text(g, name, &body, lw - 48.0 - tw), &body, lx + 40.0, cy, fg);
+                }
+                Part::Grid(cols) => {
+                    let f = cx.secondary(11.0);
+                    for (i, c) in Self::cells(results.len(), cols, lw).into_iter().enumerate() {
+                        let (id, name, icon_key) = &results[i];
+                        let (cx0, cy0) = (lx + c[0], top + c[1]);
+                        let on = i == selected;
+                        if on {
+                            g.fill_round(rect(cx0, cy0, c[2], c[3]), 10.0, with_alpha(cx.hover_bg(0.12), alpha));
+                        }
+                        let ix = cx0 + (c[2] - 30.0) / 2.0;
+                        match self.icons.get(icon_key) {
+                            Some(icon) => icon.draw(g, ix, cy0 + 8.0, 30.0, alpha),
+                            None if id.starts_with("calc:") || id.starts_with("clip:") => {}
+                            None => g.fill_round(rect(ix, cy0 + 8.0, 30.0, 30.0), 8.0, white(0.1 * alpha)),
+                        }
+                        let t = fit_text(g, name, &f, c[2] - 6.0);
+                        let tw = g.measure(&t, &f);
+                        g.text_at(&t, &f, cx0 + (c[2] - tw) / 2.0, cy0 + 8.0 + 30.0 + 6.0 + line_h(g, &f) / 2.0, if on { fg } else { dim });
+                    }
+                }
+                Part::Chips => {
+                    let names: Vec<String> = results.iter().map(|r| r.1.clone()).collect();
+                    let f = cx.secondary(12.0);
+                    for (i, (x0, w)) in Self::chips(g, cx, &names, lw).into_iter().enumerate() {
+                        let (_, name, icon_key) = &results[i];
+                        let bg = if i == selected { cx.hover_bg(0.16) } else { white(0.08) };
+                        g.fill_round(rect(lx + x0, top, w, CHIP_H), 8.0, with_alpha(bg, alpha));
+                        if let Some(icon) = self.icons.get(icon_key) {
+                            icon.draw(g, lx + x0 + 5.0, top + (CHIP_H - 18.0) / 2.0, 18.0, alpha);
+                        }
+                        g.text_at(&fit_text(g, name, &f, 160.0), &f, lx + x0 + 4.0 + 18.0 + 6.0, top + CHIP_H / 2.0, fg);
+                    }
                 }
                 Part::Hint => {
                     let clip = S.with(|s| s.borrow().clipboard) && query.trim_start().starts_with(',');

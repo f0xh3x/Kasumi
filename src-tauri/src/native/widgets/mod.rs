@@ -654,7 +654,7 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
         "privacy" => Box::new(panels::PrivacyPanel::new()),
         "tray" => Box::new(panels::TrayPanel::new(opts)),
         "claude" => Box::new(panels2::ClaudePanel::new(opts)),
-        "media" => Box::new(panels2::MediaPanel::new()),
+        "media" => Box::new(panels2::MediaPanel::new(opts)),
         "quick" => Box::new(quick::QuickPanel::new(opts)),
         "clipboard" => Box::new(panels3::ClipboardPanel::new()),
         "notifications" => Box::new(panels3::NotificationsPanel::new(opts)),

@@ -419,6 +419,64 @@ impl Gfx {
         }
     }
 
+    /// A bitmap in a circle of radius `r` around (cx, cy), scaled to cover it and turned
+    /// `angle` radians clockwise (a record's label).
+    pub fn fill_disc(&self, bmp: &ID2D1Bitmap, cx: f32, cy: f32, r: f32, angle: f32, opacity: f32) {
+        use windows::Win32::Graphics::Direct2D::*;
+        unsafe {
+            let size = bmp.GetSize();
+            let k = 2.0 * r / size.width.min(size.height).max(1.0);
+            let (w, h) = (size.width * k, size.height * k);
+            let (c, s) = (angle.cos(), angle.sin());
+            let props = D2D1_BITMAP_BRUSH_PROPERTIES { extendModeX: D2D1_EXTEND_MODE_CLAMP, extendModeY: D2D1_EXTEND_MODE_CLAMP, interpolationMode: D2D1_BITMAP_INTERPOLATION_MODE_LINEAR };
+            let Ok(brush) = self.rt.CreateBitmapBrush(bmp, Some(&props), None) else { return };
+            // Scaled, centred on the origin, turned, then moved to the centre.
+            brush.SetTransform(&Matrix3x2 { M11: k * c, M12: k * s, M21: -k * s, M22: k * c, M31: -w / 2.0 * c + h / 2.0 * s + cx, M32: -w / 2.0 * s - h / 2.0 * c + cy });
+            brush.SetOpacity(opacity);
+            self.rt.FillEllipse(&D2D1_ELLIPSE { point: Vector2 { X: cx, Y: cy }, radiusX: r, radiusY: r }, &brush);
+        }
+    }
+
+    /// A picture's colours, roughly: its four quarters averaged (top left, top right,
+    /// bottom left, bottom right), through a 2 × 2 copy.
+    pub fn picture_colors(&self, bytes: &[u8]) -> Vec<Color> {
+        use windows::Win32::Graphics::Imaging::*;
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        let read = || -> Result<[u8; 16]> {
+            unsafe {
+                let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+                let stream = wic.CreateStream()?;
+                stream.InitializeFromMemory(bytes)?;
+                let decoder = wic.CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnDemand)?;
+                let frame = decoder.GetFrame(0)?;
+                let small = wic.CreateBitmapScaler()?;
+                small.Initialize(&frame, 2, 2, WICBitmapInterpolationModeFant)?;
+                let conv = wic.CreateFormatConverter()?;
+                conv.Initialize(&small, &GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeMedianCut)?;
+                let mut px = [0u8; 16];
+                conv.CopyPixels(std::ptr::null(), 8, &mut px)?;
+                Ok(px)
+            }
+        };
+        read().map(|px| px.chunks_exact(4).map(|p| rgba(p[2] as f32 / 255.0, p[1] as f32 / 255.0, p[0] as f32 / 255.0, 1.0)).collect()).unwrap_or_default()
+    }
+
+    /// A soft glow: an ellipse of colour fading out from its centre.
+    pub fn glow(&self, cx: f32, cy: f32, rx: f32, ry: f32, c: Color) {
+        use windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP;
+        use windows::Win32::Graphics::Direct2D::*;
+        let stops = [
+            D2D1_GRADIENT_STOP { position: 0.0, color: c },
+            D2D1_GRADIENT_STOP { position: 1.0, color: Color { a: 0.0, ..c } },
+        ];
+        unsafe {
+            let Ok(coll) = self.rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP) else { return };
+            let props = D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES { center: Vector2 { X: cx, Y: cy }, gradientOriginOffset: Vector2 { X: 0.0, Y: 0.0 }, radiusX: rx, radiusY: ry };
+            let Ok(brush) = self.rt.CreateRadialGradientBrush(&props, None, &coll) else { return };
+            self.rt.FillEllipse(&D2D1_ELLIPSE { point: Vector2 { X: cx, Y: cy }, radiusX: rx, radiusY: ry }, &brush);
+        }
+    }
+
     /// An icon's straight RGBA pixels as a bitmap for the render target.
     pub fn bitmap(&self, w: u32, h: u32, rgba: &[u8]) -> Result<ID2D1Bitmap> {
         let mut px = Vec::with_capacity(rgba.len());
@@ -491,8 +549,17 @@ impl Gfx {
     /// Clips what's drawn next to a rectangle whose ends fade out over `left` / `right`
     /// px (a scrolling title's CSS mask), until `pop_fade`.
     pub fn push_fade(&self, r: D2D_RECT_F, left: f32, right: f32) {
+        self.push_fade_along(r, left, right, false);
+    }
+
+    /// As `push_fade`, the top and bottom fading out over `top` / `bottom` px instead.
+    pub fn push_fade_v(&self, r: D2D_RECT_F, top: f32, bottom: f32) {
+        self.push_fade_along(r, top, bottom, true);
+    }
+
+    fn push_fade_along(&self, r: D2D_RECT_F, left: f32, right: f32, vertical: bool) {
         use windows::Win32::Graphics::Direct2D::*;
-        let w = (r.right - r.left).max(1.0);
+        let w = if vertical { r.bottom - r.top } else { r.right - r.left }.max(1.0);
         let stops = [
             windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP { position: 0.0, color: rgba(0.0, 0.0, 0.0, 0.0) },
             windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP { position: (left / w).clamp(0.0, 0.5), color: rgba(0.0, 0.0, 0.0, 1.0) },
@@ -501,7 +568,8 @@ impl Gfx {
         ];
         unsafe {
             let Ok(coll) = self.rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP) else { return };
-            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: Vector2 { X: r.left, Y: r.top }, endPoint: Vector2 { X: r.right, Y: r.top } };
+            let end = if vertical { Vector2 { X: r.left, Y: r.bottom } } else { Vector2 { X: r.right, Y: r.top } };
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: Vector2 { X: r.left, Y: r.top }, endPoint: end };
             let Ok(brush) = self.rt.CreateLinearGradientBrush(&props, None, &coll) else { return };
             let params = D2D1_LAYER_PARAMETERS {
                 contentBounds: r,

@@ -707,7 +707,7 @@ impl Surface {
 
     /// Docks: the island with the launcher's field, while it searches.
     fn launcher_isle(&self) -> Option<String> {
-        if !widgets::launcher::searching_on(&self.label) {
+        if !widgets::launcher::field_on(&self.label) {
             return None;
         }
         self.drops
@@ -807,9 +807,11 @@ impl Surface {
             self.close_all();
         } else {
             self.pending.push(widgets::launcher::load_apps());
-            // Its panel: a launcher widget's, the dock's middle notch's, or the bar's own.
+            // Its panel: a launcher widget's, the dock's middle notch's, or the bar's own
+            // (in the middle of the screen, centre.rs, nothing opens here).
             let wi = self.widgets.iter().position(|w| widgets::widget_type(&w.name) == "launcher");
             match wi {
+                _ if widgets::launcher::centred() => {}
                 Some(wi) => self.panel_of(gfx, wi, Some(true)),
                 None => {
                     if let Some(di) = self.drops.iter().position(|d| d.key == "bar:launcher") {
@@ -828,7 +830,13 @@ impl Surface {
     }
 
     pub fn launcher_open(&self) -> bool {
-        widgets::launcher::searching_on(&self.label) && self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "launcher") || (widgets::launcher::searching_on(&self.label) && self.drops.iter().any(|d| d.key == "bar:launcher" && d.spring.target > 0.5))
+        let here = widgets::launcher::searching_on(&self.label);
+        here && (widgets::launcher::centred() || self.widgets.iter().any(|w| widgets::widget_type(&w.name) == "launcher") || self.drops.iter().any(|d| d.key == "bar:launcher" && d.spring.target > 0.5))
+    }
+
+    /// [widgets.launcher] as this surface has it (the centred box's options).
+    pub fn launcher_opts(&self) -> Opts {
+        self.opts_for("launcher")
     }
 
     /// A key while the launcher's field has the focus.
@@ -1064,7 +1072,7 @@ impl Surface {
 
     /// A widget stepping aside for the launcher's field in its notch (while it searches).
     fn aside_in(&self, d: &Drop, wi: usize) -> bool {
-        widgets::launcher::searching_on(&self.label) && widgets::widget_type(&self.widgets[wi].name) != "launcher" && d.slot.iter().any(|&k| widgets::widget_type(&self.widgets[k].name) == "launcher")
+        widgets::launcher::field_on(&self.label) && widgets::widget_type(&self.widgets[wi].name) != "launcher" && d.slot.iter().any(|&k| widgets::widget_type(&self.widgets[k].name) == "launcher")
     }
 
     fn aside(&self, di: usize, wi: usize) -> bool {

@@ -1,5 +1,6 @@
 //! The Claude usage panel (claude.ts claudePanel) and the media panel
-//! (media-panel.ts): album art, title, a seek bar to drag, the keys.
+//! (media-panel.ts): album art, title, a seek bar to drag, the keys; or one of its
+//! looks ([widgets.media] style: record, glow, cover).
 
 use std::time::{Duration, Instant};
 
@@ -7,7 +8,7 @@ use serde_json::Value;
 
 use super::extras::{day_start, duration, limits, now_secs, tokens, total_tokens};
 use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply};
-use crate::native::gfx::{rect, rgba, white, with_alpha, Font, Gfx};
+use crate::native::gfx::{rect, rgba, white, with_alpha, Color, Font, Gfx};
 
 /// A line of text's height in a font.
 fn line(g: &Gfx, f: &Font) -> f32 {
@@ -238,28 +239,116 @@ const ART: f32 = 84.0;
 const INFO_X: f32 = ART + 14.0;
 const INFO_W: f32 = 320.0 - INFO_X;
 const KEYS_W: f32 = 3.0 * 32.0 + 2.0 * 10.0;
+// Record: its width, the seek ring's and the label's radius. Glow: its width. Cover: its
+// width and the picture's height.
+const RECORD_W: f32 = 220.0;
+const RING_R: f32 = 62.0;
+const DISC_R: f32 = 54.0;
+const GLOW_W: f32 = 280.0;
+const GLOW_PAD: f32 = 18.0;
+const COVER_W: f32 = 250.0;
+const COVER_H: f32 = 170.0;
+/// A record turns once every six seconds (radians a second).
+pub const RECORD_TURN: f32 = std::f32::consts::TAU / 6.0;
 
-/// Now playing: album art, title and artist, a seek bar to drag, the keys.
+/// The media panel's look ([widgets.media] style).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MediaStyle {
+    /// Cover, title, a seek bar, the keys.
+    Classic,
+    /// The cover as a turning record, its seek bar a ring around it.
+    Record,
+    /// The cover's colours glowing behind big type; progress along the panel's edge.
+    Glow,
+    /// The cover across the panel's top, fading into the bar and into the panel.
+    Cover,
+}
+
+impl MediaStyle {
+    pub fn of(opts: &Opts) -> MediaStyle {
+        match opts.str("style") {
+            Some("record") => MediaStyle::Record,
+            Some("glow") => MediaStyle::Glow,
+            Some("cover") => MediaStyle::Cover,
+            _ => MediaStyle::Classic,
+        }
+    }
+}
+
+/// The bytes of the player's cover (a data URL).
+pub fn art_bytes(url: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let (_, b) = url.split_once(";base64,")?;
+    base64::engine::general_purpose::STANDARD.decode(b).ok()
+}
+
+/// The seek control as laid out (content px): a track (left, centre y, width), the
+/// record's ring (centre x, centre y, radius), or none (nothing with a length plays).
+#[derive(Clone, Copy, PartialEq)]
+enum Seek {
+    None,
+    Line(f32, f32, f32),
+    Ring(f32, f32, f32),
+}
+
+/// A cover's colour, brightened enough to glow (a dark cover still shows).
+fn glowing(c: Color) -> Color {
+    let m = c.r.max(c.g).max(c.b).max(0.05);
+    let k = if m < 0.55 { 0.55 / m } else { 1.0 };
+    rgba((c.r * k).min(1.0), (c.g * k).min(1.0), (c.b * k).min(1.0), 1.0)
+}
+
+/// Now playing, in its look: the cover, title and artist, a seek control to drag, the keys.
 pub struct MediaPanel {
+    style: MediaStyle,
+    /// On a bottom surface (the panel's far edge is its top).
+    bottom: bool,
     m: Value,
-    /// When the position moves on next (between the player's updates).
+    /// When the position (or the record) moves on next.
     beat: Instant,
     art: Option<String>,
     picture: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
     picture_for: Option<String>,
-    /// The seek bar's fraction while it's dragged.
+    /// The cover's colours (Glow).
+    colors: Vec<Color>,
+    /// The record's turn (radians) and when it last turned.
+    angle: f32,
+    turned: Instant,
+    /// The seek control's fraction while it's dragged.
     dragging: Option<f32>,
     hover_seek: bool,
     hovered_key: Option<usize>,
-    /// The last layout (content px): rows' tops (title, artist, seek, keys), its
-    /// height, and the seek track's left and width.
-    rows: (f32, f32, f32, f32, f32),
-    track: (f32, f32),
+    /// The last layout (content px): its size, the keys' boxes, the seek control, the
+    /// title's and artist's rows' tops, and the cover's top (Cover).
+    size: (f32, f32),
+    keys: [(f32, f32, f32, f32); 3],
+    seek: Seek,
+    rows: (f32, f32),
+    art_y: f32,
 }
 
 impl MediaPanel {
-    pub fn new() -> MediaPanel {
-        MediaPanel { m: Value::Null, beat: Instant::now(), art: None, picture: None, picture_for: None, dragging: None, hover_seek: false, hovered_key: None, rows: (0.0, 0.0, 0.0, 0.0, ART), track: (0.0, 0.0) }
+    pub fn new(opts: &Opts) -> MediaPanel {
+        MediaPanel {
+            style: MediaStyle::of(opts),
+            bottom: false,
+            m: Value::Null,
+            beat: Instant::now(),
+            art: None,
+            picture: None,
+            picture_for: None,
+            colors: Vec::new(),
+            angle: 0.0,
+            turned: Instant::now(),
+            dragging: None,
+            hover_seek: false,
+            hovered_key: None,
+            size: (320.0, ART),
+            keys: [(0.0, 0.0, 0.0, 0.0); 3],
+            seek: Seek::None,
+            rows: (0.0, 0.0),
+            art_y: 0.0,
+        }
     }
     fn f(&self, k: &str) -> f64 {
         self.m.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0)
@@ -267,23 +356,39 @@ impl MediaPanel {
     fn b(&self, k: &str) -> bool {
         self.m.get(k).and_then(|v| v.as_bool()).unwrap_or(false)
     }
+    fn s(&self, k: &str) -> String {
+        self.m.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    }
     /// Where playback is now (extrapolated between the player's updates).
     fn position(&self) -> f64 {
         let drift = if self.b("playing") { (now_secs() * 1000.0 - self.f("updatedAt")).max(0.0) } else { 0.0 };
         (self.f("positionMs") + drift).min(self.f("durationMs"))
     }
+    /// How far along it is (0..1), the dragged spot while the seek control is held.
+    fn frac(&self) -> f32 {
+        let dur = self.f("durationMs");
+        if dur <= 0.0 {
+            return 0.0;
+        }
+        self.dragging.unwrap_or((self.position() / dur) as f32).clamp(0.0, 1.0)
+    }
     fn on_seek(&self, p: (f32, f32)) -> bool {
-        let (_, _, seek_y, _, _) = self.rows;
-        p.1 >= seek_y && p.1 <= seek_y + 14.0 && p.0 >= self.track.0 && p.0 <= self.track.0 + self.track.1
+        match self.seek {
+            Seek::Line(x, cy, w) => p.1 >= cy - 7.0 && p.1 <= cy + 7.0 && p.0 >= x && p.0 <= x + w,
+            Seek::Ring(cx, cy, r) => ((p.0 - cx).hypot(p.1 - cy) - r).abs() <= 10.0,
+            Seek::None => false,
+        }
+    }
+    /// The fraction a point on the seek control stands for (the ring: clockwise from the top).
+    fn seek_frac(&self, p: (f32, f32)) -> f32 {
+        match self.seek {
+            Seek::Line(x, _, w) => ((p.0 - x) / w.max(1.0)).clamp(0.0, 1.0),
+            Seek::Ring(cx, cy, _) => (p.0 - cx).atan2(cy - p.1).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU,
+            Seek::None => 0.0,
+        }
     }
     fn key_at(&self, p: (f32, f32)) -> Option<usize> {
-        let keys_y = self.rows.3;
-        let left = INFO_X + (INFO_W - KEYS_W) / 2.0;
-        if p.1 < keys_y || p.1 > keys_y + 28.0 {
-            return None;
-        }
-        let i = ((p.0 - left) / 42.0).floor();
-        (i >= 0.0 && i < 3.0 && p.0 - left - i * 42.0 < 32.0).then_some(i as usize)
+        self.keys.iter().position(|k| p.0 >= k.0 && p.0 < k.0 + k.2 && p.1 >= k.1 && p.1 < k.1 + k.3)
     }
     fn media_call(action: &'static str, position: Option<f64>) -> Act {
         Act::call(move |app| {
@@ -292,61 +397,56 @@ impl MediaPanel {
             let _ = tauri::async_runtime::block_on(crate::providers::media::media_control(sender, action.into(), position));
         })
     }
-}
-
-impl Panel for MediaPanel {
-    fn keys(&self) -> &'static [&'static str] {
-        &["media"]
-    }
-    fn data(&mut self, _key: &str, v: &Value) -> bool {
-        self.m = v.clone();
-        self.art = v.get("art").and_then(|a| a.as_str()).map(String::from);
-        true
-    }
-    fn pad(&self) -> (f32, f32, f32) {
-        (12.0, 14.0, 14.0)
-    }
-    fn wake(&self) -> Option<Instant> {
-        // The position moves on between the player's updates.
-        self.b("playing").then_some(self.beat)
-    }
-    fn tick(&mut self, now: Instant) -> bool {
-        self.beat = now + Duration::from_millis(500);
-        true
-    }
-    fn tick_resizes(&self) -> bool {
-        false
-    }
-    fn size(&mut self, cx: &Ctx) -> (f32, f32) {
-        let g = cx.gfx;
-        if self.picture_for != self.art {
-            self.picture_for = self.art.clone();
-            self.picture = self
-                .art
-                .as_deref()
-                .and_then(|url| url.split_once(";base64,"))
-                .and_then(|(_, b)| {
-                    use base64::Engine as _;
-                    base64::engine::general_purpose::STANDARD.decode(b).ok()
-                })
-                .and_then(|bytes| g.picture(&bytes).ok());
+    /// Three keys `w` × `h`, `gap` apart, from `left`.
+    fn lay_keys(&mut self, left: f32, top: f32, w: f32, h: f32, gap: f32) {
+        for (i, k) in self.keys.iter_mut().enumerate() {
+            *k = (left + i as f32 * (w + gap), top, w, h);
         }
-        let (th, ah) = (line(g, &cx.main(13.0)), line(g, &cx.secondary(12.0)));
-        let seek = if self.f("durationMs") > 0.0 { 6.0 + 14.0f32.max(line(g, &cx.secondary(10.0))) + 3.0 } else { 0.0 };
-        let total = th + 3.0 + ah + 3.0 + seek + 2.0 + 28.0;
-        let top = (ART - total).max(0.0) / 2.0;
-        self.rows = (top, top + th + 3.0, top + th + 3.0 + ah + 3.0 + 6.0, top + th + 3.0 + ah + 3.0 + seek + 2.0, total.max(ART));
-        // Times (at least 28 px) either side of the track, 8 px from it.
-        let f = cx.secondary(10.0);
-        let lw = g.measure(&clock_time(self.f("durationMs")), &f).max(28.0);
-        self.track = (INFO_X + lw + 8.0, INFO_W - 2.0 * lw - 16.0);
-        (320.0, self.rows.4)
     }
-    fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+
+    /// The keys in their boxes: round buttons in the Cover look (play filled), else
+    /// glyphs with a hover background.
+    fn draw_keys(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
-        let fg = with_alpha(cx.look.fg, alpha);
-        let dim = with_alpha(cx.look.dimmed(), alpha);
-        let (title_y, artist_y, seek_y, keys_y, h) = self.rows;
+        let glyphs = ["\u{E892}", if self.b("playing") { "\u{E769}" } else { "\u{E768}" }, "\u{E893}"];
+        let can = [self.b("canPrevious"), self.b("canPlayPause"), self.b("canNext")];
+        let f = Font::icons(14.0);
+        for (i, glyph) in glyphs.iter().enumerate() {
+            let (bx, by, bw, bh) = self.keys[i];
+            let (bx, by) = (x + bx, y + by);
+            let hovered = self.hovered_key == Some(i) && can[i];
+            let mut color = with_alpha(cx.look.fg, alpha * if can[i] { 1.0 } else { 0.35 });
+            if self.style == MediaStyle::Cover {
+                let main = i == 1;
+                let bg = if main { with_alpha(cx.look.fg, if hovered { 0.85 } else { 1.0 }) } else { white(if hovered { 0.16 } else { 0.08 }) };
+                g.fill_round(rect(bx, by, bw, bh), bw / 2.0, with_alpha(bg, alpha));
+                if main {
+                    color = with_alpha(cx.look.bg, alpha);
+                }
+            } else if hovered {
+                g.fill_round(rect(bx, by, bw, bh), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+            }
+            let w = g.measure(glyph, &f);
+            g.text_at(glyph, &f, bx + (bw - w) / 2.0, by + bh / 2.0, color);
+        }
+    }
+
+    /// A straight seek bar: its track, the part played, the knob while it's used.
+    fn draw_track(&self, cx: &Ctx, x: f32, cy: f32, w: f32, alpha: f32) {
+        let g = cx.gfx;
+        let fill = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { with_alpha(cx.look.fg, alpha) };
+        let frac = self.frac();
+        g.fill_round(rect(x, cy - 2.0, w, 4.0), 2.0, white(0.18 * alpha));
+        g.fill_round(rect(x, cy - 2.0, w * frac, 4.0), 2.0, fill);
+        if self.b("canSeek") && (self.hover_seek || self.dragging.is_some()) {
+            g.fill_round(rect(x + w * frac - 5.0, cy - 5.0, 10.0, 10.0), 5.0, fill);
+        }
+    }
+
+    fn draw_classic(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let h = self.size.1;
         let art_y = y + (h - ART) / 2.0;
         match &self.picture {
             Some(p) => g.fill_picture(p, rect(x, art_y, ART, ART), 14.0, alpha),
@@ -360,41 +460,231 @@ impl Panel for MediaPanel {
         let ix = x + INFO_X;
         let tf = cx.main(13.0);
         if self.m.is_null() {
-            g.text_at("Nothing playing", &tf, ix, y + title_y + line(g, &tf) / 2.0, fg);
+            g.text_at("Nothing playing", &tf, ix, y + self.rows.0 + line(g, &tf) / 2.0, fg);
             return;
         }
-        let s = |k: &str| self.m.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
-        g.text_at(&fit_text(g, &s("title"), &tf, INFO_W), &tf, ix, y + title_y + line(g, &tf) / 2.0, fg);
+        g.text_at(&fit_text(g, &self.s("title"), &tf, INFO_W), &tf, ix, y + self.rows.0 + line(g, &tf) / 2.0, fg);
         let af = cx.secondary(12.0);
-        g.text_at(&fit_text(g, &s("artist"), &af, INFO_W), &af, ix, y + artist_y + line(g, &af) / 2.0, dim);
-        let dur = self.f("durationMs");
-        if dur > 0.0 {
-            let frac = self.dragging.unwrap_or((self.position() / dur) as f32).clamp(0.0, 1.0);
+        g.text_at(&fit_text(g, &self.s("artist"), &af, INFO_W), &af, ix, y + self.rows.1 + line(g, &af) / 2.0, dim);
+        if let Seek::Line(tx, cy, tw) = self.seek {
+            let dur = self.f("durationMs");
             let f = cx.secondary(10.0);
-            let cyy = y + seek_y + 7.0;
-            g.text_at(&clock_time(frac as f64 * dur), &f, ix, cyy, dim);
+            g.text_at(&clock_time(self.frac() as f64 * dur), &f, ix, y + cy, dim);
             let total = clock_time(dur);
-            let tw = g.measure(&total, &f);
-            g.text_at(&total, &f, x + 320.0 - tw, cyy, dim);
-            let (tx, tw) = self.track;
+            let w = g.measure(&total, &f);
+            g.text_at(&total, &f, x + 320.0 - w, y + cy, dim);
+            self.draw_track(cx, x + tx, y + cy, tw, alpha);
+        }
+        self.draw_keys(cx, x, y, alpha);
+    }
+
+    fn draw_record(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let (rx, ry) = (x + RECORD_W / 2.0, y + RING_R + 2.0);
+        // The label: the cover, turning; grooves over it, the hole in the middle.
+        match &self.picture {
+            Some(p) => g.fill_disc(p, rx, ry, DISC_R, self.angle, alpha),
+            None => g.fill_round(rect(rx - DISC_R, ry - DISC_R, 2.0 * DISC_R, 2.0 * DISC_R), DISC_R, rgba(0.102, 0.102, 0.102, alpha)),
+        }
+        for r in [22.0, 30.0, 38.0, 46.0] {
+            g.ring(rx, ry, r, 1.0, 0.0, rgba(0.0, 0.0, 0.0, 0.2 * alpha), rgba(0.0, 0.0, 0.0, 0.0));
+        }
+        g.fill_round(rect(rx - 6.0, ry - 6.0, 12.0, 12.0), 6.0, with_alpha(cx.look.bg, alpha));
+        if let Seek::Ring(_, _, r) = self.seek {
             let fill = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { fg };
-            g.fill_round(rect(x + tx, cyy - 2.0, tw, 4.0), 2.0, white(0.18 * alpha));
-            g.fill_round(rect(x + tx, cyy - 2.0, tw * frac, 4.0), 2.0, fill);
+            let frac = self.frac();
+            g.ring(rx, ry, r, 3.0, frac, white(0.14 * alpha), fill);
             if self.b("canSeek") && (self.hover_seek || self.dragging.is_some()) {
-                g.fill_round(rect(x + tx + tw * frac - 5.0, cyy - 5.0, 10.0, 10.0), 5.0, fill);
+                let a = frac * std::f32::consts::TAU;
+                let (kx, ky) = (rx + r * a.sin(), ry - r * a.cos());
+                g.fill_round(rect(kx - 5.0, ky - 5.0, 10.0, 10.0), 5.0, fill);
             }
         }
-        let left = ix + (INFO_W - KEYS_W) / 2.0;
-        let glyphs = ["\u{E892}", if self.b("playing") { "\u{E769}" } else { "\u{E768}" }, "\u{E893}"];
-        let can = [self.b("canPrevious"), self.b("canPlayPause"), self.b("canNext")];
-        let f = Font::icons(14.0);
-        for (i, glyph) in glyphs.iter().enumerate() {
-            let bx = left + i as f32 * 42.0;
-            if self.hovered_key == Some(i) && can[i] {
-                g.fill_round(rect(bx, y + keys_y, 32.0, 28.0), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+        let centred = |text: &str, f: &Font, top: f32, c: Color| {
+            let t = fit_text(g, text, f, RECORD_W);
+            let w = g.measure(&t, f);
+            g.text_at(&t, f, x + (RECORD_W - w) / 2.0, y + top + line(g, f) / 2.0, c);
+        };
+        if self.m.is_null() {
+            centred("Nothing playing", &cx.main(13.0), self.rows.0, fg);
+            return;
+        }
+        centred(&self.s("title"), &cx.main(13.0), self.rows.0, fg);
+        centred(&self.s("artist"), &cx.secondary(12.0), self.rows.1, dim);
+        self.draw_keys(cx, x, y, alpha);
+    }
+
+    fn draw_glow(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let (w, h) = self.size;
+        // The cover's colours glow from the panel's far corners (the bar's side stays black).
+        let far = if self.bottom { y - GLOW_PAD } else { y + h + GLOW_PAD };
+        let (left, right) = if self.bottom { (0, 1) } else { (2, 3) };
+        if let (Some(a), Some(b)) = (self.colors.get(left), self.colors.get(right)) {
+            g.glow(x - GLOW_PAD, far, 230.0, 130.0, with_alpha(glowing(*a), 0.42 * alpha));
+            g.glow(x + w + GLOW_PAD, far, 190.0, 120.0, with_alpha(glowing(*b), 0.3 * alpha));
+        }
+        let tf = cx.main(20.0);
+        if self.m.is_null() {
+            g.text_at("Nothing playing", &tf, x, y + line(g, &tf) / 2.0, fg);
+            return;
+        }
+        g.text_at(&fit_text(g, &self.s("title"), &tf, w), &tf, x, y + self.rows.0 + line(g, &tf) / 2.0, fg);
+        let af = cx.secondary(12.0);
+        g.text_at(&fit_text(g, &self.s("artist"), &af, w), &af, x, y + self.rows.1 + line(g, &af) / 2.0, dim);
+        let key_cy = y + self.keys[0].1 + self.keys[0].3 / 2.0;
+        if let Seek::Line(lx, cy, lw) = self.seek {
+            let dur = self.f("durationMs");
+            let f = cx.secondary(12.0);
+            g.text_at(&format!("{} / {}", clock_time(self.frac() as f64 * dur), clock_time(dur)), &f, x, key_cy, dim);
+            // Along the far edge: only the part played.
+            let fill = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { fg };
+            let thick = if self.hover_seek || self.dragging.is_some() { 5.0 } else { 3.0 };
+            g.fill_round(rect(x + lx, y + cy - thick / 2.0, (lw * self.frac()).max(thick), thick), thick / 2.0, fill);
+        }
+        self.draw_keys(cx, x, y, alpha);
+    }
+
+    fn draw_cover(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        // The cover fades into the bar where it meets it (no edge) and into the panel
+        // under the title.
+        let art = rect(x, y + self.art_y, COVER_W, COVER_H);
+        let (near, far) = (44.0, 100.0);
+        if self.bottom {
+            g.push_fade_v(art, far, near);
+        } else {
+            g.push_fade_v(art, near, far);
+        }
+        match &self.picture {
+            Some(p) => g.fill_picture(p, art, 0.0, alpha),
+            None => g.fill_rect(art, rgba(0.102, 0.102, 0.102, alpha)),
+        }
+        g.pop_fade();
+        let tf = cx.main(15.0);
+        if self.m.is_null() {
+            g.text_at("Nothing playing", &tf, x + 14.0, y + self.rows.0 + line(g, &tf) / 2.0, fg);
+            return;
+        }
+        g.text_at(&fit_text(g, &self.s("title"), &tf, COVER_W - 28.0), &tf, x + 14.0, y + self.rows.0 + line(g, &tf) / 2.0, fg);
+        let af = cx.secondary(12.0);
+        g.text_at(&fit_text(g, &self.s("artist"), &af, COVER_W - 28.0), &af, x + 14.0, y + self.rows.1 + line(g, &af) / 2.0, dim);
+        if let Seek::Line(tx, cy, tw) = self.seek {
+            self.draw_track(cx, x + tx, y + cy, tw, alpha);
+            let f = cx.secondary(12.0);
+            g.text_at(&clock_time(self.frac() as f64 * self.f("durationMs")), &f, x + 14.0, y + self.keys[0].1 + self.keys[0].3 / 2.0, dim);
+        }
+        self.draw_keys(cx, x, y, alpha);
+    }
+}
+
+impl Panel for MediaPanel {
+    fn keys(&self) -> &'static [&'static str] {
+        &["media"]
+    }
+    fn data(&mut self, _key: &str, v: &Value) -> bool {
+        self.m = v.clone();
+        self.art = v.get("art").and_then(|a| a.as_str()).map(String::from);
+        true
+    }
+    fn pad(&self) -> (f32, f32, f32) {
+        match self.style {
+            MediaStyle::Classic => (12.0, 14.0, 14.0),
+            MediaStyle::Record => (14.0, 16.0, 16.0),
+            MediaStyle::Glow => (16.0, GLOW_PAD, GLOW_PAD),
+            // The cover reaches the bar and both sides; the text keeps its own margin.
+            MediaStyle::Cover => (0.0, 14.0, 0.0),
+        }
+    }
+    fn wake(&self) -> Option<Instant> {
+        // The position moves on between the player's updates; a record turns.
+        self.b("playing").then_some(self.beat)
+    }
+    fn tick(&mut self, now: Instant) -> bool {
+        let turning = self.style == MediaStyle::Record && self.b("playing");
+        if turning {
+            self.angle = (self.angle + now.saturating_duration_since(self.turned).as_secs_f32().min(0.1) * RECORD_TURN) % std::f32::consts::TAU;
+        }
+        self.turned = now;
+        self.beat = now + Duration::from_millis(if turning { 33 } else { 500 });
+        true
+    }
+    fn tick_resizes(&self) -> bool {
+        false
+    }
+    fn size(&mut self, cx: &Ctx) -> (f32, f32) {
+        let g = cx.gfx;
+        self.bottom = cx.look.bottom;
+        if self.picture_for != self.art {
+            self.picture_for = self.art.clone();
+            let bytes = self.art.as_deref().and_then(art_bytes);
+            self.picture = bytes.as_ref().and_then(|b| g.picture(b).ok());
+            self.colors = match (&bytes, self.style) {
+                (Some(b), MediaStyle::Glow) => g.picture_colors(b),
+                _ => Vec::new(),
+            };
+        }
+        let seeks = self.f("durationMs") > 0.0;
+        let ah = line(g, &cx.secondary(12.0));
+        match self.style {
+            MediaStyle::Classic => {
+                let th = line(g, &cx.main(13.0));
+                let seek = if seeks { 6.0 + 14.0f32.max(line(g, &cx.secondary(10.0))) + 3.0 } else { 0.0 };
+                let total = th + 3.0 + ah + 3.0 + seek + 2.0 + 28.0;
+                let top = (ART - total).max(0.0) / 2.0;
+                let seek_y = top + th + 3.0 + ah + 3.0 + 6.0;
+                let keys_y = top + th + 3.0 + ah + 3.0 + seek + 2.0;
+                self.rows = (top, top + th + 3.0);
+                // Times (at least 28 px) either side of the track, 8 px from it.
+                let lw = g.measure(&clock_time(self.f("durationMs")), &cx.secondary(10.0)).max(28.0);
+                self.seek = if seeks { Seek::Line(INFO_X + lw + 8.0, seek_y + 7.0, INFO_W - 2.0 * lw - 16.0) } else { Seek::None };
+                self.lay_keys(INFO_X + (INFO_W - KEYS_W) / 2.0, keys_y, 32.0, 28.0, 10.0);
+                self.size = (320.0, total.max(ART));
             }
-            let w = g.measure(glyph, &f);
-            g.text_at(glyph, &f, bx + (32.0 - w) / 2.0, y + keys_y + 14.0, with_alpha(cx.look.fg, alpha * if can[i] { 1.0 } else { 0.35 }));
+            MediaStyle::Record => {
+                let th = line(g, &cx.main(13.0));
+                let title = 2.0 * RING_R + 4.0 + 10.0;
+                self.rows = (title, title + th + 2.0);
+                let keys_y = title + th + 2.0 + ah + 10.0;
+                self.seek = if seeks { Seek::Ring(RECORD_W / 2.0, RING_R + 2.0, RING_R) } else { Seek::None };
+                self.lay_keys((RECORD_W - KEYS_W) / 2.0, keys_y, 32.0, 28.0, 10.0);
+                self.size = (RECORD_W, keys_y + 28.0);
+            }
+            MediaStyle::Glow => {
+                let th = line(g, &cx.main(20.0));
+                self.rows = (0.0, th + 2.0);
+                let keys_y = th + 2.0 + ah + 14.0;
+                let h = keys_y + 28.0;
+                // The progress runs along the far edge (inside the rounded corners).
+                let edge = if self.bottom { -GLOW_PAD + 1.5 } else { h + GLOW_PAD - 1.5 };
+                self.seek = if seeks { Seek::Line(-GLOW_PAD + 14.0, edge, GLOW_W + 2.0 * GLOW_PAD - 28.0) } else { Seek::None };
+                self.lay_keys(GLOW_W - (3.0 * 32.0 + 2.0 * 4.0), keys_y, 32.0, 28.0, 4.0);
+                self.size = (GLOW_W, h);
+            }
+            MediaStyle::Cover => {
+                let th = line(g, &cx.main(15.0));
+                // Title, artist, the seek bar, the keys: over the cover's faded end.
+                let text = th + 2.0 + ah + 10.0 + 4.0 + 10.0 + 30.0;
+                let (text_y, art_y, h) = if self.bottom { (0.0, text - 40.0, text - 40.0 + COVER_H) } else { (COVER_H - 40.0, 0.0, COVER_H - 40.0 + text) };
+                self.art_y = art_y;
+                self.rows = (text_y, text_y + th + 2.0);
+                let seek_cy = text_y + th + 2.0 + ah + 10.0 + 2.0;
+                self.seek = if seeks { Seek::Line(14.0, seek_cy, COVER_W - 28.0) } else { Seek::None };
+                self.lay_keys(COVER_W - 14.0 - (3.0 * 30.0 + 2.0 * 6.0), seek_cy + 2.0 + 10.0, 30.0, 30.0, 6.0);
+                self.size = (COVER_W, h);
+            }
+        }
+        self.size
+    }
+    fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        match self.style {
+            MediaStyle::Classic => self.draw_classic(cx, x, y, alpha),
+            MediaStyle::Record => self.draw_record(cx, x, y, alpha),
+            MediaStyle::Glow => self.draw_glow(cx, x, y, alpha),
+            MediaStyle::Cover => self.draw_cover(cx, x, y, alpha),
         }
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
@@ -413,8 +703,7 @@ impl Panel for MediaPanel {
         true
     }
     fn drag(&mut self, at: (f32, f32)) -> Reply {
-        let (tx, tw) = self.track;
-        self.dragging = Some(((at.0 - tx) / tw.max(1.0)).clamp(0.0, 1.0));
+        self.dragging = Some(self.seek_frac(at));
         Reply::None
     }
     fn release(&mut self, at: (f32, f32)) -> Reply {
@@ -440,7 +729,10 @@ impl Panel for MediaPanel {
         self.hovered_key = None;
     }
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
-        let h = self.rows.4;
-        vec![(0.0, 0.0, ART, h), (INFO_X, 0.0, INFO_W, h)]
+        let (w, h) = self.size;
+        match self.style {
+            MediaStyle::Classic => vec![(0.0, 0.0, ART, h), (INFO_X, 0.0, INFO_W, h)],
+            _ => vec![(0.0, 0.0, w, h)],
+        }
     }
 }

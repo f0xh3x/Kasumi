@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use super::icon::{decode, AppIcon, Pixels, Style};
+use super::panels2::{art_bytes, RECORD_TURN};
 use super::{fit_text, row_draw, row_width, Act, Button, Ctx, Opts, Piece, Reply, Roll, Widget};
 use crate::native::gfx::{rect, white, with_alpha};
 
@@ -23,9 +24,32 @@ const NEXT: &str = "\u{E893}";
 const PLAY: &str = "\u{E768}";
 const PAUSE: &str = "\u{E769}";
 
-/// Now playing: previous / play-pause / next, then "title — artist".
+/// What shows before the title ([widgets.media] mark), whatever the panel's look.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Mark {
+    None,
+    /// The cover as a little record, turning while it plays.
+    Record,
+    /// Bars rising and falling while it plays.
+    Bars,
+    /// The cover, small.
+    Cover,
+}
+
+/// Now playing: previous / play-pause / next, then "title — artist"; with [widgets.media]
+/// mark, a turning record, moving bars or the cover before the title.
 pub struct Media {
     opts: Opts,
+    mark: Mark,
+    /// The cover (Record, Cover): as sent, and drawable.
+    art: Option<String>,
+    picture: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
+    picture_for: Option<String>,
+    /// The record's turn (radians), when it last turned, and when the mark moves next
+    /// (Record, Glow while playing).
+    angle: f32,
+    turned: Instant,
+    beat: Option<Instant>,
     line: Option<String>,
     /// Title, and the artist under it.
     tip: String,
@@ -45,10 +69,19 @@ pub struct Media {
 const KEY_W: f32 = 24.0;
 const KEY_H: f32 = 22.0;
 const KEYS_W: f32 = 3.0 * KEY_W + 2.0 * 2.0;
+/// The look's mark before the title, and the gap after it.
+const MARK_W: f32 = 16.0;
+const MARK_GAP: f32 = 8.0;
 
 impl Media {
     pub fn new(opts: Opts) -> Media {
-        Media { opts, line: None, tip: String::new(), playing: false, can: [false; 3], hovered: None, keys_x: 0.0, label_w: 0.0, box_w: 0.0, due: std::cell::Cell::new(None) }
+        let mark = match opts.str("mark") {
+            Some("record") => Mark::Record,
+            Some("bars") => Mark::Bars,
+            Some("cover") => Mark::Cover,
+            _ => Mark::None,
+        };
+        Media { mark, opts, art: None, picture: None, picture_for: None, angle: 0.0, turned: Instant::now(), beat: None, line: None, tip: String::new(), playing: false, can: [false; 3], hovered: None, keys_x: 0.0, label_w: 0.0, box_w: 0.0, due: std::cell::Cell::new(None) }
     }
 
     fn keys(&self) -> &str {
@@ -66,6 +99,46 @@ impl Media {
             "open" => open,
             "closed" if open <= 0.0 => 1.0,
             _ => 0.0,
+        }
+    }
+
+    /// The mark's width with its gap (none without one).
+    fn mark_w(&self) -> f32 {
+        if self.mark == Mark::None { 0.0 } else { MARK_W + MARK_GAP }
+    }
+
+    /// The mark moves (a turning record, moving bars) while something plays.
+    fn moving(&self) -> bool {
+        self.playing && matches!(self.mark, Mark::Record | Mark::Bars)
+    }
+
+    /// The look's mark, `x` its left, `cy` the row's centre.
+    fn draw_mark(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
+        let g = cx.gfx;
+        let fill = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
+        let r = MARK_W / 2.0;
+        match self.mark {
+            Mark::Record => {
+                match &self.picture {
+                    Some(p) => g.fill_disc(p, x + r, cy, r, self.angle, alpha),
+                    None => g.fill_round(rect(x, cy - r, MARK_W, MARK_W), r, white(0.3 * alpha)),
+                }
+                g.fill_round(rect(x + r - 2.5, cy - 2.5, 5.0, 5.0), 2.5, with_alpha(cx.look.bg, alpha));
+            }
+            Mark::Bars => {
+                // Four bars, each rising and falling at its own pace (low and still when paused).
+                let t = epoch().elapsed().as_secs_f32();
+                for (i, (speed, phase)) in [(7.0f32, 0.0f32), (9.3, 1.7), (6.1, 3.1), (8.2, 4.4)].iter().enumerate() {
+                    let level = if self.playing { 0.3 + 0.7 * (t * speed + phase).sin().abs() } else { 0.3 };
+                    let h = (12.0 * level).round().max(2.0);
+                    g.fill_round(rect(x + 1.0 + i as f32 * 3.75, cy + 6.0 - h, 2.5, h), 1.0, with_alpha(fill, alpha));
+                }
+            }
+            Mark::Cover => match &self.picture {
+                Some(p) => g.fill_picture(p, rect(x - 1.0, cy - 9.0, 18.0, 18.0), 5.0, alpha),
+                None => g.fill_round(rect(x - 1.0, cy - 9.0, 18.0, 18.0), 5.0, white(0.2 * alpha)),
+            },
+            Mark::None => {}
         }
     }
 
@@ -117,35 +190,58 @@ impl Widget for Media {
         self.tip = if artist.is_empty() { title.clone() } else { format!("{title}\n{artist}") };
         let line = Some(if artist.is_empty() { title } else { format!("{title} — {artist}") });
         let can = [b("canPrevious"), b("canPlayPause"), b("canNext")];
-        let changed = line != self.line || b("playing") != self.playing || can != self.can;
+        let art = v.get("art").and_then(|a| a.as_str()).map(String::from);
+        let changed = line != self.line || b("playing") != self.playing || can != self.can || art != self.art;
         self.line = line;
         self.playing = b("playing");
         self.can = can;
+        self.art = art;
+        if self.moving() && self.beat.is_none() {
+            self.turned = Instant::now();
+            self.beat = Some(Instant::now());
+        }
         changed
     }
     fn wake(&self) -> Option<Instant> {
-        // The title scrolls a whole pixel at a time: a redraw per pixel, not per display refresh.
-        if let Some(due) = self.due.get() {
-            return Some(due);
-        }
-        let due = self.scroll(Instant::now()).2;
-        self.due.set(due);
-        due
+        // The title scrolls a whole pixel at a time: a redraw per pixel, not per display
+        // refresh. The mark moves about twelve times a second.
+        let scroll = match self.due.get() {
+            Some(due) => Some(due),
+            None => {
+                let due = self.scroll(Instant::now()).2;
+                self.due.set(due);
+                due
+            }
+        };
+        [scroll, self.beat].into_iter().flatten().min()
     }
-    fn tick(&mut self, _now: Instant) -> bool {
+    fn tick(&mut self, now: Instant) -> bool {
         self.due.set(None);
+        if self.moving() {
+            self.angle = (self.angle + now.saturating_duration_since(self.turned).as_secs_f32().min(0.2) * RECORD_TURN) % std::f32::consts::TAU;
+            if self.beat.is_some_and(|b| now >= b) {
+                self.beat = Some(now + Duration::from_millis(83));
+            }
+        } else {
+            self.beat = None;
+        }
+        self.turned = now;
         true
     }
     fn tick_resizes(&self) -> bool {
         false
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
+        if self.picture_for != self.art && matches!(self.mark, Mark::Record | Mark::Cover) {
+            self.picture_for = self.art.clone();
+            self.picture = self.art.as_deref().and_then(art_bytes).and_then(|b| cx.gfx.picture(&b).ok());
+        }
         let Some(line) = &self.line else { return 0.0 };
         self.label_w = cx.gfx.measure(line, &cx.body());
         self.box_w = self.text_w(cx);
         let keys = if self.keys_shown(cx.open) > 0.0 { KEYS_W + 6.0 + 2.0 } else { 0.0 };
-        self.keys_x = if self.opts.str("keys_side") == Some("right") { self.box_w + 2.0 + 6.0 } else { 0.0 };
-        keys + self.box_w
+        self.keys_x = if self.opts.str("keys_side") == Some("right") { self.mark_w() + self.box_w + 2.0 + 6.0 } else { 0.0 };
+        keys + self.mark_w() + self.box_w
     }
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
         let Some(line) = &self.line else { return };
@@ -153,11 +249,16 @@ impl Widget for Media {
         let shown = self.keys_shown(cx.open);
         let right = self.opts.str("keys_side") == Some("right");
         let tw = self.text_w(cx);
-        let (keys_x, text_x) = match (shown > 0.0, right) {
+        let mark = self.mark_w();
+        let (keys_x, mark_x) = match (shown > 0.0, right) {
             (false, _) => (None, x),
             (true, false) => (Some(x), x + KEYS_W + 6.0 + 2.0),
-            (true, true) => (Some(x + tw + 2.0 + 6.0), x),
+            (true, true) => (Some(x + mark + tw + 2.0 + 6.0), x),
         };
+        if mark > 0.0 {
+            self.draw_mark(cx, mark_x, cy, alpha);
+        }
+        let text_x = mark_x + mark;
         if let Some(kx) = keys_x {
             let glyphs = [PREV, if self.playing { PAUSE } else { PLAY }, NEXT];
             for (i, glyph) in glyphs.iter().enumerate() {

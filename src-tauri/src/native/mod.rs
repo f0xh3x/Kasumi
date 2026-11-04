@@ -10,6 +10,7 @@ pub mod backdrop;
 pub mod blurtest;
 pub mod ctxmenu;
 pub mod geometry;
+mod centre;
 mod drop;
 mod floating;
 mod gfx;
@@ -244,6 +245,8 @@ pub(crate) struct Native {
     app: Option<AppHandle>,
     /// Alt + Tab in the middle of the screen (made the first time).
     alt_float: Option<floating::Floating>,
+    /// The launcher in the middle of the screen, while it's open there.
+    centre: Option<centre::Centre>,
     /// The scroll position bar (made the first time).
     scroll: Option<scrollbar::ScrollBar>,
     /// Kasumi's tooltip over another app's (apptips.rs; made the first time).
@@ -301,7 +304,7 @@ fn run(app: Option<AppHandle>, rx: Receiver<Msg>, ready: Sender<()>) {
         return;
     };
     WAKE.store(wake.0 as isize, Ordering::Relaxed);
-    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None, scroll: None, app_tip: None, lang_pending: None, lang_presses: 0 }));
+    NATIVE.with(|n| *n.borrow_mut() = Some(Native { gfx, surfaces: Vec::new(), store: HashMap::new(), app, alt_float: None, centre: None, scroll: None, app_tip: None, lang_pending: None, lang_presses: 0 }));
     INBOX.with(|i| *i.borrow_mut() = Some(rx));
     let _ = ready.send(());
     eprintln!("[kasumi] native renderer started");
@@ -368,6 +371,7 @@ fn with_native<R>(f: impl FnOnce(&mut Native) -> R) -> Option<R> {
 
 /// Sends the engine what surfaces measured (notch widths, regions).
 fn report(n: &mut Native) {
+    n.centre_sync();
     let Some(app) = n.app.as_ref() else { return };
     for s in &mut n.surfaces {
         if let Some(widths) = s.take_widths() {
@@ -443,6 +447,7 @@ impl Native {
                 if let (Some(f), true) = (self.alt_float.as_mut(), key == "taskIcons") {
                     widgets::Panel::data(&mut f.panel, &key, &value);
                 }
+                self.centre_data(&key, &value);
                 self.store.insert(key, value);
             }
             Msg::Entries(key, entries) => {
@@ -454,6 +459,7 @@ impl Native {
                 for s in &mut self.surfaces {
                     s.data(&self.gfx, &key, &value);
                 }
+                self.centre_data(&key, &value);
             }
             Msg::Shown(label, shown) => {
                 if let Some(s) = self.surface(&label) {
@@ -762,6 +768,47 @@ impl Native {
         }
     }
 
+    /// The launcher in the middle of the screen ([widgets.launcher] style = "centre"):
+    /// shown or drawn again as what it shows changed, gone once it closed. It's made
+    /// afresh each time it opens (the options it was made with may have changed).
+    fn centre_sync(&mut self) {
+        if !widgets::launcher::take_changed() {
+            return;
+        }
+        let owner = widgets::launcher::open_on().filter(|_| widgets::launcher::centred());
+        let Some(s) = owner.and_then(|o| self.surfaces.iter().find(|s| s.label == o)) else {
+            self.centre = None;
+            return;
+        };
+        let (look, opts, mon) = (s.look().clone(), s.launcher_opts(), s.monitor().clone());
+        let store = &self.store;
+        let c = self.centre.get_or_insert_with(|| {
+            let mut c = centre::Centre::new(&opts);
+            for key in widgets::Panel::keys(&c.panel) {
+                if let Some(v) = store.get(*key) {
+                    widgets::Panel::data(&mut c.panel, key, v);
+                }
+            }
+            c
+        });
+        if let Err(e) = c.show(&self.gfx, &look, &opts, &mon) {
+            eprintln!("[kasumi] launcher: {e}");
+        }
+        if let Some(act) = widgets::Panel::act(&mut c.panel) {
+            run_act(act, self.app.clone());
+        }
+    }
+
+    /// Data for the centred launcher's panel (icons, the user's picture...).
+    fn centre_data(&mut self, key: &str, value: &Value) {
+        if let Some(c) = self.centre.as_mut() {
+            if widgets::Panel::keys(&c.panel).contains(&key) {
+                widgets::Panel::data(&mut c.panel, key, value);
+                widgets::launcher::touch();
+            }
+        }
+    }
+
     /// Alt + Tab in the middle of the screen: drawn (again), with the look of the bar on
     /// that monitor.
     fn alt_center_draw(&mut self) {
@@ -790,7 +837,16 @@ impl Native {
                 run_act(act, self.app.clone());
             }
         }
-        let next = self.surfaces.iter().filter_map(|s| s.wake()).min();
+        // The centred launcher's caret blinks.
+        if let Some(c) = self.centre.as_mut() {
+            if widgets::Panel::wake(&c.panel).is_some_and(|t| t <= now) {
+                widgets::Panel::tick(&mut c.panel, now);
+                widgets::launcher::touch();
+            }
+        }
+        self.centre_sync();
+        let centre = self.centre.as_ref().and_then(|c| widgets::Panel::wake(&c.panel));
+        let next = self.surfaces.iter().filter_map(|s| s.wake()).chain(centre).min();
         unsafe {
             match next {
                 Some(t) => {
@@ -865,6 +921,7 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             let act = with_native(|n| {
                 let gfx = &n.gfx;
                 let act = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| if msg == WM_CHAR { s.char(gfx, wp.0 as u32) } else { s.key(gfx, wp.0 as u16, ctrl) });
+                n.centre_sync();
                 act.map(|a| (a, n.app.clone()))
             })
             .flatten();
@@ -879,6 +936,11 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                 // Alt + Tab in the middle of the screen: the card under the mouse.
                 if n.alt_float.as_mut().filter(|f| f.hwnd == Some(hwnd)).is_some_and(|f| f.hover((x, y))) {
                     n.alt_center_draw();
+                }
+                // The centred launcher: the row under the mouse.
+                if n.centre.as_mut().filter(|c| c.hwnd == Some(hwnd)).is_some_and(|c| c.hover((x, y))) {
+                    widgets::launcher::touch();
+                    n.centre_sync();
                 }
                 if let Some(s) = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd) {
                     if s.dragging() {
@@ -909,6 +971,9 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             let act = with_native(|n| {
                 let gfx = &n.gfx;
                 let act = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| s.wheel(gfx, (pt.x, pt.y), notches));
+                if n.centre.as_mut().filter(|c| c.hwnd == Some(hwnd)).is_some_and(|c| c.wheel((pt.x, pt.y), notches)) {
+                    n.centre_sync();
+                }
                 act.map(|a| (a, n.app.clone()))
             })
             .flatten();
@@ -945,6 +1010,14 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                 });
                 // Alt + Tab in the middle of the screen: a card picked.
                 let act = act.or_else(|| n.alt_float.as_mut().filter(|f| f.hwnd == Some(hwnd)).and_then(|f| f.click(button, (x, y))));
+                // The centred launcher: an app, a button.
+                let act = act.or_else(|| {
+                    let (act, changed) = n.centre.as_mut().filter(|c| c.hwnd == Some(hwnd)).map_or((None, false), |c| c.click(button, (x, y)));
+                    if changed {
+                        widgets::launcher::touch();
+                    }
+                    act
+                });
                 report(n);
                 let bar_menu = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).is_some_and(|s| s.take_bar_menu());
                 Some((act, bar_menu, n.app.clone()))
