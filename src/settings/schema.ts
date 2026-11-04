@@ -2,7 +2,7 @@
 // listed once, with where it lives in config.toml, its control and default.
 // Adding a feature's settings = adding entries here.
 
-import { CHIP_LEGEND, ownsLayout, scope, WIDGETS } from "./editors";
+import { ownsLayout, scope, WIDGETS } from "./editors";
 
 export type Path = (string | number)[];
 export type Cfg = Record<string, any>;
@@ -295,7 +295,6 @@ const sources: Page[] = [
         // Which layout this edits: the global one, or the selected monitor's own.
         badge: (cfg) =>
           !scope.monitor ? "Global layout" : ownsLayout(cfg, scope.monitor) ? `${scope.monitor}'s own layout` : "Global layout · a change here gives it its own",
-        legend: CHIP_LEGEND,
         fields: [{ kind: "custom", editor: "placement" }],
       },
     ],
