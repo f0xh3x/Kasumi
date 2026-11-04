@@ -1,7 +1,8 @@
 //! The app launcher (src/widgets/launcher.ts): a search field (the launcher
-//! widget's, the dock's inline one, or the panel's own) and the matching apps.
-//! Up / down choose, Enter launches, Esc closes; typing goes to the field. One
-//! state for every field, as the page's `S`.
+//! widget's, the dock's inline one, or the panel's own) and the matching apps
+//! (and open windows, [widgets.launcher] windows). Up / down or the wheel choose,
+//! Enter launches, Esc closes; typing goes to the field. One state for every
+//! field, as the page's `S`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -37,6 +38,10 @@ struct State {
     /// ([widgets.launcher] clipboard).
     clip: Vec<(u64, String)>,
     clipboard: bool,
+    /// The open windows (handle, title, app key, app name; most recent first), found by
+    /// their title or app ([widgets.launcher] windows): Enter switches to one.
+    windows: Vec<(isize, String, String, String)>,
+    window_search: bool,
     /// When the caret last moved (it shows solid for a moment, then blinks).
     typed: Instant,
     /// The surface it's open on (every surface draws on this thread: the others keep
@@ -45,7 +50,7 @@ struct State {
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, typed: Instant::now(), owner: String::new() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, windows: Vec::new(), window_search: false, typed: Instant::now(), owner: String::new() });
 }
 
 /// Higher is better; -1: no match (launcher.ts score).
@@ -76,10 +81,11 @@ fn command_score(name: &str, q: &str) -> f64 {
 }
 
 /// The calculator's row in the results (its index among them), and where Start's
-/// pins' indices begin.
+/// pins', the clipboard's and the open windows' indices begin.
 const CALC: usize = usize::MAX;
 const PIN: usize = 1 << 40;
 const CLIP: usize = 1 << 41;
+const WIN: usize = 1 << 42;
 
 /// A sum typed into the field ([widgets.launcher] calculator): `24*7`, `(3+4)^2`,
 /// `1,5 / 3`, `2 x 8`, `sqrt(2)`, `pi*2`. None unless it's a whole sum with at least one
@@ -203,12 +209,16 @@ fn keys_score(keys: &str, q: &str) -> f64 {
     }
 }
 
-/// A result's id and name: an app (its index in the list), the calculator's row or a
-/// pin of Start's.
+/// A result's id and name: an app (its index in the list), the calculator's row, an
+/// open window, a clipboard item or a pin of Start's.
 fn entry(s: &State, i: usize) -> (String, String) {
     if i == CALC {
         let v = s.calc.clone().unwrap_or_default();
         return (format!("calc:{v}"), format!("= {v}"));
+    }
+    if i >= WIN {
+        let (h, title, _, _) = &s.windows[i - WIN];
+        return (format!("win:{h}"), title.clone());
     }
     if i >= CLIP {
         let (id, text) = &s.clip[i - CLIP];
@@ -233,6 +243,12 @@ fn search(s: &mut State) {
         }
     };
     let mut found: Vec<(usize, f64)> = if q.is_empty() { Vec::new() } else { s.apps.iter().enumerate().map(|(i, a)| (i, rate(a))).filter(|(_, sc)| *sc >= 0.0).collect() };
+    // Open windows: by their title, or by their app's name a little below the app itself
+    // (typing an app's name still starts it first; its windows follow).
+    if s.window_search && !q.is_empty() {
+        let wins = s.windows.iter().enumerate().map(|(k, w)| (WIN + k, score(&w.1, &q).max(score(&w.3, &q) - 5.0)));
+        found.extend(wins.filter(|(_, sc)| *sc >= 0.0));
+    }
     found.sort_by(|a, b| b.1.total_cmp(&a.1));
     // A sum: its answer first.
     s.calc = if s.calculator { calc(&s.query) } else { None };
@@ -289,6 +305,7 @@ fn set_opts(opts: &Opts) {
         s.pinned = on("pinned");
         s.user = on("user");
         s.clipboard = on("clipboard");
+        s.window_search = on("windows");
     });
 }
 
@@ -314,9 +331,10 @@ pub fn load_apps() -> Act {
     })
 }
 
-/// The app list or Start's pins arrived (whichever of the launcher's widgets and panels
-/// gets it: they share one state).
-fn take_list(key: &str, v: &Value) {
+/// The app list, Start's pins, the clipboard or the open windows arrived (whichever of
+/// the launcher's widgets and panels gets it: they share one state). False: nothing
+/// shown changed.
+fn take_list(key: &str, v: &Value) -> bool {
     let list = |keys: bool| -> Vec<(String, String, String)> {
         v.as_array()
             .map(|a| {
@@ -351,10 +369,55 @@ fn take_list(key: &str, v: &Value) {
                     })
                     .unwrap_or_default();
             }
-            _ => return,
+            "tasks" => {
+                let names: HashMap<&str, &str> = v
+                    .get("apps")
+                    .and_then(|a| a.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|a| Some((a.get("key")?.as_str()?, a.get("name")?.as_str()?)))
+                    .collect();
+                let mut wins: Vec<&Value> = v.get("windows").and_then(|w| w.as_array()).into_iter().flatten().collect();
+                wins.sort_by_key(|w| w.get("z").and_then(|z| z.as_i64()).unwrap_or(i64::MAX));
+                let text = |w: &Value, k: &str| w.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                s.windows = wins
+                    .iter()
+                    .filter_map(|w| {
+                        let app = text(w, "app");
+                        let name = names.get(app.as_str()).map_or_else(String::new, |n| n.to_string());
+                        Some((w.get("hwnd")?.as_i64()? as isize, text(w, "title"), app, name))
+                    })
+                    .collect();
+                if !s.open || !s.window_search {
+                    return false;
+                }
+                // Windows change (titles do all the time): the choice stays where it is.
+                let sel = s.selected;
+                search(&mut s);
+                s.selected = sel.min(s.results.len().saturating_sub(1));
+                return true;
+            }
+            _ => return false,
         }
         search(&mut s);
-    });
+        true
+    })
+}
+
+/// The choice moves one result away from the field (or toward it), stopping at the
+/// ends. False: it couldn't move.
+fn step(away: bool) -> bool {
+    S.with(|s| {
+        let mut s = s.borrow_mut();
+        let n = s.results.len();
+        if !s.open || n == 0 {
+            return false;
+        }
+        let to = if away { (s.selected + 1).min(n - 1) } else { s.selected.saturating_sub(1) };
+        let moved = to != s.selected;
+        s.selected = to;
+        moved
+    })
 }
 
 /// What a key did.
@@ -473,14 +536,13 @@ impl LauncherWidget {
 
 impl Widget for LauncherWidget {
     fn keys(&self) -> &'static [&'static str] {
-        &["launcher:apps", "launcher:pinned", "clipboard"]
+        &["launcher:apps", "launcher:pinned", "clipboard", "tasks"]
     }
     fn tooltip(&self) -> Option<String> {
         (!self.searching()).then(|| "Search apps".into())
     }
     fn data(&mut self, key: &str, v: &Value) -> bool {
-        take_list(key, v);
-        true
+        take_list(key, v)
     }
     fn wake(&self) -> Option<Instant> {
         self.searching().then_some(self.beat)
@@ -568,6 +630,9 @@ pub struct LauncherPanel {
     armed: Option<(Hit, Instant)>,
     /// Its own field's caret's next blink.
     beat: Instant,
+    /// On a bottom surface (the list grows up from the field); the wheel's part notch.
+    bottom: bool,
+    wheel_left: f32,
 }
 
 const ROW_H: f32 = 34.0;
@@ -641,6 +706,8 @@ impl LauncherPanel {
             hovered: None,
             armed: None,
             beat: Instant::now(),
+            bottom: false,
+            wheel_left: 0.0,
         }
     }
 
@@ -811,16 +878,19 @@ impl LauncherPanel {
 
 impl Panel for LauncherPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["appIcons", "launcher:apps", "launcher:pinned", "launcher:user", "clipboard"]
+        &["appIcons", "taskIcons", "launcher:apps", "launcher:pinned", "launcher:user", "clipboard", "tasks"]
     }
     fn data(&mut self, key: &str, v: &Value) -> bool {
         match key {
-            "appIcons" => {
+            // Results' icons by id; the open windows' apps' (Tasks') as "task:<app>".
+            "appIcons" | "taskIcons" => {
+                let prefix = if key == "taskIcons" { "task:" } else { "" };
                 if let Some(map) = v.as_object() {
                     for (id, icon) in map {
-                        if !self.icons.contains_key(id) {
+                        let id = format!("{prefix}{id}");
+                        if !self.icons.contains_key(&id) {
                             if let Some(px) = decode(icon) {
-                                self.pixels.insert(id.clone(), px);
+                                self.pixels.insert(id, px);
                             }
                         }
                     }
@@ -839,7 +909,7 @@ impl Panel for LauncherPanel {
                     self.user_pic = None;
                 }
             }
-            _ => take_list(key, v),
+            _ => return take_list(key, v),
         }
         true
     }
@@ -865,6 +935,7 @@ impl Panel for LauncherPanel {
     }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         let g = cx.gfx;
+        self.bottom = cx.look.bottom;
         for (id, px) in self.pixels.drain() {
             if let Some(i) = AppIcon::new(g, &px, Style::Color) {
                 self.icons.insert(id, i);
@@ -916,9 +987,15 @@ impl Panel for LauncherPanel {
         let body = cx.body();
         let small = cx.secondary(12.0);
         let lh = g.text("Ag", &body).map_or(16.0, |t| t.height);
+        // Each result: its id, name and the key its icon is under (an open window's: its app's).
         let (results, selected, query) = S.with(|s| {
             let s = s.borrow();
-            (s.results.iter().map(|&i| entry(&s, i)).collect::<Vec<_>>(), s.selected, s.query.clone())
+            let row = |i: usize| {
+                let (id, name) = entry(&s, i);
+                let icon = if (WIN..CALC).contains(&i) { format!("task:{}", s.windows[i - WIN].2) } else { id.clone() };
+                (id, name, icon)
+            };
+            (s.results.iter().map(|&i| row(i)).collect::<Vec<_>>(), s.selected, s.query.clone())
         });
         let lay = self.lay(g, cx, results.len(), !query.trim().is_empty() && results.is_empty(), lh);
         let (lx, lw) = (x + lay.list_x, lay.list_w);
@@ -932,7 +1009,7 @@ impl Panel for LauncherPanel {
                 }
                 Part::Line => g.fill_rect(rect(lx, top, lw, 1.0), white(0.08 * alpha)),
                 Part::Row(i) => {
-                    let (id, name) = &results[i];
+                    let (id, name, icon_key) = &results[i];
                     if i == selected {
                         g.fill_round(rect(lx, top, lw, ROW_H), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
                     }
@@ -948,12 +1025,15 @@ impl Panel for LauncherPanel {
                         let f = Font::icons(16.0);
                         let w = g.measure(gl, &f);
                         g.text_at(gl, &f, lx + 8.0 + (22.0 - w) / 2.0, cy, fg);
-                    } else if let Some(icon) = self.icons.get(id) {
+                    } else if let Some(icon) = self.icons.get(icon_key) {
                         icon.draw(g, lx + 8.0, top + 6.0, 22.0, alpha);
                     }
-                    // What it is, dimmed at the end: a Settings page, the sum's answer (copied).
+                    // What it is, dimmed at the end: a Settings page, the sum's answer (copied),
+                    // an open window.
                     let tag = if id.starts_with("ms-settings:") {
                         "Settings"
+                    } else if id.starts_with("win:") {
+                        "Switch to"
                     } else if id.starts_with("calc:") {
                         "Copy"
                     } else if id.starts_with("clip:") {
@@ -1025,8 +1105,9 @@ impl Panel for LauncherPanel {
         let h = at.and_then(|p| self.hit(p));
         let mut changed = h != self.hovered;
         self.hovered = h;
-        // Over a row: it becomes the chosen one.
-        if let Some(Hit::Row(i)) = h {
+        // Onto a row: it becomes the chosen one (moving within it leaves a choice the
+        // wheel or the keys made).
+        if let (Some(Hit::Row(i)), true) = (h, changed) {
             S.with(|s| {
                 let mut s = s.borrow_mut();
                 if s.selected != i {
@@ -1045,7 +1126,7 @@ impl Panel for LauncherPanel {
                     let s = s.borrow();
                     s.results.get(i).map(|&k| entry(&s, k).0)
                 });
-                MENU.with(|m| *m.borrow_mut() = id.filter(|id| !id.starts_with("calc:") && !id.starts_with("clip:")));
+                MENU.with(|m| *m.borrow_mut() = id.filter(|id| !id.starts_with("calc:") && !id.starts_with("clip:") && !id.starts_with("win:")));
             }
             return Reply::None;
         }
@@ -1067,9 +1148,27 @@ impl Panel for LauncherPanel {
             None => Reply::None,
         }
     }
+    fn wheel(&mut self, _at: (f32, f32), notches: f32) -> Reply {
+        // Each whole notch moves the choice one result: away from the field when rolled
+        // that way (down under a top bar's field, up over a bottom dock's). Touchpads
+        // send parts of a notch: they add up.
+        self.wheel_left += notches;
+        let mut moved = false;
+        while self.wheel_left.abs() >= 1.0 {
+            let up = self.wheel_left > 0.0;
+            self.wheel_left -= if up { 1.0 } else { -1.0 };
+            moved |= step(up == self.bottom);
+        }
+        if moved {
+            Reply::Redraw
+        } else {
+            Reply::None
+        }
+    }
     fn closed(&mut self) {
         self.hovered = None;
         self.armed = None;
+        self.wheel_left = 0.0;
     }
     fn tooltip(&self) -> Option<String> {
         match self.hovered? {
@@ -1091,10 +1190,16 @@ pub fn take_menu() -> Option<String> {
     MENU.with(|m| m.borrow_mut().take())
 }
 
-/// Starts an app (or copies the sum's answer) and closes the launcher.
+/// Starts an app (copies the sum's answer, switches to the window) and closes the launcher.
 pub fn launch(id: String) -> Act {
     if let Some(v) = id.strip_prefix("calc:").map(String::from) {
         return Act::call(move |_| crate::win::set_clipboard_text(&v)).then(Act::Launcher { open: false, refocus: false });
+    }
+    if let Some(h) = id.strip_prefix("win:").and_then(|n| n.parse::<isize>().ok()) {
+        return Act::call(move |_| {
+            let _ = tauri::async_runtime::block_on(crate::providers::tasks::task_activate(h, false));
+        })
+        .then(Act::Launcher { open: false, refocus: false });
     }
     // A clipboard item: the launcher hands the focus back, then it's pasted there.
     if let Some(clip) = id.strip_prefix("clip:").and_then(|n| n.parse::<u64>().ok()) {

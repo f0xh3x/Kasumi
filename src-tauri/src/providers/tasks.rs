@@ -393,7 +393,9 @@ fn run(app: AppHandle) {
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             if msg.hwnd.is_invalid() && msg.message == windows::Win32::UI::WindowsAndMessaging::WM_TIMER {
                 ticks = ticks.wrapping_add(1);
-                if (DIRTY.swap(false, Ordering::Relaxed) || ticks.is_multiple_of(25)) && super::placed(&app, "tasks") {
+                // Kept while the widget is on a bar, or the launcher finds open windows.
+                let wanted = || super::placed(&app, "tasks") || super::widget_opts(&app, "launcher").get("windows").and_then(|v| v.as_bool()) == Some(true);
+                if (DIRTY.swap(false, Ordering::Relaxed) || ticks.is_multiple_of(25)) && wanted() {
                     scan(&app);
                 }
                 continue;

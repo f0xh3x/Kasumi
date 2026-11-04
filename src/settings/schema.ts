@@ -454,6 +454,13 @@ export const pages: Page[] = [
           },
           {
             kind: "toggle",
+            label: "Open windows",
+            help: "Your open windows show among the results, found by their title or their app's name; Enter switches to one.",
+            path: ["widgets", "launcher", "windows"],
+            default: false,
+          },
+          {
+            kind: "toggle",
             label: "Pinned apps",
             help: "Before you type, the launcher lists the apps pinned to Windows' Start menu (as many as Results shown).",
             path: ["widgets", "launcher", "pinned"],
