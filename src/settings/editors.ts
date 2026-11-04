@@ -65,31 +65,6 @@ export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "batteries", label: "Batteries", icon: 0xe83f },
 ];
 
-/** The Widgets page section holding a widget's settings. */
-const SECTION: Record<string, string> = {
-  clock: "Clock",
-  temps: "PC temps",
-  weather: "Weather",
-  media: "Media",
-  tray: "Tray",
-  language: "Keyboard language",
-  menu: "Menu",
-  tasks: "Tasks",
-  quick: "Quick settings",
-  buttons: "Buttons",
-  launcher: "Launcher",
-  focus: "Focused app",
-  netspeed: "Network speed",
-  disk: "Disk usage",
-  privacy: "Privacy",
-  claude: "Claude Code",
-  clipboard: "Clipboard",
-  notifications: "Notifications",
-  workspaces: "Workspaces (Komorebi)",
-  batteries: "Batteries",
-};
-const widgetSection = (id: string) => SECTION[id.split("#")[0]] ?? "";
-
 /** A placed widget's type: instances are named `<type>#<n>`. */
 const typeOf = (id: string) => id.split("#")[0];
 
@@ -294,6 +269,68 @@ function layoutsOps(cfg: Cfg, changed: Record<string, LayoutCfg>): Op[] {
     }
   });
 }
+
+/** Where a widget type is placed (the global layouts of the bars that are on): "Top bar,
+ *  right" and so on, "· own notch" when it has one. */
+export function placements(cfg: Cfg, type: string): string[] {
+  const out: string[] = [];
+  for (const s of shownSurfaces(cfg)) {
+    const l = surfaceLayout(cfg, s);
+    for (const side of SIDES) {
+      for (const n of l[side]) {
+        if (typeOf(n) !== type || !enabled(cfg, n)) continue;
+        out.push(`${surfaceName(s)}, ${side === "center" ? "centre" : side}${l.notch.includes(n) ? " · own notch" : ""}`);
+      }
+    }
+  }
+  return out;
+}
+
+/** A widget type is on a bar somewhere. */
+export const isPlaced = (cfg: Cfg, type: string): boolean => placements(cfg, type).length > 0;
+
+/** A widget page's header: where it is (and a way to the layout), or that it isn't on a
+ *  bar, with buttons putting it on one (the right of a bar, the middle of a dock). */
+const widgetHeader: Editor = (ctx) => {
+  const type = ctx.arg!;
+  const where = placements(ctx.cfg, type);
+  const head = $("div", "widget-head");
+  const toLayout = $("button", "button", "Edit the layout");
+  toLayout.addEventListener("click", () => ctx.goto("layout", ""));
+  if (where.length) {
+    head.append(...where.map((w) => $("span", "widget-where", w)), toLayout);
+    return head;
+  }
+  // The launcher works without its icon: it opens from the middle of a bar or dock.
+  const launcher = type === "launcher";
+  const off = launcher ? "No search icon on a bar: it opens from the middle of the dock or bar" : enabled(ctx.cfg, type) ? "Not on a bar yet" : "Switched off";
+  head.append($("span", "widget-where off", off));
+  for (const s of shownSurfaces(ctx.cfg)) {
+    if (!ctx.cfg.surfaces) break;
+    const b = $("button", "button", launcher ? `Add its icon to the ${surfaceName(s).toLowerCase()}` : `Add to the ${surfaceName(s).toLowerCase()}`);
+    b.addEventListener("click", () => {
+      const l = surfaceLayout(ctx.cfg, s);
+      const side: Side = ctx.cfg.surfaces?.[s]?.mode === "dock" ? "center" : "right";
+      l[side].push(type);
+      ctx.saveMany([...LISTS.map((k) => ({ path: ["surfaces", s, k], value: l[k] })), { path: ["widgets", type, "enabled"], value: true }]);
+    });
+    head.append(b);
+  }
+  return head;
+};
+
+/** Every widget as a card (the ones on a bar first, saying where): a click opens its page. */
+const widgetCards: Editor = (ctx) => {
+  const grid = $("div", "widget-cards");
+  const cards = WIDGETS.map((w) => ({ ...w, where: placements(ctx.cfg, w.id) }));
+  cards.sort((a, b) => Number(!a.where.length) - Number(!b.where.length));
+  for (const w of cards) {
+    const card = $("button", `widget-card${w.where.length ? "" : " off"}`, glyph(w.icon), $("span", "widget-card-text", $("b", "", w.label), $("small", "", w.where[0] ?? "Not on a bar")));
+    card.addEventListener("click", () => ctx.goto(`w-${w.id}`, ""));
+    grid.append(card);
+  }
+  return grid;
+};
 
 /** Global / per-monitor selector at the top of the Widgets page. */
 const scopeSelector: Editor = (ctx) => {
@@ -598,7 +635,7 @@ const placement: Editor = (ctx) => {
       chip.dataset.id = id;
       // A click (not a drag) opens the widget's own settings.
       chip.title = `${w.label} settings`;
-      chip.addEventListener("click", () => ctx.goto("widget-settings", widgetSection(id)));
+      chip.addEventListener("click", () => ctx.goto(`w-${typeOf(id)}`, ""));
       chip.addEventListener("dragstart", (e) => {
         dragging = id;
         e.dataTransfer?.setData("text/plain", id);
@@ -1980,6 +2017,8 @@ export const editors: Record<string, Editor> = {
   scopeSelector,
   monitorToggles,
   placement,
+  widgetHeader,
+  widgetCards,
   clockFormat,
   weatherLocation,
   tempsSensors,

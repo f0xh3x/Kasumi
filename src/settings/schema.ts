@@ -2,7 +2,7 @@
 // listed once, with where it lives in config.toml, its control and default.
 // Adding a feature's settings = adding entries here.
 
-import { CHIP_LEGEND, ownsLayout, scope } from "./editors";
+import { CHIP_LEGEND, ownsLayout, scope, WIDGETS } from "./editors";
 
 export type Path = (string | number)[];
 export type Cfg = Record<string, any>;
@@ -106,6 +106,10 @@ export interface Section {
   badge?: (cfg: Cfg) => string | null;
   /** Icons explained on the right of the title: [glyph, meaning]. */
   legend?: [number, string][];
+  /** A widget page's tab it's on (Content, Look, Motion); none: above the tabs. */
+  tab?: string;
+  /** A card pointing to another page (its settings live there): [button, page]. */
+  link?: [string, string];
 }
 
 export interface Page {
@@ -544,7 +548,7 @@ const sources: Page[] = [
         title: "Launcher",
         collapsible: true,
         icon: 0xe721,
-        help: "A search icon that becomes the launcher's search field. These settings are for the launcher however it opens; its hotkey and the Start menu option are under General.",
+        help: "For the launcher however it opens: from its search icon on a bar, the Windows key or its hotkey.",
         fields: [
           {
             kind: "select",
@@ -1962,6 +1966,51 @@ function part(page: string, title: string, names: string[], extra: Partial<Secti
   return { ...rest, fields, ...extra };
 }
 
+/** The widgets page's sections, by widget type (as the page titled them). */
+const WIDGET_SECTION: Record<string, string> = {
+  language: "Keyboard language",
+  workspaces: "Workspaces (Komorebi)",
+};
+
+/** A widget's settings that are about how it looks: they go on its Look tab. */
+const LOOK_SETTINGS = new Set([
+  "Look",
+  "Before the title",
+  "Dim the screen",
+  "Calendar look",
+  "Day and year progress",
+  "Month name",
+  "Month name size",
+  "Year after the month",
+  "Month arrows",
+  "Week numbers",
+  "Day names",
+  "Days of the months either side",
+  "Fade past days",
+  "Dim weekends",
+  "Today",
+]);
+
+/** A page per widget: where it is (or a way onto a bar), then its settings on three
+ *  tabs: Content (what it shows and does), Look (its look, fonts, accent), Motion (its
+ *  effects). The launcher's Start menu settings join its Content. */
+function widgetPage(w: { id: string; label: string; icon: number }): Page {
+  const title = WIDGET_SECTION[w.id] ?? w.label;
+  const own = source("widget-settings").sections.find((x) => x.title === title);
+  const label = (f: Field) => ("label" in f ? f.label : "");
+  const look = own?.fields.filter((f) => LOOK_SETTINGS.has(label(f))) ?? [];
+  const content = own?.fields.filter((f) => !LOOK_SETTINGS.has(label(f))) ?? [];
+  const fonts = source("appearance").sections.find((x) => x.group === "Per widget" && x.fields.some((f) => f.kind === "custom" && f.editor === `fontPicker:${w.id}`));
+  const motion = source("animation").sections.find((x) => x.group === "Per widget" && x.fields.some((f) => f.kind === "custom" && f.editor.startsWith(`animWidget:${w.id}:`)));
+  const sections: Section[] = [{ title: "", fields: [{ kind: "custom", editor: `widgetHeader:${w.id}` }] }];
+  if (w.id === "launcher") sections.push({ ...sec("general", "Launcher", { title: "Start menu" }), tab: "Content" });
+  if (content.length) sections.push({ title: "Settings", help: own?.help, fields: content, tab: "Content" });
+  if (look.length) sections.push({ title: "Its look", fields: look, tab: "Look" });
+  if (fonts) sections.push({ title: "Text and accent", fields: fonts.fields, tab: "Look" });
+  if (motion) sections.push({ title: "Effects", fields: motion.fields, tab: "Motion" });
+  return { id: `w-${w.id}`, label: w.label, icon: w.icon, sections };
+}
+
 export const pages: Page[] = [
   {
     id: "home",
@@ -2009,7 +2058,8 @@ export const pages: Page[] = [
   },
   { ...source("notches") },
   // Widgets
-  { ...source("widget-settings"), label: "All widgets" },
+  { id: "widget-settings", label: "All widgets", icon: 0xeca5, sections: [{ title: "", fields: [{ kind: "custom", editor: "widgetCards" }] }] },
+  ...WIDGETS.map(widgetPage),
   // Look
   {
     id: "colors",
@@ -2031,16 +2081,16 @@ export const pages: Page[] = [
     id: "text",
     label: "Text",
     icon: 0xe8d2,
-    sections: [part("appearance", "Colors", ["<fontPicker>", "<fontPicker::secondary>", "Text size"], { title: "Fonts" }), ...all("appearance", (x) => x.group === "Per widget")],
+    sections: [part("appearance", "Colors", ["<fontPicker>", "<fontPicker::secondary>", "Text size"], { title: "Fonts", help: "For every widget; one widget's own font is on its page (Widgets)." })],
   },
-  { ...source("animation"), id: "motion", label: "Motion" },
+  { ...source("animation"), id: "motion", label: "Motion", sections: all("animation", (x) => x.group !== "Per widget") },
   // Windows parts
   {
     id: "start",
     label: "Start and taskbar",
     icon: 0xe782,
     sections: [
-      sec("general", "Launcher", { title: "Start menu and launcher" }),
+      { title: "Start menu", help: "The Windows key, the hotkey and fullscreen apps are with the launcher's other settings.", fields: [], link: ["Launcher settings", "w-launcher"] },
       part("general", "Behaviour", ["Hide the Windows taskbar", "<taskbarGuide>"], { title: "Taskbar" }),
     ],
   },
@@ -2073,7 +2123,7 @@ export interface Area {
 export const areas: Area[] = [
   { id: "home", label: "Home", icon: 0xe80f, pages: ["home"] },
   { id: "bars", label: "Bars and dock", icon: 0xe71d, pages: ["layout", "opening", "size", "notches"] },
-  { id: "widgets", label: "Widgets", icon: 0xeca5, pages: ["widget-settings"] },
+  { id: "widgets", label: "Widgets", icon: 0xeca5, pages: ["widget-settings", ...WIDGETS.map((w) => `w-${w.id}`)] },
   { id: "look", label: "Look", icon: 0xe790, pages: ["colors", "shape", "text", "motion"] },
   { id: "windows", label: "Windows parts", icon: 0xe7c4, pages: ["start", "switchers", "osd", "notifications", "context-menu"] },
   { id: "kasumi", label: "Kasumi", icon: 0, pages: ["presets", "about"] },

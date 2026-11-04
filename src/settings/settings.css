@@ -101,6 +101,22 @@ body.maximized { border: 0; border-radius: 0; }
 .nav-logo { display: inline-flex; width: 15px; justify-content: center; }
 .nav-logo svg { width: 15px; height: 15px; fill: currentColor; }
 .page-crumb { color: var(--faint); font-size: 12px; margin-bottom: 2px; }
+/* A widget page's tabs. */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 16px; }
+.tab { padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--dim); font: inherit; font-weight: 600; cursor: pointer; }
+.tab:hover { color: var(--fg); }
+.tab.active { color: var(--fg); border-bottom-color: var(--accent, #fff); }
+/* Where a widget is, or buttons putting it on a bar. */
+.widget-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -6px 0 14px; }
+.widget-where { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px; background: var(--raised); color: var(--fg); }
+.widget-where.off { background: transparent; color: var(--faint); padding-left: 0; }
+/* All widgets: a card each. */
+.widget-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.widget-card { display: flex; align-items: center; gap: 12px; padding: 14px; border: 0; border-radius: 14px; background: var(--panel); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.widget-card:hover { background: var(--raised); }
+.widget-card.off { color: var(--dim); }
+.widget-card-text { display: flex; flex-direction: column; min-width: 0; }
+.widget-card-text small { color: var(--faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The sidebar's search, and its results' titles (they go to the setting's page). */
 .input.nav-search { width: 100%; box-sizing: border-box; flex: none; margin-bottom: 8px; }
 .nav-search::-webkit-search-cancel-button { filter: invert(1); opacity: 0.5; cursor: pointer; }

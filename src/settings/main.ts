@@ -13,6 +13,7 @@ import {
   migrationOpsV3,
   migrationOpsV4,
   migrationOpsV5,
+  isPlaced,
   openSection,
   scope,
   type Op,
@@ -27,6 +28,9 @@ const VIEW = new URLSearchParams(location.search).get("view");
 if (VIEW) document.body.classList.add(`view-${VIEW}`);
 
 let cfg: Cfg = {};
+/** Each page's open tab (pages with tabs: the widgets'). */
+const tabs: Record<string, string> = {};
+const TAB_ORDER = ["Content", "Look", "Motion"];
 /** A page's id now (older names lead to where their settings went), if it exists. */
 const pageId = (want: string | null): string | null => {
   const id = want ? (pageAliases[want] ?? want) : null;
@@ -270,9 +274,40 @@ function renderPage(page: Page): HTMLElement {
   const content = $("main", "content");
   if (area.pages.length > 1) content.append($("div", "page-crumb", area.label));
   content.append($("h1", "page-title", area.pages.length > 1 ? page.label : area.label));
+  // Tabs: the sections above them (no tab) always show, then the open tab's.
+  const names = TAB_ORDER.filter((t) => page.sections.some((x) => x.tab === t && x.fields.some((f) => control(f))));
+  const tab = names.includes(tabs[page.id]) ? tabs[page.id] : names[0];
+  let tabBar: HTMLElement | null = null;
+  if (names.length > 1) {
+    tabBar = $("div", "tabs");
+    tabBar.setAttribute("role", "tablist");
+    for (const t of names) {
+      const b = $("button", `tab${t === tab ? " active" : ""}`, t);
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(t === tab));
+      b.addEventListener("click", () => {
+        tabs[page.id] = t;
+        render();
+      });
+      tabBar.append(b);
+    }
+  }
   let group: HTMLElement | null = null;
   let last: HTMLElement | null = null;
   for (const s of page.sections) {
+    if (s.tab && s.tab !== tab) continue;
+    if (s.tab && tabBar) {
+      content.append(tabBar);
+      tabBar = null;
+    }
+    // A pointer to where these settings live.
+    if (s.link) {
+      const go = $("button", "button", `${s.link[0]} ›`);
+      go.addEventListener("click", () => goto(s.link![1], ""));
+      content.append($("section", "card", $("h2", "card-title", s.title), ...(s.help ? [$("p", "card-help", s.help)] : []), go));
+      group = null;
+      continue;
+    }
     // Widgets page: some sections belong to the Global view, some to a monitor's.
     if (s.scope === "global" && scope.monitor) continue;
     if (s.scope === "monitor" && !scope.monitor) continue;
@@ -292,6 +327,11 @@ function renderPage(page: Page): HTMLElement {
       continue;
     }
     group = null;
+    // Untitled: just its content (a widget page's header, the widget cards).
+    if (!s.title) {
+      content.append(...rows);
+      continue;
+    }
     const title = $("h2", "card-title", s.title);
     const badge = s.badge?.(cfg);
     if (badge) title.append($("span", "card-badge", badge));
@@ -404,6 +444,8 @@ function render(): void {
     for (const id of a.pages) {
       const p = pages.find((x) => x.id === id);
       if (!p) continue;
+      // Widgets: the ones on a bar (and the open one).
+      if (id.startsWith("w-") && id !== current && !isPlaced(cfg, id.slice(2))) continue;
       const sub = $("button", `nav-sub${id === current && !query ? " active" : ""}`, p.label);
       sub.setAttribute("data-page", id);
       sub.addEventListener("click", () => open(id));
