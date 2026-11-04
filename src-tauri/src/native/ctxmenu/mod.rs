@@ -1342,7 +1342,7 @@ fn bar_entries(presets: Vec<(String, bool)>) -> Vec<shell::Entry> {
     presets.push(app_item("Manage presets…", "page:presets", '\u{E713}'));
     let mut v = vec![
         app_item("Kasumi settings", "settings", '\u{E713}'),
-        app_item("Edit this bar…", "page:widgets", '\u{E70F}'),
+        app_item("Edit this bar…", "page:layout", '\u{E70F}'),
         app_folder("Presets", "presets", '\u{E790}', presets),
         shell::Entry::separator(),
         app_item("Task Manager", "taskmgr", '\u{E9D9}'),

@@ -116,7 +116,9 @@ export interface Page {
   sections: Section[];
 }
 
-export const pages: Page[] = [
+/** The settings as they were first written down, page by page: the places below are
+ *  put together from their sections. */
+const sources: Page[] = [
   {
     id: "general",
     label: "General",
@@ -1929,6 +1931,165 @@ export const pages: Page[] = [
     ],
   },
 ];
+
+// --- The places ----------------------------------------------------------------------
+// The sidebar holds six places; each has one or more pages, put together from the
+// sections above (a section can be split by its settings' names).
+
+const source = (page: string): Page => sources.find((p) => p.id === page)!;
+
+/** A section of a page above, by its title. */
+function sec(page: string, title: string, extra: Partial<Section> = {}): Section {
+  const found = source(page).sections.find((x) => x.title === title);
+  if (!found) throw new Error(`settings: no section "${title}" on ${page}`);
+  return { ...found, ...extra };
+}
+
+/** Every section of a page above (that `keep` keeps). */
+const all = (page: string, keep: (s: Section) => boolean = () => true): Section[] => source(page).sections.filter(keep);
+
+/** Part of a section: the settings named (custom editors as "<editor>"), as a section of its own. */
+function part(page: string, title: string, names: string[], extra: Partial<Section> & { title: string }): Section {
+  const from = sec(page, title);
+  const name = (f: Field) => (f.kind === "custom" ? `<${f.editor}>` : f.label);
+  const fields = names.map((n) => {
+    const f = from.fields.find((x) => name(x) === n);
+    if (!f) throw new Error(`settings: no "${n}" in ${page} › ${title}`);
+    return f;
+  });
+  const { collapsible, attach, icon, group, ...rest } = from;
+  void collapsible, attach, icon, group;
+  return { ...rest, fields, ...extra };
+}
+
+export const pages: Page[] = [
+  {
+    id: "home",
+    label: "Home",
+    icon: 0xe80f,
+    sections: [
+      sec("general", "Startup"),
+      part("general", "Behaviour", ["Hide the Windows taskbar"], { title: "Quick switches" }),
+    ],
+  },
+  // Bars and dock
+  {
+    id: "layout",
+    label: "Layout",
+    icon: 0xe71d,
+    sections: [
+      sec("widgets", "Layout for", { title: "Which bar" }),
+      sec("widgets", "Bar"),
+      part("widgets", "Bar settings", ["<surfaceStyle>"], { title: "Style", scope: "global" }),
+      sec("widgets", "This monitor"),
+      sec("widgets", "Placement"),
+    ],
+  },
+  {
+    id: "opening",
+    label: "Opening",
+    icon: 0xe8b0,
+    sections: [
+      sec("widgets", "Layout for", { title: "Which bar" }),
+      part("widgets", "Bar settings", ["Reserve space", "Hot corner: left", "Hot corner: right", "Anywhere along the edge", "Hot corner size", "Edge zone size"], { title: "Hot corners and space", scope: "global" }),
+      sec("behaviour", "Opening and closing"),
+      part("general", "Behaviour", ["Hide in fullscreen"], { title: "Fullscreen apps" }),
+    ],
+  },
+  {
+    id: "size",
+    label: "Size",
+    icon: 0xe740,
+    sections: [
+      sec("widgets", "Layout for", { title: "Which bar" }),
+      part("widgets", "Bar settings", ["Size at rest", "Size when open"], { title: "This bar's size", scope: "global" }),
+      part("appearance", "Bar and panels", ["Bar height", "Side padding", "Gap between widgets"], { title: "Bar" }),
+      sec("appearance", "Bar sizes", { title: "Dock sizes" }),
+    ],
+  },
+  { ...source("notches") },
+  // Widgets
+  { ...source("widget-settings"), label: "All widgets" },
+  // Look
+  {
+    id: "colors",
+    label: "Colours",
+    icon: 0xe790,
+    sections: [part("appearance", "Colors", ["Background tint", "Background", "Tint", "Opacity", "Text", "Secondary text opacity", "Use Windows' accent colour", "Accent", "Accent on widget details", "Warning"], { title: "Colours" })],
+  },
+  {
+    id: "shape",
+    label: "Shape",
+    icon: 0xf156,
+    sections: [
+      sec("appearance", "Notch shape"),
+      part("appearance", "Bar and panels", ["Panel fillet", "Panel corners"], { title: "Panels" }),
+      sec("general", "Screen corners"),
+    ],
+  },
+  {
+    id: "text",
+    label: "Text",
+    icon: 0xe8d2,
+    sections: [part("appearance", "Colors", ["<fontPicker>", "<fontPicker::secondary>", "Text size"], { title: "Fonts" }), ...all("appearance", (x) => x.group === "Per widget")],
+  },
+  { ...source("animation"), id: "motion", label: "Motion" },
+  // Windows parts
+  {
+    id: "start",
+    label: "Start and taskbar",
+    icon: 0xe782,
+    sections: [
+      sec("general", "Launcher", { title: "Start menu and launcher" }),
+      part("general", "Behaviour", ["Hide the Windows taskbar", "<taskbarGuide>"], { title: "Taskbar" }),
+    ],
+  },
+  { ...source("switchers") },
+  {
+    id: "osd",
+    label: "Pop-ups",
+    icon: 0xe7f4,
+    sections: [
+      ...all("osd", (x) => x.title !== "Notifications"),
+      part("general", "Behaviour", ["Tooltips", "Other apps' tooltips too (experimental)"], { title: "Hints" }),
+    ],
+  },
+  { id: "notifications", label: "Notifications", icon: 0xea8f, sections: [sec("osd", "Notifications")] },
+  { ...source("context-menu"), label: "Context menus" },
+  // Kasumi
+  { ...source("presets") },
+  { ...source("about"), label: "Updates and files" },
+];
+
+/** The sidebar's places: each opens its first page; the others show under it while
+ *  it's open. `icon` 0: Kasumi's logo. */
+export interface Area {
+  id: string;
+  label: string;
+  icon: number;
+  pages: string[];
+}
+
+export const areas: Area[] = [
+  { id: "home", label: "Home", icon: 0xe80f, pages: ["home"] },
+  { id: "bars", label: "Bars and dock", icon: 0xe71d, pages: ["layout", "opening", "size", "notches"] },
+  { id: "widgets", label: "Widgets", icon: 0xeca5, pages: ["widget-settings"] },
+  { id: "look", label: "Look", icon: 0xe790, pages: ["colors", "shape", "text", "motion"] },
+  { id: "windows", label: "Windows parts", icon: 0xe7c4, pages: ["start", "switchers", "osd", "notifications", "context-menu"] },
+  { id: "kasumi", label: "Kasumi", icon: 0, pages: ["presets", "about"] },
+];
+
+/** Pages as they were once called (the bar menu, older links), and where they are now. */
+export const pageAliases: Record<string, string> = {
+  general: "home",
+  widgets: "layout",
+  appearance: "colors",
+  animation: "motion",
+  behaviour: "opening",
+};
+
+/** The place a page is in. */
+export const areaOf = (page: string): Area => areas.find((a) => a.pages.includes(page)) ?? areas[0];
 
 /** File Explorer styling (explorer.rs, explorer-tap/): not offered yet (the header's band
  *  isn't right); put it back in `pages` to show it. */

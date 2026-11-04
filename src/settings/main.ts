@@ -19,7 +19,7 @@ import {
 } from "./editors";
 import { $, glyph, row, toggleSwitch } from "./dom";
 import { kasumiLogo } from "../quick-tiles";
-import { pages, type Cfg, type Field, type Page, type Path } from "./schema";
+import { areaOf, areas, pageAliases, pages, type Cfg, type Field, type Page, type Path } from "./schema";
 import { renderNotes, renderSetup, type Host } from "./setup";
 
 /** This window: settings, or the first-time setup / update notes (settings.rs). */
@@ -27,16 +27,19 @@ const VIEW = new URLSearchParams(location.search).get("view");
 if (VIEW) document.body.classList.add(`view-${VIEW}`);
 
 let cfg: Cfg = {};
-let current = (() => {
-  const want = new URLSearchParams(location.search).get("page");
-  return pages.some((p) => p.id === want) ? want! : pages[0].id;
-})();
+/** A page's id now (older names lead to where their settings went), if it exists. */
+const pageId = (want: string | null): string | null => {
+  const id = want ? (pageAliases[want] ?? want) : null;
+  return id && pages.some((p) => p.id === id) ? id : null;
+};
+let current = pageId(new URLSearchParams(location.search).get("page")) ?? pages[0].id;
 /** The sidebar's search: while it holds text, the content lists the settings matching it. */
 let query = "";
 // Opened on a page from elsewhere (the bar menu's Edit this bar...): go there.
 listen<string>("settings-page", (e) => {
-  if (!pages.some((p) => p.id === e.payload)) return;
-  current = e.payload;
+  const id = pageId(e.payload);
+  if (!id) return;
+  current = id;
   render();
   document.querySelector(".content")?.scrollTo(0, 0);
 });
@@ -262,7 +265,11 @@ function control(f: Field): HTMLElement | null {
 // --- Pages -----------------------------------------------------------------------
 
 function renderPage(page: Page): HTMLElement {
-  const content = $("main", "content", $("h1", "page-title", page.label));
+  // A place with several pages: its name over the page's.
+  const area = areaOf(page.id);
+  const content = $("main", "content");
+  if (area.pages.length > 1) content.append($("div", "page-crumb", area.label));
+  content.append($("h1", "page-title", area.pages.length > 1 ? page.label : area.label));
   let group: HTMLElement | null = null;
   let last: HTMLElement | null = null;
   for (const s of page.sections) {
@@ -319,7 +326,9 @@ function renderResults(q: string): HTMLElement {
       const rows = fields.map(control).filter((r): r is HTMLElement => r !== null);
       if (!rows.length) continue;
       found++;
-      const title = $("button", "card-title result-title", `${p.label} › ${s.title}`);
+      const area = areaOf(p.id);
+      const where = area.pages.length > 1 ? `${area.label} › ${p.label}` : area.label;
+      const title = $("button", "card-title result-title", `${where} › ${s.title}`);
       title.addEventListener("click", () => {
         query = "";
         goto(p.id, s.collapsible ? s.title : "");
@@ -335,6 +344,7 @@ function renderResults(q: string): HTMLElement {
 function goto(page: string, section: string): void {
   // (The setup's widget chips: their settings are in the settings window.)
   if (VIEW) return;
+  page = pageId(page) ?? page;
   current = page;
   if (section) openSection(`${page}:${section}`);
   render();
@@ -365,7 +375,8 @@ function render(): void {
     query = search.value.trim();
     const next = query ? renderResults(query) : renderPage(pages.find((p) => p.id === current)!);
     app.querySelector(".content")!.replaceWith(next);
-    nav.querySelectorAll(".nav-item").forEach((n) => n.classList.toggle("active", !query && n.getAttribute("data-page") === current));
+    nav.querySelectorAll("[data-page]").forEach((n) => n.classList.toggle("active", !query && n.getAttribute("data-page") === current));
+    nav.querySelectorAll("[data-area]").forEach((n) => n.classList.toggle("active", !query && n.getAttribute("data-area") === areaOf(current).id));
   });
   search.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && search.value) {
@@ -375,16 +386,29 @@ function render(): void {
     }
   });
   nav.append(search);
-  for (const p of pages) {
-    const item = $("button", `nav-item${p.id === current && !query ? " active" : ""}`, glyph(p.icon), p.label);
-    item.setAttribute("data-page", p.id);
-    item.addEventListener("click", () => {
-      current = p.id;
-      query = "";
-      render();
-      app.querySelector(".content")!.scrollTop = 0;
-    });
+  const open = (id: string) => {
+    current = id;
+    query = "";
+    render();
+    app.querySelector(".content")!.scrollTop = 0;
+  };
+  // The places; the open one shows its pages under it.
+  const here = areaOf(current);
+  for (const a of areas) {
+    const icon = a.icon ? glyph(a.icon) : $("span", "icon nav-logo", kasumiLogo());
+    const item = $("button", `nav-item${a === here && !query ? " active" : ""}`, icon, a.label);
+    item.setAttribute("data-area", a.id);
+    item.addEventListener("click", () => open(a.pages[0]));
     nav.append(item);
+    if (a !== here || a.pages.length < 2) continue;
+    for (const id of a.pages) {
+      const p = pages.find((x) => x.id === id);
+      if (!p) continue;
+      const sub = $("button", `nav-sub${id === current && !query ? " active" : ""}`, p.label);
+      sub.setAttribute("data-page", id);
+      sub.addEventListener("click", () => open(id));
+      nav.append(sub);
+    }
   }
   const page = query ? renderResults(query) : renderPage(pages.find((p) => p.id === current)!);
   app.replaceChildren(nav, page);
