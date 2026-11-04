@@ -189,7 +189,7 @@ run in order by `settings/main.ts` when settings opens.
 | `[sizes]` | `tiny`, `small`, `medium`, `large` |
 | `[surfaces.<id>]`, `[notch]`, `[[monitors]]` | see §4 (`[layout]` is the pre-0.2 form, migrated) |
 | `[context_menu]`, `[bar_menu]`, `[launcher_menu]` | Kasumi's menus and their layouts |
-| `[widgets.<name>]` | `enabled` + widget options (e.g. `clock.format/timers/style/title_align/week_numbers/day_names/other_days/…`, `media.style/mark`, `launcher.style/dim/results/calculator/settings/windows/pinned/clipboard/user/buttons/buttons_position`, `quick.tiles/switches/devices`, `batteries.show/laptop`, `tasks.pins`, `buttons.items`) |
+| `[widgets.<name>]` | `enabled` + widget options (e.g. `clock.format/timers/style/title_align/week_numbers/day_names/other_days/…`, `media.style/mark`, `launcher.style/dim/results/calculator/settings/windows/pinned/clipboard/user/buttons/buttons_position`, `quick.style/tiles/switches/devices`, `weather.style`, `menu.style`, `tasks.style`, `batteries.show/laptop`, `tasks.pins`, `buttons.items`) |
 
 ## 8. OSD, tray, Windows specifics
 

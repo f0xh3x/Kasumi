@@ -461,6 +461,63 @@ impl Gfx {
         read().map(|px| px.chunks_exact(4).map(|p| rgba(p[2] as f32 / 255.0, p[1] as f32 / 255.0, p[0] as f32 / 255.0, 1.0)).collect()).unwrap_or_default()
     }
 
+    /// A linear gradient from `a` at `from` to `b` at `to`.
+    fn linear(&self, from: (f32, f32), to: (f32, f32), a: Color, b: Color) -> Option<windows::Win32::Graphics::Direct2D::ID2D1LinearGradientBrush> {
+        use windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP;
+        use windows::Win32::Graphics::Direct2D::*;
+        let stops = [D2D1_GRADIENT_STOP { position: 0.0, color: a }, D2D1_GRADIENT_STOP { position: 1.0, color: b }];
+        unsafe {
+            let coll = self.rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP).ok()?;
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: Vector2 { X: from.0, Y: from.1 }, endPoint: Vector2 { X: to.0, Y: to.1 } };
+            self.rt.CreateLinearGradientBrush(&props, None, &coll).ok()
+        }
+    }
+
+    /// Fills a shape (path commands) with a gradient from `a` at `from` to `b` at `to`.
+    pub fn fill_path_gradient(&self, cmds: &[Cmd], from: (f32, f32), to: (f32, f32), a: Color, b: Color) {
+        let (Ok(geom), Some(brush)) = (self.path(cmds, None), self.linear(from, to, a, b)) else { return };
+        unsafe { self.rt.FillGeometry(&geom, &brush, None::<&windows::Win32::Graphics::Direct2D::ID2D1Brush>) }
+    }
+
+    /// Fills a rounded rectangle with a gradient from its left (`a`) to its right (`b`).
+    pub fn fill_round_gradient(&self, r: D2D_RECT_F, radius: f32, a: Color, b: Color) {
+        use windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT;
+        let Some(brush) = self.linear((r.left, r.top), (r.right, r.top), a, b) else { return };
+        unsafe { self.rt.FillRoundedRectangle(&D2D1_ROUNDED_RECT { rect: r, radiusX: radius, radiusY: radius }, &brush) }
+    }
+
+    /// Strokes a line through path commands, left open (round ends; `Z` is ignored).
+    pub fn stroke_path(&self, cmds: &[Cmd], width: f32, c: Color) {
+        let v = |p: &Pt| Vector2 { X: p.0 as f32, Y: p.1 as f32 };
+        unsafe {
+            let Ok(geom) = self.d2d.CreatePathGeometry() else { return };
+            let Ok(sink) = geom.Open() else { return };
+            let mut open = false;
+            for cmd in cmds {
+                match cmd {
+                    Cmd::M(p) => {
+                        if open {
+                            sink.EndFigure(D2D1_FIGURE_END_OPEN);
+                        }
+                        sink.BeginFigure(v(p), D2D1_FIGURE_BEGIN_HOLLOW);
+                        open = true;
+                    }
+                    Cmd::L(p) => sink.AddLine(v(p)),
+                    Cmd::C(a, b, p) => sink.AddBezier(&D2D1_BEZIER_SEGMENT { point1: v(a), point2: v(b), point3: v(p) }),
+                    Cmd::Z => {}
+                }
+            }
+            if open {
+                sink.EndFigure(D2D1_FIGURE_END_OPEN);
+            }
+            if sink.Close().is_err() {
+                return;
+            }
+            self.brush.SetColor(&c);
+            self.rt.DrawGeometry(&geom, &self.brush, width, &self.round_caps);
+        }
+    }
+
     /// A soft glow: an ellipse of colour fading out from its centre.
     pub fn glow(&self, cx: f32, cy: f32, rx: f32, ry: f32, c: Color) {
         use windows::Win32::Graphics::Direct2D::Common::D2D1_GRADIENT_STOP;

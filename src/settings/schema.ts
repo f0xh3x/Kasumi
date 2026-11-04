@@ -402,6 +402,19 @@ export const pages: Page[] = [
           { kind: "custom", editor: "weatherLocation" },
           {
             kind: "select",
+            label: "Look",
+            help: "How its panel shows the weather.",
+            path: ["widgets", "weather", "style"],
+            default: "",
+            options: [
+              { value: "", label: "Classic (the conditions and the next hours or days)" },
+              { value: "sky", label: "Sky (coloured like the sky outside; what is coming)" },
+              { value: "curve", label: "Curve (the next 12 hours as a line)" },
+              { value: "week", label: "Week (each day low to high on one scale)" },
+            ],
+          },
+          {
+            kind: "select",
             label: "Units",
             path: ["widgets", "weather", "units"],
             default: "metric",
@@ -845,6 +858,19 @@ export const pages: Page[] = [
           { kind: "custom", editor: "quickIcon" },
           {
             kind: "select",
+            label: "Look",
+            help: "How its panel lays out. The wheel over a slider moves it in every look.",
+            path: ["widgets", "quick", "style"],
+            default: "",
+            options: [
+              { value: "", label: "Classic (sliders side by side, a row of tiles)" },
+              { value: "blocks", label: "Blocks (two-line tiles, thick sliders)" },
+              { value: "rings", label: "Rings (volume, brightness and battery as rings; round buttons)" },
+              { value: "list", label: "List (a row per setting, switches at the end)" },
+            ],
+          },
+          {
+            kind: "select",
             label: "Battery shows",
             help: "Beside its icon in the bar.",
             path: (cfg) => (["auto", "battery", undefined].includes(cfg.widgets?.quick?.icon) ? ["widgets", "quick", "battery_style"] : null),
@@ -934,6 +960,18 @@ export const pages: Page[] = [
         icon: 0xe737,
         help: "Open apps. Click: switch to it (again: minimize). Middle click: close. Right click: its windows, new window, close all.",
         fields: [
+          {
+            kind: "select",
+            label: "Look",
+            help: "Window previews on hover are under 'Hovering an app with several windows'.",
+            path: ["widgets", "tasks", "style"],
+            default: "",
+            options: [
+              { value: "", label: "Icons (dots for windows, a line under the app in front)" },
+              { value: "labels", label: "Labels (each app a pill with its name and window count)" },
+              { value: "dots", label: "Dots (a mark per app while the dock rests; icons as it opens)" },
+            ],
+          },
           {
             kind: "select",
             label: "Windows from",
@@ -1094,7 +1132,22 @@ export const pages: Page[] = [
         title: "Menu",
         collapsible: true,
         icon: 0xe700,
-        fields: [{ kind: "custom", editor: "menuItems" }],
+        fields: [
+          {
+            kind: "select",
+            label: "Look",
+            help: "Your items stay the same in every look.",
+            path: ["widgets", "menu", "style"],
+            default: "",
+            options: [
+              { value: "", label: "List (icons and names, lines between groups)" },
+              { value: "grid", label: "Grid (places as tiles, power actions as a row under them)" },
+              { value: "strip", label: "Strip (icons in one row, the name under the pointer)" },
+              { value: "greeting", label: "Greeting (a hello, the date and time on, then the list with shortcuts)" },
+            ],
+          },
+          { kind: "custom", editor: "menuItems" },
+        ],
       },
     ],
   },

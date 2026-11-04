@@ -4,7 +4,10 @@
 //! a box that slides down from under the volume row over battery, network and the
 //! tiles (they fade out under it): the panel only grows if the list is longer than
 //! what it covers. The Power tile swaps the tiles for
-//! power ones (back, lock, sign out, hibernate, restart, shut down).
+//! power ones (back, lock, sign out, hibernate, restart, shut down). Its look
+//! ([widgets.quick] style): that, or blocks (two-line tiles, thick sliders), rings
+//! (volume, brightness and battery as rings; round icon buttons) or a list (a row per
+//! setting). The wheel over a slider moves it in every look.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -14,7 +17,7 @@ use serde_json::Value;
 use super::icon::{decode, AppIcon, Style};
 use super::shell::{battery_glyph, network_glyph, volume_glyph};
 use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply};
-use crate::native::gfx::{rect, white, with_alpha, Color, Font, Gfx};
+use crate::native::gfx::{rect, rgba, white, with_alpha, Color, Font, Gfx};
 
 /// Tiles: id -> (label, glyph, what it opens) (src/quick-tiles.ts).
 const TILES: [(&str, &str, &str, &str); 17] = [
@@ -72,6 +75,15 @@ enum Slider {
     App(u32),
 }
 
+/// The panel's look ([widgets.quick] style).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum QStyle {
+    Classic,
+    Blocks,
+    Rings,
+    List,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum List {
     Outputs,
@@ -94,6 +106,9 @@ enum Hit {
 
 pub struct QuickPanel {
     opts: Opts,
+    style: QStyle,
+    /// The sliders' part's height (with the gap under it), as last measured.
+    sliders: f32,
     system: Value,
     outputs: Vec<(String, String, bool)>,
     apps: Vec<(u32, String, f64, bool)>,
@@ -130,12 +145,25 @@ pub struct QuickPanel {
 }
 
 const W: f32 = 540.0;
+/// The other looks' width; Blocks' sliders; Rings' size; a list row; a block.
+const NARROW: f32 = 300.0;
+const FAT_H: f32 = 34.0;
+const RING_D: f32 = 62.0;
+const LIST_ROW: f32 = 34.0;
+const BLOCK_H: f32 = 46.0;
 const COL_GAP: f32 = 28.0;
 const ROW_H: f32 = 26.0;
 
 impl QuickPanel {
     pub fn new(opts: &Opts) -> QuickPanel {
         QuickPanel {
+            style: match opts.str("style") {
+                Some("blocks") => QStyle::Blocks,
+                Some("rings") => QStyle::Rings,
+                Some("list") => QStyle::List,
+                _ => QStyle::Classic,
+            },
+            sliders: 0.0,
             opts: opts.clone(),
             system: Value::Null,
             outputs: Vec::new(),
@@ -281,24 +309,54 @@ impl QuickPanel {
         inner + 24.0
     }
 
+    /// The panel's content width in its look.
+    fn w(&self) -> f32 {
+        if self.style == QStyle::Classic { W } else { NARROW }
+    }
+
+    /// Volume and brightness shown (each when Windows has it and it isn't switched off).
+    fn shows(&self) -> (bool, bool) {
+        (self.opts.flag("volume") != Some(false) && self.volume().is_some(), self.opts.flag("brightness") != Some(false) && self.brightness().is_some())
+    }
+
+    /// The sliders' part, the gap under it included (none without any): a row (side by
+    /// side), stacked rows, or the rings (with the battery's).
+    fn sliders_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
+        let (vol, bri) = self.shows();
+        let n = vol as usize + bri as usize;
+        match self.style {
+            QStyle::Classic if n > 0 => ROW_H + 12.0,
+            QStyle::Blocks if n > 0 => n as f32 * FAT_H + (n - 1) as f32 * 8.0 + 12.0,
+            QStyle::List if n > 0 => n as f32 * ROW_H + (n - 1) as f32 * 6.0 + 12.0,
+            QStyle::Rings if n > 0 || self.battery().is_some() => RING_D + 4.0 + line(g, &cx.secondary(11.0)) + 12.0,
+            _ => 0.0,
+        }
+    }
+
+    fn battery(&self) -> Option<&Value> {
+        self.system.get("battery").filter(|b| !b.is_null())
+    }
+
     fn grid_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
-        let vol = self.opts.flag("volume") != Some(false) && self.volume().is_some();
-        let bri = self.opts.flag("brightness") != Some(false) && self.brightness().is_some();
         let status = line(g, &cx.secondary(cx.look.font_size)).max(18.0);
-        let mut h = 0.0;
-        if vol || bri {
-            h += ROW_H;
-        }
-        if h > 0.0 {
-            h += 12.0;
-        }
-        h + status + if self.devices_line() { 10.0 + status } else { 0.0 }
+        self.sliders_h(g, cx) + status + if self.devices_line() { 10.0 + status } else { 0.0 }
     }
 
     fn tiles_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
         let n = if self.power_row { POWER.len() + 1 } else { self.tiles().len() };
         if n == 0 {
             return 0.0;
+        }
+        if !self.power_row {
+            match self.style {
+                QStyle::Blocks => {
+                    let rows = n.div_ceil(2) as f32;
+                    return rows * BLOCK_H + (rows - 1.0) * 8.0;
+                }
+                QStyle::Rings => return 34.0,
+                QStyle::List => return n as f32 * LIST_ROW,
+                QStyle::Classic => {}
+            }
         }
         if n <= 3 {
             8.0 + line(g, &cx.secondary(12.0)).max(14.0) + 8.0
@@ -387,12 +445,13 @@ impl Panel for QuickPanel {
             self.pending = Some(Self::fetch_switches());
         }
         self.box_h = self.list_h(g, cx);
+        self.sliders = self.sliders_h(g, cx);
         let tiles = self.tiles_h(g, cx);
         // .quick-panel: 4 px / 2 px inside the panel's padding, 14 px between its parts.
         let h = 4.0 + self.grid_h(g, cx).round() + if tiles > 0.0 { 14.0 + 4.0 + tiles } else { 0.0 } + 4.0;
         // The open list lies over what's under the volume row: taller only if it's longer.
         let list = if self.shown_list.is_some() { self.list_y() + (self.box_h * open).round() + 4.0 } else { 0.0 };
-        self.width = W + 4.0;
+        self.width = self.w() + 4.0;
         (self.width, h.max(list))
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
@@ -407,10 +466,12 @@ impl Panel for QuickPanel {
         // The grid: volume | brightness, battery | network (a row without its neighbour spans both).
         let vol = self.opts.flag("volume") != Some(false) && self.volume().is_some();
         let bri = self.opts.flag("brightness") != Some(false) && self.brightness().is_some();
-        let col = (W - COL_GAP) / 2.0;
-        if vol || bri {
+        let col = (self.w() - COL_GAP) / 2.0;
+        if self.style != QStyle::Classic {
+            y += self.draw_sliders_alt(cx, x, y, alpha, accent, &mut boxes, (ox, oy));
+        } else if vol || bri {
             let cy = y + ROW_H / 2.0;
-            let (vx, vw) = if bri { (x, col) } else { (x, W) };
+            let (vx, vw) = if bri { (x, col) } else { (x, self.w()) };
             if vol {
                 let mut lx = vx;
                 // The buttons before the volume: per-app volume, output devices.
@@ -434,7 +495,7 @@ impl Panel for QuickPanel {
                 self.draw_slider(cx, lx, vx + vw, cy, Slider::Volume, glyph, Hit::VolumeIcon, alpha, accent, &mut boxes, ox, oy);
             }
             if bri {
-                let (bx, bw) = if vol { (x + col + COL_GAP, col) } else { (x, W) };
+                let (bx, bw) = if vol { (x + col + COL_GAP, col) } else { (x, self.w()) };
                 let mut lx = bx;
                 if self.opts.flag("display") == Some(true) {
                     let f = Font::icons(14.0);
@@ -462,9 +523,10 @@ impl Panel for QuickPanel {
             g.text_at(glyph, &f, sx + (18.0 - gw) / 2.0, cy + 1.0, fg);
             g.text_at(&fit_text(g, text, &sf, w - 30.0), &sf, sx + 30.0, cy, dim);
         };
-        let battery = self.system.get("battery").filter(|b| !b.is_null());
+        // (Rings show the battery as one of them.)
+        let battery = self.battery().filter(|_| self.style != QStyle::Rings);
         let mut nx = x;
-        let mut nw = W;
+        let mut nw = self.w();
         if let Some(b) = battery {
             let p = b.get("percent").and_then(|p| p.as_f64());
             let charging = b.get("charging").and_then(|c| c.as_bool()).unwrap_or(false);
@@ -498,7 +560,7 @@ impl Panel for QuickPanel {
             for (k, (name, p)) in self.devices.iter().enumerate() {
                 let text = format!("{name} {}%", p.round());
                 let w = g.measure(&text, &sf);
-                if tx + w > x + W {
+                if tx + w > x + self.w() {
                     g.text_at("…", &sf, tx, cy, dim);
                     break;
                 }
@@ -516,7 +578,7 @@ impl Panel for QuickPanel {
         if self.power_row {
             y += 14.0 + 4.0;
             let n = POWER.len() as f32 + 1.0;
-            let tw = (W - (n - 1.0) * 8.0) / n;
+            let tw = (self.w() - (n - 1.0) * 8.0) / n;
             let th = self.tiles_h(g, cx);
             let lf = cx.secondary(11.0);
             let items = std::iter::once((Hit::PowerBack, "Back", "\u{E72B}")).chain(POWER.iter().enumerate().map(|(i, p)| (Hit::Power(i), p.1, p.2)));
@@ -543,10 +605,17 @@ impl Panel for QuickPanel {
             return;
         }
         let tiles = self.tiles();
+        if self.style != QStyle::Classic {
+            if !tiles.is_empty() {
+                self.draw_tiles_alt(cx, x, y + 14.0 + 4.0, alpha, &mut boxes, (ox, oy));
+            }
+            self.finish(cx, list_at, boxes, (ox, oy));
+            return;
+        }
         if !tiles.is_empty() {
             y += 14.0 + 4.0;
             let n = tiles.len() as f32;
-            let tw = (W - (n - 1.0) * 8.0) / n;
+            let tw = (self.w() - (n - 1.0) * 8.0) / n;
             let th = self.tiles_h(g, cx);
             let pills = tiles.len() <= 3;
             for (i, (id, label, glyph, _)) in tiles.iter().enumerate() {
@@ -595,6 +664,17 @@ impl Panel for QuickPanel {
         let changed = h != self.hovered;
         self.hovered = h;
         changed
+    }
+    fn wheel(&mut self, at: (f32, f32), notches: f32) -> Reply {
+        // Over a slider (a ring's middle is the volume's): 5 a notch.
+        let s = match self.hit(at) {
+            Some(Hit::Track(s)) => s,
+            Some(Hit::VolumeIcon) => Slider::Volume,
+            _ => return Reply::None,
+        };
+        let v = (self.value(s) + notches * 5.0).clamp(0.0, 100.0).round();
+        self.settle = Some((s, v, Instant::now() + Duration::from_millis(400)));
+        Reply::Do(Self::send(s, v))
     }
     fn press(&mut self, at: (f32, f32)) -> bool {
         let Some(Hit::Track(s)) = self.hit(at) else { return false };
@@ -717,7 +797,8 @@ impl Panel for QuickPanel {
                 let t = self.tiles().get(i).copied()?;
                 match self.switch(t.0) {
                     Some(Some(on)) => Some(format!("{}: {}", t.1, if on { "on" } else { "off" })),
-                    _ => None,
+                    // Round icon buttons have no label of their own.
+                    _ => (self.style == QStyle::Rings).then(|| t.1.to_string()),
                 }
             }
             _ => None,
@@ -737,9 +818,7 @@ impl Panel for QuickPanel {
 impl QuickPanel {
     /// Where the list box starts (content px): under the volume row.
     fn list_y(&self) -> f32 {
-        let vol = self.opts.flag("volume") != Some(false) && self.volume().is_some();
-        let bri = self.opts.flag("brightness") != Some(false) && self.brightness().is_some();
-        4.0 + if vol || bri { ROW_H + 12.0 } else { 0.0 }
+        4.0 + self.sliders
     }
     /// The open list over the rest (what's under it loses its boxes), then the boxes kept.
     /// `at`: the list's corner, the panel's alpha and how many boxes the controls above made.
@@ -758,6 +837,269 @@ impl QuickPanel {
     fn track_value(&self, s: Slider, x: f32) -> f32 {
         let Some((_, tx, _, tw, _)) = self.boxes.borrow().iter().find(|b| b.0 == Hit::Track(s)).copied() else { return 0.0 };
         ((x - tx) / tw.max(1.0) * 100.0).clamp(0.0, 100.0).round()
+    }
+
+    /// The buttons before the volume (per-app volume, output devices): which, glyph, size, open.
+    fn expands(&self) -> Vec<(usize, &'static str, f32, bool)> {
+        let mut out = Vec::new();
+        if self.has_apps() {
+            out.push((0usize, if self.list == Some(List::Apps) { "\u{E70E}" } else { "\u{E70D}" }, 10.0, self.list == Some(List::Apps)));
+        }
+        if self.has_outputs() {
+            out.push((1usize, "\u{E7F5}", 14.0, self.list == Some(List::Outputs)));
+        }
+        out
+    }
+
+    /// One of those buttons, 18 px square, centred on (x + 9, cy).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_expand(&self, cx: &Ctx, x: f32, cy: f32, (i, glyph, size, on): (usize, &str, f32, bool), alpha: f32, boxes: &mut Vec<(Hit, f32, f32, f32, f32)>, (ox, oy): (f32, f32)) {
+        let g = cx.gfx;
+        let f = Font::icons(size);
+        let w = g.measure(glyph, &f);
+        let c = if on || self.hovered == Some(Hit::Expand(i)) { with_alpha(cx.look.fg, alpha) } else { with_alpha(cx.look.dimmed(), alpha) };
+        g.text_at(glyph, &f, x + (18.0 - w) / 2.0, cy, c);
+        boxes.push((Hit::Expand(i), x - ox, cy - 9.0 - oy, 18.0, 18.0));
+    }
+
+    /// Blocks, Rings, List: the sliders (stacked thick or thin ones, or rings with the
+    /// battery's). Returns the height taken, with the gap under it.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_sliders_alt(&self, cx: &Ctx, x: f32, y: f32, alpha: f32, accent: Color, boxes: &mut Vec<(Hit, f32, f32, f32, f32)>, o: (f32, f32)) -> f32 {
+        let g = cx.gfx;
+        let (ox, oy) = o;
+        let w = self.w();
+        let (vol, bri) = self.shows();
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let mut sliders = Vec::new();
+        if vol {
+            let (level, muted) = self.volume().unwrap_or((0.0, false));
+            sliders.push((Slider::Volume, volume_glyph(level, muted)));
+        }
+        if bri {
+            sliders.push((Slider::Brightness, "\u{E706}"));
+        }
+        if self.style == QStyle::Rings {
+            // Expand buttons stacked at the row's start, then the rings sharing the rest.
+            let expands = self.expands();
+            let mut lx = x;
+            if !expands.is_empty() {
+                let top = y + RING_D / 2.0 - (expands.len() as f32 * 18.0 + (expands.len() as f32 - 1.0) * 8.0) / 2.0;
+                for (k, e) in expands.into_iter().enumerate() {
+                    self.draw_expand(cx, x, top + k as f32 * 26.0 + 9.0, e, alpha, boxes, o);
+                }
+                lx += 30.0;
+            }
+            let battery = self.battery().map(|b| (b.get("percent").and_then(|p| p.as_f64()).unwrap_or(0.0), b.get("charging").and_then(|c| c.as_bool()).unwrap_or(false)));
+            let n = sliders.len() + battery.is_some() as usize;
+            if n == 0 {
+                return 0.0;
+            }
+            let area = x + w - lx;
+            let r = RING_D / 2.0 - 3.0;
+            let cy = y + RING_D / 2.0;
+            let vf = cx.secondary(11.0);
+            let label_y = y + RING_D + 4.0 + line(g, &vf) / 2.0;
+            let centred = |s: &str, f: &Font, cx0: f32, cyy: f32, c| {
+                let tw = g.measure(s, f);
+                g.text_at(s, f, cx0 - tw / 2.0, cyy, c);
+            };
+            let mut k = 0;
+            for (s, glyph) in &sliders {
+                let rx = lx + area * (k as f32 + 0.5) / n as f32;
+                let v = self.value(*s);
+                let fill = if *s == Slider::Volume { with_alpha(accent, alpha) } else { fg };
+                let hovered = matches!(self.hovered, Some(Hit::Track(h)) if h == *s) || (*s == Slider::Volume && self.hovered == Some(Hit::VolumeIcon));
+                g.ring(rx, cy, r, 5.0, v / 100.0, white(if hovered { 0.22 } else { 0.14 } * alpha), fill);
+                centred(glyph, &Font::icons(16.0), rx, cy + 1.0, fg);
+                centred(&format!("{}", v.round()), &vf, rx, label_y, dim);
+                // The middle mutes (volume); the ring takes the wheel and drags.
+                if *s == Slider::Volume {
+                    boxes.push((Hit::VolumeIcon, rx - 13.0 - ox, cy - 13.0 - oy, 26.0, 26.0));
+                }
+                boxes.push((Hit::Track(*s), rx - RING_D / 2.0 - ox, y - oy, RING_D, RING_D));
+                k += 1;
+            }
+            if let Some((p, charging)) = battery {
+                let rx = lx + area * (k as f32 + 0.5) / n as f32;
+                let fill = if p <= 20.0 && !charging { with_alpha(cx.look.warn, alpha) } else { rgba(0.11, 0.73, 0.33, alpha) };
+                g.ring(rx, cy, r, 5.0, (p / 100.0) as f32, white(0.14 * alpha), fill);
+                centred(&battery_glyph(p, charging), &Font::icons(16.0), rx, cy + 1.0, fg);
+                centred(&format!("{}%", p.round()), &vf, rx, label_y, dim);
+            }
+            return RING_D + 4.0 + line(g, &vf) + 12.0;
+        }
+        if sliders.is_empty() {
+            return 0.0;
+        }
+        let row_h = if self.style == QStyle::Blocks { FAT_H } else { ROW_H };
+        let gap = if self.style == QStyle::Blocks { 8.0 } else { 6.0 };
+        let mut yy = y;
+        for (s, glyph) in sliders {
+            let cy = yy + row_h / 2.0;
+            let mut lx = x;
+            if s == Slider::Volume {
+                for e in self.expands() {
+                    self.draw_expand(cx, lx, cy, e, alpha, boxes, o);
+                    lx += 18.0 + 12.0;
+                }
+            }
+            if s == Slider::Brightness && self.opts.flag("display") == Some(true) {
+                let c = if self.hovered == Some(Hit::Display) { fg } else { dim };
+                g.text_at("\u{E7F4}", &Font::icons(14.0), lx + 2.0, cy, c);
+                boxes.push((Hit::Display, lx - ox, cy - 9.0 - oy, 18.0, 18.0));
+                lx += 18.0 + 12.0;
+            }
+            if self.style == QStyle::Blocks {
+                self.draw_fat(cx, lx, yy, x + w - lx, s, glyph, alpha, boxes, o);
+            } else {
+                let icon_hit = if s == Slider::Volume { Hit::VolumeIcon } else { Hit::Track(s) };
+                self.draw_slider(cx, lx, x + w, cy, s, glyph, icon_hit, alpha, accent, boxes, ox, oy);
+            }
+            yy += row_h + gap;
+        }
+        yy - gap - y + 12.0
+    }
+
+    /// A thick slider: a pill filled as far as its value, its icon inside (dark over the
+    /// fill), the value at its end. The whole pill drags.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_fat(&self, cx: &Ctx, x: f32, top: f32, w: f32, s: Slider, glyph: &str, alpha: f32, boxes: &mut Vec<(Hit, f32, f32, f32, f32)>, (ox, oy): (f32, f32)) {
+        let g = cx.gfx;
+        let v = self.value(s) / 100.0;
+        let hovered = matches!(self.hovered, Some(Hit::Track(h)) if h == s);
+        g.fill_round(rect(x, top, w, FAT_H), 12.0, white(if hovered { 0.12 } else { 0.08 } * alpha));
+        let fw = (w * v).max(if v > 0.0 { 24.0 } else { 0.0 });
+        if fw > 0.0 {
+            g.fill_round(rect(x, top, fw, FAT_H), 12.0, white(0.88 * alpha));
+        }
+        let dark = rgba(0.0, 0.0, 0.0, alpha);
+        let f = Font::icons(14.0);
+        g.text_at(glyph, &f, x + 12.0, top + FAT_H / 2.0 + 1.0, if fw > 30.0 { dark } else { with_alpha(cx.look.fg, alpha) });
+        let num = format!("{}", (v * 100.0).round());
+        let nf = cx.secondary(12.0);
+        let nw = g.measure(&num, &nf);
+        let nx = x + w - 12.0 - nw;
+        g.text_at(&num, &nf, nx, top + FAT_H / 2.0, if fw > nx - x + nw { dark } else { with_alpha(cx.look.dimmed(), alpha) });
+        boxes.push((Hit::Track(s), x - ox, top - oy, w, FAT_H));
+    }
+
+    /// What a tile says under its name (Blocks) or at its end (List): the network's name,
+    /// a switch's state.
+    fn tile_note(&self, id: &str) -> String {
+        let n = self.system.get("network");
+        let net = n.filter(|n| n.get("connected").and_then(|c| c.as_bool()).unwrap_or(false) && n.get("wifi").and_then(|w| w.as_bool()).unwrap_or(false)).and_then(|n| n.get("name")).and_then(|v| v.as_str());
+        match (id, self.switch(id)) {
+            ("wifi", Some(Some(false))) => "Off".into(),
+            ("wifi", _) => net.unwrap_or("").to_string(),
+            (_, Some(Some(on))) => if on { "On" } else { "Off" }.into(),
+            _ => String::new(),
+        }
+    }
+
+    /// A tile's icon (the Kasumi tile's is its logo), its middle at (ix + 7, icy).
+    fn draw_tile_icon(g: &Gfx, glyph: &str, ix: f32, icy: f32, c: Color) {
+        if glyph.is_empty() {
+            let k = 14.0 / 541.0;
+            g.draw_svg(LOGO, 541.0, ix - 30.0 * k, icy - 7.0 - 30.0 * k, 14.0, c);
+        } else {
+            g.text_at(glyph, &Font::icons(14.0), ix, icy + 1.0, c);
+        }
+    }
+
+    /// Blocks, Rings, List: the tiles as two-line blocks, round icon buttons, or rows
+    /// with a switch (or an arrow) at the end.
+    fn draw_tiles_alt(&self, cx: &Ctx, x: f32, y: f32, alpha: f32, boxes: &mut Vec<(Hit, f32, f32, f32, f32)>, (ox, oy): (f32, f32)) {
+        let g = cx.gfx;
+        let w = self.w();
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let accent = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
+        let dark = with_alpha(cx.look.bg, alpha);
+        let tiles = self.tiles();
+        match self.style {
+            QStyle::Blocks => {
+                let bw = (w - 8.0) / 2.0;
+                for (i, (id, label, glyph, _)) in tiles.iter().enumerate() {
+                    let (bx, by) = (x + (i % 2) as f32 * (bw + 8.0), y + (i / 2) as f32 * (BLOCK_H + 8.0));
+                    let hovered = self.hovered == Some(Hit::Tile(i));
+                    let on = self.switch(id) == Some(Some(true));
+                    g.fill_round(rect(bx, by, bw, BLOCK_H), 14.0, white(if hovered { 0.14 } else { 0.08 } * alpha));
+                    let (ccx, ccy) = (bx + 10.0 + 14.0, by + BLOCK_H / 2.0);
+                    g.fill_round(rect(ccx - 14.0, ccy - 14.0, 28.0, 28.0), 14.0, if on { with_alpha(accent, alpha) } else { white(0.12 * alpha) });
+                    let iw = if glyph.is_empty() { 14.0 } else { g.measure(glyph, &Font::icons(14.0)) };
+                    Self::draw_tile_icon(g, glyph, ccx - iw / 2.0, ccy, if on { dark } else { fg });
+                    let note = self.tile_note(id);
+                    let (lf, nf) = (cx.main(12.0), cx.secondary(11.0));
+                    let tx = bx + 10.0 + 28.0 + 10.0;
+                    let tw = bw - (tx - bx) - 8.0;
+                    if note.is_empty() {
+                        g.text_at(&fit_text(g, label, &lf, tw), &lf, tx, ccy, fg);
+                    } else {
+                        let total = line(g, &lf) + 1.0 + line(g, &nf);
+                        let ty = ccy - total / 2.0;
+                        g.text_at(&fit_text(g, label, &lf, tw), &lf, tx, ty + line(g, &lf) / 2.0, fg);
+                        g.text_at(&fit_text(g, &note, &nf, tw), &nf, tx, ty + line(g, &lf) + 1.0 + line(g, &nf) / 2.0, dim);
+                    }
+                    boxes.push((Hit::Tile(i), bx - ox, by - oy, bw, BLOCK_H));
+                }
+            }
+            QStyle::Rings => {
+                let n = tiles.len() as f32;
+                let total = n * 34.0 + (n - 1.0) * 10.0;
+                let left = x + (w - total) / 2.0;
+                for (i, (id, _, glyph, _)) in tiles.iter().enumerate() {
+                    let bx = left + i as f32 * 44.0;
+                    let hovered = self.hovered == Some(Hit::Tile(i));
+                    let on = self.switch(id) == Some(Some(true));
+                    let bg = if on { with_alpha(cx.look.fg, if hovered { 0.85 } else { 1.0 }) } else { white(if hovered { 0.14 } else { 0.08 }) };
+                    g.fill_round(rect(bx, y, 34.0, 34.0), 17.0, with_alpha(bg, alpha));
+                    let iw = if glyph.is_empty() { 14.0 } else { g.measure(glyph, &Font::icons(14.0)) };
+                    Self::draw_tile_icon(g, glyph, bx + (34.0 - iw) / 2.0, y + 17.0, if on { dark } else { fg });
+                    boxes.push((Hit::Tile(i), bx - ox, y - oy, 34.0, 34.0));
+                }
+            }
+            QStyle::List => {
+                let f = cx.body();
+                let nf = cx.secondary(12.0);
+                for (i, (id, label, glyph, _)) in tiles.iter().enumerate() {
+                    let ry = y + i as f32 * LIST_ROW;
+                    let cy = ry + LIST_ROW / 2.0;
+                    let hovered = self.hovered == Some(Hit::Tile(i));
+                    if i > 0 {
+                        g.fill_rect(rect(x, ry, w, 1.0), white(0.08 * alpha));
+                    }
+                    if hovered {
+                        g.fill_round(rect(x - 6.0, ry + 2.0, w + 12.0, LIST_ROW - 4.0), 8.0, white(0.06 * alpha));
+                    }
+                    let iw = if glyph.is_empty() { 14.0 } else { g.measure(glyph, &Font::icons(14.0)) };
+                    Self::draw_tile_icon(g, glyph, x + (18.0 - iw) / 2.0, cy, fg);
+                    g.text_at(label, &f, x + 30.0, cy, fg);
+                    // The end: a switch, or an arrow (it opens something).
+                    let end = match self.switch(id) {
+                        Some(state) => {
+                            let on = state == Some(true);
+                            let (sx, sy) = (x + w - 30.0, cy - 9.0);
+                            g.fill_round(rect(sx, sy, 30.0, 18.0), 9.0, if on { with_alpha(accent, alpha) } else { white(0.2 * alpha) });
+                            g.fill_round(rect(if on { sx + 15.0 } else { sx + 3.0 }, sy + 3.0, 12.0, 12.0), 6.0, if on { dark } else { fg });
+                            30.0
+                        }
+                        None => {
+                            let gl = "\u{E76C}";
+                            let gw = g.measure(gl, &Font::icons(10.0));
+                            g.text_at(gl, &Font::icons(10.0), x + w - gw - 2.0, cy + 1.0, dim);
+                            gw + 2.0
+                        }
+                    };
+                    let note = self.tile_note(id);
+                    if !note.is_empty() {
+                        let nw = g.measure(&note, &nf);
+                        g.text_at(&note, &nf, x + w - end - 10.0 - nw, cy, dim);
+                    }
+                    boxes.push((Hit::Tile(i), x - ox, ry - oy, w, LIST_ROW));
+                }
+            }
+            QStyle::Classic => {}
+        }
     }
 
     /// A slider row from `x0` to `x1`: icon (18 px), track, value (≥ 26 px), 12 px apart.
@@ -793,9 +1135,9 @@ impl QuickPanel {
         let g = cx.gfx;
         let (open, _) = self.openness(Instant::now());
         let a = alpha * open;
-        g.fill_round(rect(x, y, W, h.max(0.0)), 12.0, white(0.07 * a));
-        g.clip(rect(x, y, W, h.max(0.0)));
-        let (ix, iy, iw) = (x + 14.0, y + 12.0, W - 28.0);
+        g.fill_round(rect(x, y, self.w(), h.max(0.0)), 12.0, white(0.07 * a));
+        g.clip(rect(x, y, self.w(), h.max(0.0)));
+        let (ix, iy, iw) = (x + 14.0, y + 12.0, self.w() - 28.0);
         let col = (iw - 24.0) / 2.0;
         match self.shown_list {
             Some(List::Outputs) => {

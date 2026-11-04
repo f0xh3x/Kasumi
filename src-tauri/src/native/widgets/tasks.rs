@@ -183,10 +183,43 @@ impl Tasks {
         self.opts.str("labels") == Some("active")
     }
 
+    /// [widgets.tasks] style = "labels": every app a pill with its name (the front window's
+    /// title for the app in front) and how many windows it has.
+    fn pills(&self) -> bool {
+        self.opts.str("style") == Some("labels")
+    }
+
+    /// [widgets.tasks] style = "dots": a mark per app while the dock rests, icons as it opens.
+    fn dots(&self) -> bool {
+        self.opts.str("style") == Some("dots")
+    }
+
+    /// A pill's text: the front window's title for the app in front, else the app's name.
+    fn pill_text(a: &App) -> &str {
+        match a.wins.iter().find(|w| w.active) {
+            Some(w) if !w.title.is_empty() => &w.title,
+            _ if !a.name.is_empty() => &a.name,
+            _ => &a.key,
+        }
+    }
+
+    /// Dots: each app's mark (the one in front a long pill), and the row's width.
+    fn marks(&self) -> (Vec<f32>, f32) {
+        let widths: Vec<f32> = self.apps.iter().map(|a| if a.wins.iter().any(|w| w.active) { 22.0 } else { 6.0 }).collect();
+        let total = widths.iter().sum::<f32>() + (widths.len().max(1) as f32 - 1.0) * 6.0;
+        (widths, total)
+    }
+
     /// Button sizes at row height `h` (styles.css .task): padding 0.08 h, icon 0.6 h.
     fn button_w(&self, cx: &Ctx, a: &App, h: f32) -> f32 {
         let mut w = h * 0.6 + 2.0 * h * 0.08;
-        if self.labels() {
+        if self.pills() {
+            let f = cx.secondary(12.0);
+            w += 7.0 + cx.gfx.measure(&fit_text(cx.gfx, Self::pill_text(a), &f, 120.0), &f) + h * 0.2;
+            if a.wins.len() > 1 {
+                w += 6.0 + cx.gfx.measure(&a.wins.len().to_string(), &cx.secondary(10.0)) + 10.0;
+            }
+        } else if self.labels() {
             if let Some(t) = a.wins.iter().find(|w| w.active) {
                 w += 6.0 + cx.gfx.measure(&fit_text(cx.gfx, &t.title, &cx.body(), 160.0), &cx.body());
             }
@@ -436,92 +469,48 @@ impl Widget for Tasks {
             self.boxes.clear();
             return 0.0;
         }
-        self.lay_out(cx, cx.h)
+        let icons = self.lay_out(cx, cx.h);
+        if self.dots() {
+            // Resting: the marks' width, growing to the icons' as the dock opens.
+            let k = ease(EASE, cx.open.clamp(0.0, 1.0));
+            return self.marks().1 + (icons - self.marks().1) * k;
+        }
+        icons
     }
 
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
         let g = cx.gfx;
-        let h = cx.h;
         let now = Instant::now();
-        let scales = self.step_scales(now);
-        let bottom = cx.look.bottom;
-        let box_h = h * 0.82;
-        let top = cy - box_h / 2.0;
-        let glide = self.glide.as_ref().filter(|gl| now.saturating_duration_since(gl.start).as_secs_f32() * 1000.0 < gl.ms);
-        for (i, a) in self.apps.iter().enumerate() {
-            let Some((_, bx, bw)) = self.boxes.iter().find(|b| b.0 == a.key).cloned() else { continue };
-            let mut bx = x + bx + self.slide_offset(&a.key, now) + self.drag_offset(i);
-            // New buttons grow in (180 ms).
-            let grow = self.fresh.get(&a.key).map_or(1.0, |t0| ease(EASE, now.saturating_duration_since(*t0).as_secs_f32() / 0.18));
-            let a_alpha = alpha * grow;
-            bx = g.snap(bx);
-            if self.hovered == Some(i) {
-                g.fill_round(rect(bx, top, bw, box_h), h * 0.2, with_alpha(cx.hover_bg(0.1), a_alpha));
-            }
-            let size = h * 0.6;
-            let ix = bx + h * 0.08;
-            let iy = cy - size / 2.0;
-            let s = if self.opts.magnify { scales[i.min(63)] * (0.6 + 0.4 * grow) } else { 0.6 + 0.4 * grow };
-            // Grows from the dock's edge (top bars: down from the top; docks at the bottom: up).
-            let (sx, sy) = (ix + size / 2.0 - size * s / 2.0, if bottom { iy + size - size * s } else { iy });
-            let minimized = !a.wins.is_empty() && a.wins.iter().all(|w| w.minimized);
-            let dim = if minimized && self.opts.flag("dim_minimized") == Some(true) { 0.55 } else { 1.0 };
-            match self.icons.get(&a.key) {
-                Some(icon) => icon.draw(g, sx, sy, size * s, a_alpha * dim),
-                None => g.fill_round(rect(sx, sy, size * s, size * s), size * s * 0.25, white(0.15 * a_alpha)),
-            }
-            // Asking for attention: an accent dot on the icon's corner, flashing.
-            if self.attention() && a.wins.iter().any(|w| w.attention) && blink_on(now) {
-                let r = (size * s * 0.13).max(3.0);
-                let (dx, dy) = (sx + size * s - r * 0.8, sy + r * 0.8);
-                g.fill_round(rect(dx - r, dy - r, 2.0 * r, 2.0 * r), r, with_alpha(cx.look.accent, a_alpha));
-            }
-            if self.labels() {
-                if let Some(t) = a.wins.iter().find(|w| w.active) {
-                    let label = fit_text(g, &t.title, &cx.body(), 160.0);
-                    g.text_at(&label, &cx.body(), ix + size + 6.0, cy, with_alpha(cx.look.fg, a_alpha));
+        // Dots: the marks fade out over the first half of the dock opening, the icons in
+        // over the second.
+        if self.dots() {
+            let k = ease(EASE, cx.open.clamp(0.0, 1.0));
+            let marks = (1.0 - 2.0 * k).max(0.0);
+            if marks > 0.0 {
+                let (widths, _) = self.marks();
+                let mut mx = x;
+                for (a, w) in self.apps.iter().zip(widths) {
+                    let c = if a.wins.iter().any(|w| w.active) {
+                        if cx.opts.accent { cx.look.accent } else { cx.look.fg }
+                    } else if self.attention() && a.wins.iter().any(|w| w.attention) {
+                        cx.look.warn
+                    } else if a.wins.is_empty() {
+                        white(0.2)
+                    } else {
+                        white(0.45)
+                    };
+                    g.fill_round(rect(mx, cy - 3.0, w, 6.0), 3.0, with_alpha(c, alpha * marks));
+                    mx += w + 6.0;
                 }
             }
-            // A dot per window (up to 3); a line under the app in front.
-            if a.wins.is_empty() {
-                continue;
+            let icons = (2.0 * k - 1.0).max(0.0);
+            if icons <= 0.0 {
+                return;
             }
-            let dot_y = top + box_h - 1.0 - 3.0;
-            let centre = ix + size / 2.0;
-            let active = a.wins.iter().any(|w| w.active);
-            if active {
-                // While the marker glides here, the app's own line waits.
-                if glide.is_some_and(|gl| gl.to == a.key) {
-                    continue;
-                }
-                let c = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
-                g.fill_round(rect(centre - 5.0, dot_y, 10.0, 3.0), 1.5, with_alpha(c, a_alpha));
-            } else {
-                let n = a.wins.len().min(3) as f32;
-                let w = n * 3.0 + (n - 1.0) * 2.0;
-                for k in 0..n as usize {
-                    g.fill_round(rect(centre - w / 2.0 + k as f32 * 5.0, dot_y, 3.0, 3.0), 1.5, with_alpha(cx.look.dimmed(), a_alpha));
-                }
-            }
+            self.draw_icons(cx, x, cy, alpha * icons, now);
+            return;
         }
-        // The marker on its way: the front edge runs ahead (the line stretches and thins),
-        // the back edge follows; both arrive together.
-        if let Some(gl) = glide {
-            let Some(to) = self.dot_x(&gl.to) else { return };
-            let t = (now.saturating_duration_since(gl.start).as_secs_f32() * 1000.0 / gl.ms).min(1.0);
-            let ease3 = |k: f32| if k < 0.5 { 4.0 * k * k * k } else { 1.0 - (-2.0 * k + 2.0).powi(3) / 2.0 };
-            let part = |from: f32| ease3(((t - from) / 0.68).clamp(0.0, 1.0));
-            let (line, thick) = (10.0, 3.0);
-            let right = to > gl.from;
-            let half = if right { line / 2.0 } else { -line / 2.0 };
-            let f = (gl.from + half) + ((to + half) - (gl.from + half)) * part(0.0);
-            let b = (gl.from - half) + ((to - half) - (gl.from - half)) * part(0.32);
-            let width = (f - b).abs().max(thick);
-            let th = (thick * (line / width).sqrt()).clamp(2.0, thick);
-            let dot_y = top + box_h - 1.0 - 3.0 + thick - th;
-            let c = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
-            g.fill_round(rect(x + f.min(b), dot_y, width, th), th / 2.0, with_alpha(c, alpha));
-        }
+        self.draw_icons(cx, x, cy, alpha, now);
     }
 
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
@@ -537,6 +526,7 @@ impl Widget for Tasks {
         self.cursor = cursor;
         changed
     }
+
 
     fn wake(&self) -> Option<Instant> {
         let menu = self.hover_since.map(|(_, t)| t + std::time::Duration::from_millis(450));
@@ -730,6 +720,109 @@ impl Widget for Tasks {
 }
 
 impl Tasks {
+    /// The icons (with their pills, dots and the front marker).
+    fn draw_icons(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32, now: Instant) {
+        let g = cx.gfx;
+        let h = cx.h;
+        let scales = self.step_scales(now);
+        let bottom = cx.look.bottom;
+        let box_h = h * 0.82;
+        let top = cy - box_h / 2.0;
+        let glide = self.glide.as_ref().filter(|gl| now.saturating_duration_since(gl.start).as_secs_f32() * 1000.0 < gl.ms);
+        for (i, a) in self.apps.iter().enumerate() {
+            let Some((_, bx, bw)) = self.boxes.iter().find(|b| b.0 == a.key).cloned() else { continue };
+            let mut bx = x + bx + self.slide_offset(&a.key, now) + self.drag_offset(i);
+            // New buttons grow in (180 ms).
+            let grow = self.fresh.get(&a.key).map_or(1.0, |t0| ease(EASE, now.saturating_duration_since(*t0).as_secs_f32() / 0.18));
+            let a_alpha = alpha * grow;
+            bx = g.snap(bx);
+            let front = a.wins.iter().any(|w| w.active);
+            if self.hovered == Some(i) {
+                g.fill_round(rect(bx, top, bw, box_h), h * 0.2, with_alpha(cx.hover_bg(0.1), a_alpha));
+            } else if self.pills() && front {
+                g.fill_round(rect(bx, top, bw, box_h), h * 0.2, white(0.12 * a_alpha));
+            }
+            let size = h * 0.6;
+            let ix = bx + h * 0.08;
+            let iy = cy - size / 2.0;
+            let s = if self.opts.magnify { scales[i.min(63)] * (0.6 + 0.4 * grow) } else { 0.6 + 0.4 * grow };
+            // Grows from the dock's edge (top bars: down from the top; docks at the bottom: up).
+            let (sx, sy) = (ix + size / 2.0 - size * s / 2.0, if bottom { iy + size - size * s } else { iy });
+            let minimized = !a.wins.is_empty() && a.wins.iter().all(|w| w.minimized);
+            let dim = if minimized && self.opts.flag("dim_minimized") == Some(true) { 0.55 } else { 1.0 };
+            match self.icons.get(&a.key) {
+                Some(icon) => icon.draw(g, sx, sy, size * s, a_alpha * dim),
+                None => g.fill_round(rect(sx, sy, size * s, size * s), size * s * 0.25, white(0.15 * a_alpha)),
+            }
+            // Asking for attention: an accent dot on the icon's corner, flashing.
+            if self.attention() && a.wins.iter().any(|w| w.attention) && blink_on(now) {
+                let r = (size * s * 0.13).max(3.0);
+                let (dx, dy) = (sx + size * s - r * 0.8, sy + r * 0.8);
+                g.fill_round(rect(dx - r, dy - r, 2.0 * r, 2.0 * r), r, with_alpha(cx.look.accent, a_alpha));
+            }
+            if self.pills() {
+                // The name (the front window's title), then a count of its windows.
+                let f = cx.secondary(12.0);
+                let text = fit_text(g, Self::pill_text(a), &f, 120.0);
+                let tx = ix + size + 7.0;
+                let tw = g.text_at(&text, &f, tx, cy, if front { with_alpha(cx.look.fg, a_alpha) } else { with_alpha(cx.look.dimmed(), a_alpha) });
+                if a.wins.len() > 1 {
+                    let nf = cx.secondary(10.0);
+                    let n = a.wins.len().to_string();
+                    let nw = g.measure(&n, &nf) + 10.0;
+                    g.fill_round(rect(tx + tw + 6.0, cy - 8.0, nw, 16.0), 6.0, white(0.14 * a_alpha));
+                    g.text_at(&n, &nf, tx + tw + 6.0 + 5.0, cy, with_alpha(cx.look.fg, a_alpha));
+                }
+                continue;
+            }
+            if self.labels() {
+                if let Some(t) = a.wins.iter().find(|w| w.active) {
+                    let label = fit_text(g, &t.title, &cx.body(), 160.0);
+                    g.text_at(&label, &cx.body(), ix + size + 6.0, cy, with_alpha(cx.look.fg, a_alpha));
+                }
+            }
+            // A dot per window (up to 3); a line under the app in front.
+            if a.wins.is_empty() {
+                continue;
+            }
+            let dot_y = top + box_h - 1.0 - 3.0;
+            let centre = ix + size / 2.0;
+            let active = a.wins.iter().any(|w| w.active);
+            if active {
+                // While the marker glides here, the app's own line waits.
+                if glide.is_some_and(|gl| gl.to == a.key) {
+                    continue;
+                }
+                let c = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
+                g.fill_round(rect(centre - 5.0, dot_y, 10.0, 3.0), 1.5, with_alpha(c, a_alpha));
+            } else {
+                let n = a.wins.len().min(3) as f32;
+                let w = n * 3.0 + (n - 1.0) * 2.0;
+                for k in 0..n as usize {
+                    g.fill_round(rect(centre - w / 2.0 + k as f32 * 5.0, dot_y, 3.0, 3.0), 1.5, with_alpha(cx.look.dimmed(), a_alpha));
+                }
+            }
+        }
+        // The marker on its way: the front edge runs ahead (the line stretches and thins),
+        // the back edge follows; both arrive together.
+        if let Some(gl) = glide {
+            let Some(to) = self.dot_x(&gl.to) else { return };
+            let t = (now.saturating_duration_since(gl.start).as_secs_f32() * 1000.0 / gl.ms).min(1.0);
+            let ease3 = |k: f32| if k < 0.5 { 4.0 * k * k * k } else { 1.0 - (-2.0 * k + 2.0).powi(3) / 2.0 };
+            let part = |from: f32| ease3(((t - from) / 0.68).clamp(0.0, 1.0));
+            let (line, thick) = (10.0, 3.0);
+            let right = to > gl.from;
+            let half = if right { line / 2.0 } else { -line / 2.0 };
+            let f = (gl.from + half) + ((to + half) - (gl.from + half)) * part(0.0);
+            let b = (gl.from - half) + ((to - half) - (gl.from - half)) * part(0.32);
+            let width = (f - b).abs().max(thick);
+            let th = (thick * (line / width).sqrt()).clamp(2.0, thick);
+            let dot_y = top + box_h - 1.0 - 3.0 + thick - th;
+            let c = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
+            g.fill_round(rect(x + f.min(b), dot_y, width, th), th / 2.0, with_alpha(c, alpha));
+        }
+    }
+
     fn drag_offset(&self, i: usize) -> f32 {
         let Some(d) = self.drag.as_ref().filter(|d| d.moved) else { return 0.0 };
         if i == d.i {
