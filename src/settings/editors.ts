@@ -273,14 +273,19 @@ function layoutsOps(cfg: Cfg, changed: Record<string, LayoutCfg>): Op[] {
 /** Where a widget type is placed (the global layouts of the bars that are on): "Top bar,
  *  right" and so on, "· own notch" when it has one. */
 export function placements(cfg: Cfg, type: string): string[] {
-  const out: string[] = [];
-  for (const s of shownSurfaces(cfg)) {
-    const l = surfaceLayout(cfg, s);
-    for (const side of SIDES) {
-      for (const n of l[side]) {
-        if (typeOf(n) !== type || !enabled(cfg, n)) continue;
-        out.push(`${surfaceName(s)}, ${side === "center" ? "centre" : side}${l.notch.includes(n) ? " · own notch" : ""}`);
-      }
+  const where = (s: string, l: LayoutCfg) =>
+    SIDES.flatMap((side) =>
+      l[side].filter((n) => typeOf(n) === type && enabled(cfg, n)).map((n) => `${surfaceName(s)}, ${side === "center" ? "centre" : side}${l.notch.includes(n) ? " · own notch" : ""}`),
+    );
+  const out = shownSurfaces(cfg).flatMap((s) => where(s, surfaceLayout(cfg, s)));
+  // Monitors with their own layout of a bar: where it is there (unless the same as on
+  // every monitor).
+  for (const r of Array.isArray(cfg.monitors) ? cfg.monitors : []) {
+    if (r.enabled === false) continue;
+    for (const s of surfaceIds(cfg)) {
+      const o = r.surfaces?.[s];
+      if (!hasLists(o) || o.enabled === false || !(shownSurfaces(cfg).includes(s) || o.enabled === true)) continue;
+      for (const w of where(s, normalize(o))) if (!out.includes(w)) out.push(`${r.match}: ${w}`);
     }
   }
   return out;

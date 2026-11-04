@@ -2064,10 +2064,10 @@ export const pages: Page[] = [
     icon: 0xe71d,
     sections: [
       sec("widgets", "Layout for", { title: "" }),
+      sec("widgets", "Placement"),
       sec("widgets", "Bar", { perBar: true, badge: undefined }),
       part("widgets", "Bar settings", ["<surfaceStyle>"], { title: "Style", scope: "global", perBar: true }),
       sec("widgets", "This monitor"),
-      sec("widgets", "Placement"),
     ],
   },
   {
