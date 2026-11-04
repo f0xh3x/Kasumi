@@ -36,6 +36,16 @@ const saveMore = () => localStorage.setItem("settings-more", JSON.stringify([...
 function fieldControl(f: Field): HTMLElement | null {
   const r = control(f);
   if (r && "tag" in f && f.tag) r.querySelector(".row-label")?.append($("span", "row-tag", f.tag));
+  // Changed from the default: a dot that puts it back.
+  const path = r && changedPath(f);
+  if (path) {
+    const dot = $("button", "changed-dot");
+    const what = "default" in f ? String(f.default === true ? "on" : f.default === false ? "off" : f.default) : "";
+    dot.title = `Changed. Click to put back the default${what ? ` (${what})` : ""}`;
+    dot.setAttribute("aria-label", dot.title);
+    dot.addEventListener("click", () => toDefault([path]));
+    r.querySelector(".row-label")?.prepend(dot);
+  }
   return r;
 }
 
@@ -50,6 +60,8 @@ const pageId = (want: string | null): string | null => {
 let current = pageId(new URLSearchParams(location.search).get("page")) ?? pages[0].id;
 /** The sidebar's search: while it holds text, the content lists the settings matching it. */
 let query = "";
+/** Only what's changed from the defaults (the sidebar's Changed button). */
+let changedOnly = false;
 // Opened on a page from elsewhere (the bar menu's Edit this bar...): go there.
 listen<string>("settings-page", (e) => {
   const id = pageId(e.payload);
@@ -78,14 +90,61 @@ function setIn(obj: any, path: Path, value: unknown): void {
 // --- Saving --------------------------------------------------------------------
 
 let toastTimer = 0;
-function toast(text: string, error = false): void {
+/** A short note at the bottom; after a change, with Undo (it stays a little longer). */
+function toast(text: string, error = false, undoable = false): void {
   const t = document.getElementById("toast")!;
-  t.textContent = text;
+  t.replaceChildren(text);
+  if (undoable && history.length) {
+    const b = $("button", "toast-undo", "Undo");
+    b.addEventListener("click", () => undoLast());
+    t.append(b);
+  }
   t.classList.toggle("error", error);
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => t.classList.remove("show"), error ? 4000 : 1200);
+  toastTimer = window.setTimeout(() => t.classList.remove("show"), error ? 4000 : undoable ? 5000 : 1200);
 }
+
+// --- Undo -------------------------------------------------------------------------
+
+/** What each change replaced (newest last): Undo (or Ctrl+Z) puts it back. */
+const history: { path: Path; before: unknown }[][] = [];
+
+/** Takes back the last change. */
+async function undoLast(): Promise<void> {
+  const last = history.pop();
+  if (!last) return;
+  const ops = last.map((c) => ({ path: c.path, value: c.before === undefined ? null : c.before }));
+  try {
+    await invoke("config_write_many", { ops });
+    last.forEach((c) => setIn(cfg, c.path, c.before));
+    toast("Undone");
+  } catch (e) {
+    toast(String(e), true);
+  }
+  render();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key.toLowerCase() === "z" && !document.activeElement?.matches("input[type=text], input:not([type]), input[type=search], textarea")) {
+    e.preventDefault();
+    undoLast();
+  }
+});
+
+// --- Changed from the default --------------------------------------------------------
+
+/** Where a setting is stored, when it's set to something other than its default. */
+function changedPath(f: Field): Path | null {
+  if (!("default" in f) || !("path" in f)) return null;
+  const path = typeof f.path === "function" ? f.path(cfg) : f.path;
+  if (!path) return null;
+  const v = getIn(cfg, path);
+  return v !== undefined && JSON.stringify(v) !== JSON.stringify(f.default) ? path : null;
+}
+
+/** Puts settings back to their defaults (they're taken out of the config). */
+const toDefault = (paths: Path[]) => saveMany(paths.map((path) => ({ path, value: null })));
 
 /** Where the current page's computed fields resolve (null = hidden): fields that
  *  appear only with another setting (e.g. corner roundness) depend on it. */
@@ -97,10 +156,12 @@ function shownFields(): string {
 
 async function save(path: Path, value: unknown): Promise<void> {
   try {
+    const was = structuredClone(getIn(cfg, path));
     await invoke("config_write", { path, value: value === undefined ? null : value });
     const before = shownFields();
     setIn(cfg, path, value);
-    toast("Saved");
+    history.push([{ path, before: was }]);
+    toast("Saved", false, true);
     // A setting that shows or hides others: redraw (not on every save: a slider
     // being dragged would lose its grip). The setup's own fields: always.
     if (VIEW || shownFields() !== before) render();
@@ -113,9 +174,12 @@ async function save(path: Path, value: unknown): Promise<void> {
 async function saveMany(ops: Op[]): Promise<void> {
   if (!ops.length) return;
   try {
+    const was = ops.map((o) => ({ path: o.path, before: structuredClone(getIn(cfg, o.path)) }));
     await invoke("config_write_many", { ops });
     ops.forEach((o) => setIn(cfg, o.path, o.value ?? undefined));
-    toast("Saved");
+    // In reverse, so putting them back undoes later edits first.
+    history.push(was.reverse());
+    toast("Saved", false, true);
   } catch (e) {
     toast(String(e), true);
   }
@@ -369,6 +433,14 @@ function renderPage(page: Page): HTMLElement {
     const badge = s.badge?.(cfg);
     if (badge) title.append($("span", "card-badge", badge));
     if (s.legend) title.append($("span", "card-legend", ...s.legend.map(([code, text]) => $("span", "", glyph(code), text))));
+    // Settings in it changed: all of them back to their defaults at once.
+    const changed = s.fields.map(changedPath).filter((x): x is Path => x !== null);
+    if (changed.length > 1) {
+      const back = $("button", "card-reset", "Back to default");
+      back.title = `Puts back the default of the ${changed.length} settings changed here`;
+      back.addEventListener("click", () => toDefault(changed));
+      title.append(back);
+    }
     const card = $("section", "card", title);
     if (s.help) card.append($("p", "card-help", s.help));
     card.append(...rows);
@@ -381,8 +453,8 @@ function renderPage(page: Page): HTMLElement {
 /** The sidebar's search: every setting whose page, section, name or help has all the
  *  typed words, with its control (changeable here), under its page and section (a click
  *  there goes to it). */
-function renderResults(q: string): HTMLElement {
-  const content = $("main", "content", $("h1", "page-title", "Search"));
+function renderResults(q: string, onlyChanged = false): HTMLElement {
+  const content = $("main", "content", $("h1", "page-title", onlyChanged ? "Changed from the defaults" : "Search"));
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const has = (...texts: (string | undefined)[]) => {
     const t = texts.filter(Boolean).join(" ").toLowerCase();
@@ -395,7 +467,7 @@ function renderResults(q: string): HTMLElement {
       if (s.scope === "global" && scope.monitor) continue;
       if (s.scope === "monitor" && !scope.monitor) continue;
       const whole = has(p.label, s.title, s.help);
-      const fields = s.fields.filter((f) => whole || ("label" in f && has(p.label, s.title, f.label, f.help)));
+      const fields = onlyChanged ? s.fields.filter((f) => changedPath(f)) : s.fields.filter((f) => whole || ("label" in f && has(p.label, s.title, f.label, f.help)));
       const rows = fields.map(fieldControl).filter((r): r is HTMLElement => r !== null);
       if (!rows.length) continue;
       found++;
@@ -409,7 +481,7 @@ function renderResults(q: string): HTMLElement {
       content.append($("section", "card", title, ...rows));
     }
   }
-  if (!found) content.append($("p", "card-help", "No settings match."));
+  if (!found) content.append($("p", "card-help", onlyChanged ? "Everything is as it came: nothing's changed from the defaults." : "No settings match."));
   return content;
 }
 
@@ -462,6 +534,7 @@ function render(): void {
   const open = (id: string) => {
     current = id;
     query = "";
+    changedOnly = false;
     render();
     app.querySelector(".content")!.scrollTop = 0;
   };
@@ -485,7 +558,16 @@ function render(): void {
       nav.append(sub);
     }
   }
-  const page = query ? renderResults(query) : renderPage(pages.find((p) => p.id === current)!);
+  // Only what's changed from the defaults.
+  const onlyChanged = $("button", `nav-changed${changedOnly ? " active" : ""}`, glyph(0xe7c1), "Changed from the defaults");
+  onlyChanged.setAttribute("aria-pressed", String(changedOnly));
+  onlyChanged.addEventListener("click", () => {
+    changedOnly = !changedOnly;
+    query = "";
+    render();
+  });
+  nav.insertBefore(onlyChanged, nav.children[1] ?? null);
+  const page = changedOnly ? renderResults("", true) : query ? renderResults(query) : renderPage(pages.find((p) => p.id === current)!);
   app.replaceChildren(nav, page);
   page.scrollTop = scroll;
   // The sidebar's foot: the mist shape (Desktop asset.svg), the version in its lower-left gap.

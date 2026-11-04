@@ -106,6 +106,15 @@ body.maximized { border: 0; border-radius: 0; }
 .more-toggle:hover { color: var(--fg); }
 .more-toggle .icon { font-size: 10px; transition: transform 120ms ease; }
 .more-toggle.open .icon { transform: rotate(90deg); }
+/* Changed from its default: a dot (a click puts the default back). */
+.changed-dot { width: 7px; height: 7px; padding: 0; margin: 0 8px 1px -15px; border: 0; border-radius: 50%; background: var(--accent, #eeff00); vertical-align: middle; cursor: pointer; }
+.changed-dot:hover { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.15); }
+.card-reset { float: right; margin-top: -3px; padding: 2px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--faint); font: inherit; font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.card-reset:hover { color: var(--fg); background: rgba(255, 255, 255, 0.06); }
+.nav-changed { display: flex; align-items: center; gap: 8px; margin: -2px 0 8px; padding: 5px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--faint); font: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.nav-changed:hover, .nav-changed.active { color: var(--fg); background: rgba(255, 255, 255, 0.06); }
+.nav-changed .icon { font-size: 12px; }
+.toast-undo { margin-left: 12px; padding: 2px 10px; border: 0; border-radius: 6px; background: rgba(0, 0, 0, 0.12); color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
 /* What a setting changes or needs. */
 .row-tag { margin-left: 8px; padding: 1px 7px; border-radius: 99px; background: rgba(255, 159, 67, 0.14); color: #ffb36b; font-size: 10.5px; font-weight: 600; vertical-align: 1px; }
 /* Why a group of settings isn't shown. */
@@ -292,7 +301,7 @@ body.maximized { border: 0; border-radius: 0; }
   transition: opacity 160ms ease, transform 160ms ease;
   max-width: 80%;
 }
-#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 #toast.error { background: #ff6b6b; color: #000; }
 
 /* Collapsible rows (per-widget settings, notches, monitors). */
