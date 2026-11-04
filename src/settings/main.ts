@@ -16,11 +16,14 @@ import {
   isPlaced,
   openSection,
   scope,
+  shownSurfaces,
+  surfaceIds,
+  surfaceName,
   type Op,
 } from "./editors";
 import { $, glyph, row, segmented, toggleSwitch } from "./dom";
 import { kasumiLogo } from "../quick-tiles";
-import { areaOf, areas, pageAliases, pages, type Cfg, type Field, type Page, type Path } from "./schema";
+import { areaOf, areas, pageAliases, pages, type Cfg, type Field, type Page, type Path, type Section } from "./schema";
 import { renderNotes, renderSetup, type Host } from "./setup";
 
 /** This window: settings, or the first-time setup / update notes (settings.rs). */
@@ -422,7 +425,8 @@ function renderPage(page: Page): HTMLElement {
   }
   let group: HTMLElement | null = null;
   let last: HTMLElement | null = null;
-  for (const s of page.sections) {
+  for (let i = 0; i < page.sections.length; i++) {
+    const s = page.sections[i];
     if (s.tab && s.tab !== tab) continue;
     if (s.tab && tabBar) {
       content.append(tabBar);
@@ -439,6 +443,24 @@ function renderPage(page: Page): HTMLElement {
     // Widgets page: some sections belong to the Global view, some to a monitor's.
     if (s.scope === "global" && scope.monitor) continue;
     if (s.scope === "monitor" && !scope.monitor) continue;
+    // One bar's settings: a card for each bar, the run of them together.
+    if (s.perBar) {
+      const run: Section[] = [];
+      for (; i < page.sections.length && page.sections[i].perBar; i++) {
+        const x = page.sections[i];
+        if (!(x.scope === "global" && scope.monitor) && !(x.scope === "monitor" && !scope.monitor)) run.push(x);
+      }
+      i--;
+      const keep = scope.surface;
+      for (const id of surfaceIds(cfg)) {
+        scope.surface = id;
+        const card = barCard(id, run);
+        if (card) content.append(card);
+      }
+      scope.surface = keep;
+      group = null;
+      continue;
+    }
     // Expert settings fold under More (open once opened, until closed again).
     const shown = s.fields.filter((f) => !("more" in f && f.more));
     const expert = s.fields.filter((f) => "more" in f && f.more);
@@ -507,6 +529,28 @@ function renderPage(page: Page): HTMLElement {
     last = card;
   }
   return content;
+}
+
+/** One bar's card of `run` (per-bar sections, drawn with scope.surface on it): its
+ *  name as the title; a bar that's off and has nothing to set here: none. */
+function barCard(id: string, run: Section[]): HTMLElement | null {
+  const name = surfaceName(id, cfg.surfaces?.[id]);
+  const rows = run.flatMap((s) => s.fields.map(fieldControl).filter((r): r is HTMLElement => r !== null));
+  const title = $("h2", "card-title", run.length === 1 && run[0].title ? `${name} · ${run[0].title}` : name);
+  if (!rows.length) {
+    if (!shownSurfaces(cfg).includes(id)) return null;
+    const why = run.map((s) => s.note?.(cfg)).find((x) => x);
+    return why ? $("p", "quiet-note", glyph(0xe946), $("span", "", `${name}: ${why}`)) : null;
+  }
+  const changed = run.flatMap((s) => s.fields.map(changedPath)).filter((x): x is Path => x !== null);
+  if (changed.length > 1) {
+    const back = $("button", "card-reset", "Back to default");
+    back.title = `Puts back the default of the ${changed.length} settings changed here`;
+    back.addEventListener("click", () => toDefault(changed));
+    title.append(back);
+  }
+  const help = run.length === 1 ? run[0].help : undefined;
+  return $("section", "card", title, ...(help ? [$("p", "card-help", help)] : []), ...rows);
 }
 
 /** The sidebar's search: every setting whose page, section, name or help has all the

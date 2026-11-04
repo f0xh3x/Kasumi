@@ -120,6 +120,9 @@ export interface Section {
   note?: (cfg: Cfg) => string | null;
   /** Its settings as cards side by side (Home), its title over them. */
   tiles?: boolean;
+  /** Settings of one bar: drawn once for each bar (scope.surface set to it), consecutive
+   *  ones together in the bar's card. */
+  perBar?: boolean;
 }
 
 export interface Page {
@@ -2061,8 +2064,8 @@ export const pages: Page[] = [
     icon: 0xe71d,
     sections: [
       sec("widgets", "Layout for", { title: "" }),
-      sec("widgets", "Bar"),
-      part("widgets", "Bar settings", ["<surfaceStyle>"], { title: "Style", scope: "global" }),
+      sec("widgets", "Bar", { perBar: true, badge: undefined }),
+      part("widgets", "Bar settings", ["<surfaceStyle>"], { title: "Style", scope: "global", perBar: true }),
       sec("widgets", "This monitor"),
       sec("widgets", "Placement"),
     ],
@@ -2076,6 +2079,7 @@ export const pages: Page[] = [
       part("widgets", "Bar settings", ["Reserve space", "Hot corner: left", "Hot corner: right", "Anywhere along the edge", "Hot corner size", "Edge zone size"], {
         title: "Hot corners and space",
         scope: "global",
+        perBar: true,
         note: (cfg) => (cfg.surfaces?.[scope.surface]?.enabled === false ? "This bar is off: switch it on under Layout to set how it opens." : "Hot corners are for bars that open from their notches; this one is always open."),
       }),
       sec("behaviour", "Opening and closing"),
@@ -2091,6 +2095,7 @@ export const pages: Page[] = [
       part("widgets", "Bar settings", ["Size at rest", "Size when open"], {
         title: "This bar's size",
         scope: "global",
+        perBar: true,
         note: (cfg) => (cfg.surfaces?.[scope.surface]?.enabled === false ? "This bar is off: switch it on under Layout." : "Sizes at rest and when open are for docks: pick a dock above to see them."),
       }),
       part("appearance", "Bar and panels", ["Bar height", "Side padding", "Gap between widgets"], { title: "Bar" }),

@@ -116,7 +116,7 @@ export const surfaceIds = (cfg: Cfg): string[] => [
 ];
 
 /** Surfaces that exist and are switched on. */
-const shownSurfaces = (cfg: Cfg): string[] =>
+export const shownSurfaces = (cfg: Cfg): string[] =>
   surfaceIds(cfg).filter((id) => (id === "top" && !cfg.surfaces) || (cfg.surfaces?.[id] && cfg.surfaces[id].enabled !== false));
 
 /** A surface's global layout. */
@@ -356,19 +356,18 @@ const widgetHeader: Editor = (ctx) => {
   return top;
 };
 
-/** A bar as a strip: its name, then its left, centre and right, each labelled; `fill`
- *  puts the widgets in a side and says what an empty side shows. */
-function barStrip(cfg: Cfg, s: string, fill: (side: Side, zone: HTMLElement) => string): HTMLElement {
-  const zones = $("div", "strip-zones");
+/** A bar as a strip: its name over its left, centre and right (each labelled); `fill`
+ *  puts the widgets in a side. */
+function barStrip(cfg: Cfg, s: string, fill: (side: Side, zone: HTMLElement) => void): HTMLElement {
+  const strip = $("div", "bar-strip");
   for (const side of SIDES) {
     const zone = $("div", `bar-zone ${side}`, $("span", "zone-label", { left: "Left", center: "Centre", right: "Right" }[side]));
-    const empty = fill(side, zone);
-    if (!zone.querySelector(".chip")) zone.append($("span", "bar-zone-empty", empty));
-    zones.append(zone);
+    fill(side, zone);
+    strip.append(zone);
   }
-  const strip = $("div", "bar-strip", $("div", "strip-name", glyph(surfaceIcon(s)), surfaceName(s, cfg.surfaces?.[s])), zones);
-  strip.setAttribute("aria-label", surfaceName(s, cfg.surfaces?.[s]));
-  return strip;
+  const name = surfaceName(s, cfg.surfaces?.[s]);
+  strip.setAttribute("aria-label", name);
+  return $("div", "strip-wrap", $("div", "strip-title", glyph(surfaceIcon(s)), name), strip);
 }
 
 /** Home: each bar that's on, drawn as a bar with its widgets (a click opens one's page). */
@@ -387,7 +386,6 @@ const homeBars: Editor = (ctx) => {
           b.addEventListener("click", () => ctx.goto(`w-${typeOf(id)}`, ""));
           zone.append(b);
         }
-        return "Nothing here";
       }),
     );
   }
@@ -411,8 +409,8 @@ const widgetCards: Editor = (ctx) => {
   return grid;
 };
 
-/** Which monitor and which bar the page's settings are for: two rows of buttons side by
- *  side at the top of the page (All monitors | each monitor) (Top bar | Dock). */
+/** Which monitor the page's settings are for: buttons at the top of the page (All
+ *  monitors | each monitor), with more than one monitor. Every bar shows on the page. */
 const scopeSelector: Editor = (ctx) => {
   const group = (label: string) => {
     const g = $("div", "scope-seg");
@@ -445,17 +443,6 @@ const scopeSelector: Editor = (ctx) => {
     }
     wrap.prepend(monitors);
   });
-  const ids = surfaceIds(ctx.cfg);
-  if (!ids.includes(scope.surface)) scope.surface = ids.includes("top") ? "top" : ids[0];
-  if (ids.length > 1) {
-    const bars = group("Bar");
-    for (const id of ids) {
-      const s = ctx.cfg.surfaces?.[id];
-      const off = !s ? id !== "top" : s.enabled === false;
-      option(bars, surfaceName(id, s ?? {}), scope.surface === id, () => (scope.surface = id), off ? " off" : "").title = off ? "Switched off" : "";
-    }
-    wrap.append(bars);
-  }
   return wrap;
 };
 
@@ -492,19 +479,20 @@ const surfaceStyle: Editor = (ctx) => {
   const cur = scope.surface;
   const s = ctx.cfg.surfaces?.[cur];
   if (!s || s.enabled === false) return $("div");
-  const sel = select(
+  const sel = segmented(
     [
-      ["bar", "Status bar"],
-      ["dock", "Dock"],
-      ["always", "Always on"],
+      ["bar", "Status bar", "Notches that open into a full-width bar"],
+      ["dock", "Dock", "Notches that grow in place"],
+      ["always", "Always on", "The full bar, always shown (reserves its space)"],
     ],
     s.mode ?? "bar",
+    "Style",
+    (v) => {
+      const ops: Op[] = [{ path: ["surfaces", cur, "mode"], value: v }];
+      if (v === "always") ops.push({ path: ["surfaces", cur, "reserve_space"], value: true });
+      ctx.saveMany(ops);
+    },
   );
-  sel.addEventListener("change", () => {
-    const ops: Op[] = [{ path: ["surfaces", cur, "mode"], value: sel.value }];
-    if (sel.value === "always") ops.push({ path: ["surfaces", cur, "reserve_space"], value: true });
-    ctx.saveMany(ops);
-  });
   return row(
     "Style",
     "Status bar: notches that open into a full-width bar. Dock: notches that grow in place. Always on: the full bar, always shown (reserves its space).",
@@ -541,132 +529,84 @@ export function surfaceName(id: string, _s?: any): string {
 }
 const surfaceIcon = (id: string) => (id === "bottom" ? 0xe70d : 0xe70e); // chevron down / up
 
-/** Per-monitor: Kasumi on/off, custom layout, follow global while unchanged. */
+/** Per-monitor: Kasumi on/off; for each bar, shown here, custom layout, follow global
+ *  while unchanged. */
 const monitorToggles: Editor = (ctx) => {
   const name = scope.monitor!;
   const r = ownRule(ctx.cfg, name)?.[1];
   const m = monitorsCache?.find((x) => x.name === name);
   const effective = (m && ruleFor(ctx.cfg, m)) ?? r;
   const set = (update: (r: any) => void) => ctx.saveMany(ruleOps(ctx.cfg, name, update));
-  const own = effective?.surfaces?.[scope.surface];
-  const custom = hasLists(own) || own?.custom_layout === true;
-  const setOwn = (update: (o: any) => void) => set((x) => update(((x.surfaces ??= {})[scope.surface] ??= {})));
   const box = $("div", "stack-tight");
-  box.append(
-    row("Kasumi on this monitor", undefined, sw(effective?.enabled !== false, (on) => set((x) => (x.enabled = on)))),
-    ...(surfaceIds(ctx.cfg).length > 1
-      ? [
-          row(
-            `Show the ${surfaceName(scope.surface, ctx.cfg.surfaces?.[scope.surface]).toLowerCase()} here`,
-            undefined,
-            sw(own?.enabled !== false, (on) => setOwn((o) => (on ? delete o.enabled : (o.enabled = false)))),
-          ),
-        ]
-      : []),
-    row(
-      "Custom layout",
-      "Off: this monitor follows the global layout.",
-      sw(custom, (on) =>
-        setOwn((o) => {
-          o.custom_layout = on;
-          if (!on) for (const k of LISTS) delete o[k];
-        }),
-      ),
-    ),
-  );
-  if (custom) {
+  box.append(row("Kasumi on this monitor", undefined, sw(effective?.enabled !== false, (on) => set((x) => (x.enabled = on)))));
+  for (const cur of shownSurfaces(ctx.cfg)) {
+    const own = effective?.surfaces?.[cur];
+    const custom = hasLists(own) || own?.custom_layout === true;
+    const setOwn = (update: (o: any) => void) => set((x) => update(((x.surfaces ??= {})[cur] ??= {})));
+    const label = surfaceName(cur, ctx.cfg.surfaces?.[cur]);
     box.append(
+      $("div", "sub-title", label),
+      row(`Show the ${label.toLowerCase()} here`, undefined, sw(own?.enabled !== false, (on) => setOwn((o) => (on ? delete o.enabled : (o.enabled = false))))),
       row(
-        "Follow global while unchanged",
-        "Until you change this monitor's layout, global changes still apply to it.",
-        sw(own?.follow_unchanged !== false, (on) => setOwn((o) => (o.follow_unchanged = on))),
+        "Own layout",
+        "Off: this monitor's bar follows the global layout.",
+        sw(custom, (on) =>
+          setOwn((o) => {
+            o.custom_layout = on;
+            if (!on) for (const k of LISTS) delete o[k];
+          }),
+        ),
       ),
     );
+    if (custom) {
+      box.append(
+        row(
+          "Follow global while unchanged",
+          "Until you change this monitor's layout, global changes still apply to it.",
+          sw(own?.follow_unchanged !== false, (on) => setOwn((o) => (o.follow_unchanged = on))),
+        ),
+      );
+    }
   }
   return box;
 };
 
-/**
- * Drag widgets between Left / Center / Right of the selected surface, the other
- * surfaces and Disabled. A widget lives in one place: putting it somewhere takes
- * it out of wherever it was.
- */
-/** The placement chips' two buttons, also explained in the Placement legend. */
+/** The placement chips' two buttons, also explained in the setup's legend. */
 export const CHIP_LEGEND: [number, string][] = [
   [0xe718, "Own notch"],
   [0xed1a, "Hides under maximized windows"],
 ];
 
-/** The placement's open widget popup (kept while the editor redraws after a change). */
-let placementOpen: string | null = null;
 /** A chip moved by the keyboard: focused again after the redraw. */
 let refocus: string | null = null;
 
 /**
- * The selected bar drawn as a bar (or a dock): its left, centre and right, with the
- * widgets on them. Drag along it to reorder, from the shelf under it to put a widget on
- * it, back to the shelf to take it off. A click on a widget opens its options there: its
- * own notch, hiding under maximized windows, its settings, taking it off. A widget
- * lives in one place: putting it somewhere takes it out of wherever it was.
+ * Every bar that's on as a strip (its name over it): its left, centre and right, with
+ * the widgets on them, and a shelf of the widgets on no bar under them. Drag along a bar
+ * to reorder, between bars to move, from the shelf to put a widget on, back to the shelf
+ * to take it off. A widget lives in one place. On a bar (status bar style), a widget's
+ * two buttons: its own notch, and hiding under maximized windows. A click on a widget
+ * opens its settings.
  */
 const placement: Editor = (ctx) => {
-  const cur = scope.surface;
   const ids = surfaceIds(ctx.cfg);
+  const shown = shownSurfaces(ctx.cfg);
   const layouts: Record<string, LayoutCfg> = Object.fromEntries(ids.map((s) => [s, scopedLayout(ctx.cfg, s)]));
-  const L = layouts[cur];
   const cat = catalog(ctx.cfg).filter((w) => !placementHide.has(typeOf(w.id)));
   const known = (id: string) => cat.some((w) => w.id === id);
-  const placedOn = (id: string) => ids.filter((s) => sideOf(layouts[s], id));
+  const placedOn = (id: string) => shown.filter((s) => sideOf(layouts[s], id));
   const isOff = (id: string) => !enabled(ctx.cfg, id) || placedOn(id).length === 0;
   const mode = (s: string) => ctx.cfg.surfaces?.[s]?.mode ?? "bar";
   const root = $("div", "placer");
   let dragging: string | null = null;
 
-  type Bucket = Side | "disabled" | `surface:${string}`;
-  const listOf = (bucket: Bucket): string[] => {
-    if (bucket === "disabled") return cat.map((w) => w.id).filter(isOff);
-    if (bucket.startsWith("surface:")) {
-      const l = layouts[bucket.slice(8)];
-      return SIDES.flatMap((side) => l[side]).filter((id) => enabled(ctx.cfg, id) && known(id));
-    }
-    return L[bucket as Side].filter((id) => enabled(ctx.cfg, id) && known(id));
-  };
+  type Target = { s: string; side: Side } | "disabled";
+  const sideList = (s: string, side: Side) => layouts[s][side].filter((id) => enabled(ctx.cfg, id) && known(id));
 
-  /** A widget's options on this bar: its own notch (bars: a notch on its side while the
-   *  bar is closed; a dock's widgets always show, an always-on bar has no notches) and
-   *  hiding under maximized windows (a [widgets] option, the same on every bar; it only
-   *  does anything in a notch). */
-  const options = (id: string) => {
-    const m = mode(cur);
-    const notch = m === "bar" && L.notch.includes(id);
-    const hides = ctx.cfg.widgets?.[id]?.hide_when_maximized === true;
-    const toggleNotch = () => {
-      const next = structuredClone(L);
-      next.notch = notch ? next.notch.filter((x) => x !== id) : [...next.notch, id];
-      // Global view: like adding a widget, its pin also reaches monitors with their own
-      // layout of this bar that show it (else it pins nothing those monitors show).
-      let target = ctx.cfg;
-      if (!scope.monitor && Array.isArray(ctx.cfg.monitors)) {
-        target = structuredClone(ctx.cfg);
-        for (const r of target.monitors) {
-          const o = r.surfaces?.[cur];
-          if (!hasLists(o) || !LISTS.slice(0, 3).some((k) => (o[k] ?? []).includes(id))) continue;
-          const has = (o.notch ?? []).includes(id);
-          if (!notch && !has) o.notch = [...(o.notch ?? []), id];
-          if (notch && has) o.notch = o.notch.filter((x: string) => x !== id);
-        }
-      }
-      ctx.saveMany([...layoutDiffOps(ctx.cfg, target), ...layoutsOps(target, { [cur]: next })]);
-    };
-    const toggleHide = () => ctx.saveMany([{ path: ["widgets", id, "hide_when_maximized"], value: hides ? null : true }]);
-    return { m, notch, hides, toggleNotch, toggleHide };
-  };
-
-  /** Puts a widget into a bucket (at `index` on this bar's sides). */
-  const drop = (id: string, bucket: Bucket, index: number) => {
-    placementOpen = null;
+  /** Puts a widget on a bar's side (at `index`), or takes it off. */
+  const drop = (id: string, to: Target, index: number) => {
     const wasOff = !enabled(ctx.cfg, id);
-    if (bucket === "disabled" && !scope.monitor) {
+    if (to === "disabled" && !scope.monitor) {
       // Off everywhere: out of every bar and every monitor's layout.
       const base = stripped(ctx.cfg, id);
       ctx.saveMany([...layoutDiffOps(ctx.cfg, base), { path: ["widgets", id, "enabled"], value: false }]);
@@ -680,14 +620,11 @@ const placement: Editor = (ctx) => {
       for (const side of SIDES) next[s][side] = next[s][side].filter((x) => x !== id);
       next[s].notch = next[s].notch.filter((x) => x !== id);
     }
-    if (bucket === "disabled") {
-      // Monitor view: just off this monitor's bar (it was taken out above).
-      for (const s of ids) if (s !== cur) next[s] = ls[s];
-    } else if (bucket.startsWith("surface:")) {
-      next[bucket.slice(8)].center.push(id);
-    } else {
-      const side = next[cur][bucket as Side];
+    if (to !== "disabled") {
+      const side = next[to.s][to.side];
       side.splice(Math.min(index, side.length), 0, id);
+      // Moved along the same bar: it keeps its own notch.
+      if (ls[to.s].notch.includes(id)) next[to.s].notch.push(id);
     }
     const changed = Object.fromEntries(Object.entries(next).filter(([s, l]) => !sameLayout(l, ls[s])));
     // Global view: a widget newly put on (or taken off) a bar is put on (taken off)
@@ -710,58 +647,115 @@ const placement: Editor = (ctx) => {
     }
     ctx.saveMany([
       ...layoutDiffOps(ctx.cfg, target),
-      ...(wasOff && bucket !== "disabled" ? [{ path: ["widgets", id, "enabled"], value: true }] : []),
+      ...(wasOff && to !== "disabled" ? [{ path: ["widgets", id, "enabled"], value: true }] : []),
       ...layoutsOps(target, changed),
     ]);
   };
 
-  /** A widget's chip: its icon and name (a dot when it has its own notch). */
-  const chip = (id: string, onBar: boolean) => {
+  /** A widget's two buttons on a status bar: its own notch, hiding under maximized
+   *  windows (a [widgets] option, the same on every bar; only for a widget in a notch). */
+  const chipButtons = (id: string, s: string): HTMLElement | null => {
+    if (mode(s) !== "bar") return null;
+    const L = layouts[s];
+    const notch = L.notch.includes(id);
+    const hides = ctx.cfg.widgets?.[id]?.hide_when_maximized === true;
+    const button = (code: number, on: boolean, usable: boolean, title: string, toggle: () => void) => {
+      const b = $("button", `chip-button${on ? " on" : ""}`, glyph(code)) as HTMLButtonElement;
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.setAttribute("aria-pressed", String(on));
+      b.draggable = false;
+      b.disabled = !usable;
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggle();
+      });
+      return b;
+    };
+    const pin = button(
+      CHIP_LEGEND[0][0],
+      notch,
+      true,
+      notch ? "Own notch: shows as a notch on its side while the bar is closed. Click to stop" : "Own notch: click to also show it as a notch on its side while the bar is closed",
+      () => {
+        const next = structuredClone(L);
+        next.notch = notch ? next.notch.filter((x) => x !== id) : [...next.notch, id];
+        // Global view: like adding a widget, its pin also reaches monitors with their own
+        // layout of this bar that show it (else it pins nothing those monitors show).
+        let target = ctx.cfg;
+        if (!scope.monitor && Array.isArray(ctx.cfg.monitors)) {
+          target = structuredClone(ctx.cfg);
+          for (const r of target.monitors) {
+            const o = r.surfaces?.[s];
+            if (!hasLists(o) || !LISTS.slice(0, 3).some((k) => (o[k] ?? []).includes(id))) continue;
+            const has = (o.notch ?? []).includes(id);
+            if (!notch && !has) o.notch = [...(o.notch ?? []), id];
+            if (notch && has) o.notch = o.notch.filter((x: string) => x !== id);
+          }
+        }
+        ctx.saveMany([...layoutDiffOps(ctx.cfg, target), ...layoutsOps(target, { [s]: next })]);
+      },
+    );
+    const hide = button(
+      CHIP_LEGEND[1][0],
+      hides && notch,
+      notch,
+      !notch
+        ? "Hides under maximized windows: only for a widget in its own notch"
+        : hides
+          ? "Hides while a maximized window covers its notch (on every bar). Click to keep it"
+          : "Click to hide it while a maximized window covers its notch, instead of moving aside (on every bar)",
+      () => ctx.saveMany([{ path: ["widgets", id, "hide_when_maximized"], value: hides ? null : true }]),
+    );
+    return $("div", "chip-buttons", pin, hide);
+  };
+
+  /** A widget's chip: its icon and name (on a status bar, its two buttons). */
+  const chip = (id: string, s: string | null) => {
     const w = cat.find((x) => x.id === id)!;
-    const el = $("button", `chip${onBar && placementOpen === id ? " open" : ""}`, glyph(w.icon), w.label);
-    if (onBar && options(id).notch) el.append($("span", "chip-notch"));
+    const el = $("div", "chip", glyph(w.icon), $("span", "chip-name", w.label));
     const needs = NEEDS[typeOf(id)];
     if (needs) el.append($("span", "chip-needs", glyph(0xe71b)));
+    const buttons = s ? chipButtons(id, s) : null;
+    if (buttons) el.append(buttons);
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
     el.draggable = true;
     el.dataset.id = id;
-    el.title = (onBar ? `${w.label}: click for its options, drag (or arrow keys) to move it, Delete to take it off` : `${w.label}: drag onto the bar`) + (needs ? ` (needs ${needs.app})` : "");
+    el.title = (s ? `${w.label}: drag (or arrow keys) to move it, Delete to take it off, click for its settings` : `${w.label}: drag onto a bar, click for its settings`) + (needs ? ` (needs ${needs.app})` : "");
     if (refocus === id)
       requestAnimationFrame(() => {
         if (!el.isConnected) return;
         el.focus();
         refocus = null;
       });
-    // Keyboard: arrows move it along the bar (past a side's end: into the next side),
-    // Delete takes it off.
-    if (onBar) {
-      el.addEventListener("keydown", (e) => {
-        const side = SIDES.find((x) => L[x].includes(id));
-        if (!side) return;
-        const at = L[side].indexOf(id);
-        const si = SIDES.indexOf(side);
-        let to: [Side, number] | null = null;
-        if (e.key === "ArrowLeft") to = at > 0 ? [side, at - 1] : si > 0 ? [SIDES[si - 1], L[SIDES[si - 1]].length] : null;
-        if (e.key === "ArrowRight") to = at < L[side].length - 1 ? [side, at + 1] : si < SIDES.length - 1 ? [SIDES[si + 1], 0] : null;
-        if (e.key === "Delete" || e.key === "Backspace") {
-          e.preventDefault();
-          drop(id, "disabled", 0);
-          return;
-        }
-        if (!to) return;
+    el.addEventListener("click", () => ctx.goto(`w-${typeOf(id)}`, ""));
+    el.addEventListener("keydown", (e) => {
+      if (e.target !== el) return;
+      if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        refocus = id;
-        drop(id, to[0], to[1]);
-      });
-    }
-    el.setAttribute("aria-haspopup", String(onBar));
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (!onBar) {
         ctx.goto(`w-${typeOf(id)}`, "");
         return;
       }
-      placementOpen = placementOpen === id ? null : id;
-      ctx.rerender();
+      if (!s) return;
+      // Arrows move it along the bar (past a side's end: into the next side).
+      const L = layouts[s];
+      const side = SIDES.find((x) => L[x].includes(id));
+      if (!side) return;
+      const at = L[side].indexOf(id);
+      const si = SIDES.indexOf(side);
+      let to: [Side, number] | null = null;
+      if (e.key === "ArrowLeft") to = at > 0 ? [side, at - 1] : si > 0 ? [SIDES[si - 1], L[SIDES[si - 1]].length] : null;
+      if (e.key === "ArrowRight") to = at < L[side].length - 1 ? [side, at + 1] : si < SIDES.length - 1 ? [SIDES[si + 1], 0] : null;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        drop(id, "disabled", 0);
+        return;
+      }
+      if (!to) return;
+      e.preventDefault();
+      refocus = id;
+      drop(id, { s, side: to[0] }, to[1]);
     });
     el.addEventListener("dragstart", (e) => {
       dragging = id;
@@ -776,8 +770,8 @@ const placement: Editor = (ctx) => {
     return el;
   };
 
-  /** A place widgets drop into; `along`: chips ordered left to right (the bar's sides). */
-  const dropZone = (el: HTMLElement, list: HTMLElement, bucket: Bucket, along: boolean) => {
+  /** A place widgets drop into; `along`: chips ordered left to right (a bar's sides). */
+  const dropZone = (el: HTMLElement, list: HTMLElement, to: Target, along: boolean) => {
     const indexAt = (x: number) => {
       const chips = [...list.querySelectorAll<HTMLElement>(".chip:not(.dragging)")];
       const i = chips.findIndex((c) => x < c.getBoundingClientRect().left + c.offsetWidth / 2);
@@ -804,67 +798,32 @@ const placement: Editor = (ctx) => {
       const id = dragging;
       if (!id) return;
       const { i, chips } = indexAt(e.clientX);
-      drop(id, bucket, chips.slice(0, i).filter((c) => c.dataset.id !== id).length);
+      drop(id, to, chips.slice(0, i).filter((c) => c.dataset.id !== id).length);
     });
   };
 
-  // The bar (or dock): left, centre, right.
-  root.append(
-    barStrip(ctx.cfg, cur, (side, list) => {
-      for (const id of listOf(side)) list.append(chip(id, true));
-      dropZone(list, list, side, true);
-      return "Drop a widget here";
-    }),
-  );
-
-  // The open widget's options, under the bar.
-  const open = placementOpen && listOf("left").concat(listOf("center"), listOf("right")).includes(placementOpen) ? placementOpen : null;
-  if (open) {
-    const w = cat.find((x) => x.id === open)!;
-    const o = options(open);
-    const settings = $("button", "button", "Settings ›");
-    settings.addEventListener("click", () => ctx.goto(`w-${typeOf(open)}`, ""));
-    const off = $("button", "button", scope.monitor ? "Take it off this monitor's bar" : "Take it off the bar");
-    off.addEventListener("click", () => drop(open, "disabled", 0));
-    const pop = $("div", "chip-pop", $("div", "chip-pop-head", glyph(w.icon), $("b", "", w.label), settings));
-    if (o.m === "bar") {
-      pop.append(row("In its own notch", "Shows as a notch on its side while the bar is closed.", toggleSwitch(o.notch, () => o.toggleNotch()).el));
-      if (o.notch) pop.append(row("Hide under maximized windows", "While a maximized window covers its notch, instead of moving aside (on every bar).", toggleSwitch(o.hides, () => o.toggleHide()).el));
-    }
-    pop.append($("div", "chip-pop-foot", off));
-    root.append(pop);
+  // Each bar that's on: left, centre, right.
+  for (const s of shown) {
+    root.append(
+      barStrip(ctx.cfg, s, (side, list) => {
+        for (const id of sideList(s, side)) list.append(chip(id, s));
+        dropZone(list, list, { s, side }, true);
+      }),
+    );
   }
 
-  // The shelf: the other bars' widgets and the ones on no bar.
-  const shelf = $("div", "shelf");
-  const others = shownSurfaces(ctx.cfg).filter((x) => x !== cur);
-  for (const s of others) {
-    const list = $("div", "shelf-list");
-    for (const id of listOf(`surface:${s}`)) list.append(chip(id, false));
-    const group = $("div", "shelf-group", $("div", "shelf-title", `On the ${surfaceName(s).toLowerCase()}`), list);
-    dropZone(group, list, `surface:${s}`, false);
-    shelf.append(group);
-  }
+  // The shelf: the widgets on no bar.
   const offList = $("div", "shelf-list");
-  for (const id of listOf("disabled")) offList.append(chip(id, false));
-  const offGroup = $("div", "shelf-group", $("div", "shelf-title", scope.monitor ? "Not on this monitor's bar" : "Not on a bar"), offList);
+  for (const id of cat.map((w) => w.id).filter(isOff)) offList.append(chip(id, null));
+  const offGroup = $("div", "shelf-group", $("div", "shelf-title", scope.monitor ? "Not on this monitor's bars" : "Not on a bar"), offList);
   dropZone(offGroup, offList, "disabled", false);
-  shelf.append(offGroup);
-  root.append(shelf);
-  root.addEventListener("click", () => {
-    if (placementOpen) {
-      placementOpen = null;
-      ctx.rerender();
-    }
-  });
+  root.append($("div", "shelf", offGroup));
 
-  const own = (ctx.cfg.monitors ?? [])
-    .filter((r: any) => hasLists(r.surfaces?.[cur]))
-    .map((r: any) => r.match);
+  const own = (ctx.cfg.monitors ?? []).filter((r: any) => shown.some((s) => hasLists(r.surfaces?.[s]))).map((r: any) => r.match);
   const help = scope.monitor
-    ? "Drag widgets along the bar, onto it from the shelf, or back to the shelf to take them off this monitor's bar. Click a widget for its options."
-    : "Drag widgets along the bar, onto it from the shelf, or back to the shelf to take them off. A widget lives in one place. Click a widget on the bar for its options, one on the shelf for its settings." +
-      (own.length ? ` Adding or removing a widget here also applies to ${own.join(", ")}, which have their own layout of this bar.` : "");
+    ? "Drag widgets along a bar, between bars, onto a bar from the shelf, or back to the shelf to take them off this monitor's bars. Click a widget for its settings."
+    : "Drag widgets along a bar, between bars, onto a bar from the shelf, or back to the shelf to take them off. A widget lives in one place. Click a widget for its settings." +
+      (own.length ? ` Adding or removing a widget here also applies to ${own.join(", ")}, which have their own layout.` : "");
   return $("div", "", root, $("p", "card-help", help));
 };
 
