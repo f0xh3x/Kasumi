@@ -558,47 +558,52 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
           else node.name = text.value;
         })(),
       );
-      box.append(field("Name", n.folder || n.cmd ? undefined : "Empty: Windows' own name.", text));
+      // Empty: Windows' own name (it shows in the field, greyed).
+      box.append(field("Name", undefined, text));
     }
+    const all = KINDS.map(([k]) => k);
+    /** The kinds of click it shows for (hidden: none). */
+    const kindsOf = (node: MenuNode): Set<string> => (node.hide ? new Set() : new Set(node.where ? node.where.split("|") : all));
+    /** Shows for `set`: all of them is no `where`; none of them is hidden. */
+    const setKinds = (node: MenuNode, set: Set<string>) => {
+      node.hide = set.size === 0;
+      node.where = set.size === 0 || set.size === all.length ? "" : all.filter((k) => set.has(k)).join("|");
+    };
     // Shown here: for this kind of click (a submenu's or Kasumi's own menus: at all).
     const shown = toggleSwitch(!row.off, () =>
       edit(row, (node) => {
-        const all = KINDS.map(([k]) => k);
-        const set = new Set(node.where ? node.where.split("|") : all);
         if (own) {
           node.hide = !node.hide;
           return;
         }
-        if (row.off) {
-          node.hide = false;
-          set.add(state.kind);
-        } else {
-          set.delete(state.kind);
-        }
-        node.where = set.size === all.length ? "" : [...set].join("|");
+        const set = kindsOf(node);
+        if (row.off) set.add(state.kind);
+        else set.delete(state.kind);
+        setKinds(node, set);
       })(),
     );
     box.append(field(own ? "Show it" : `Show it on ${here.toLowerCase()}`, undefined, shown.el));
     // Where it shows, every kind of click at once.
-    if (!own && !n.hide) {
+    if (!own) {
       const chips = $("div", "cm-kinds");
+      const on_ = kindsOf(n);
       for (const [k, label] of KINDS) {
-        const on = applies(n, k);
+        const on = on_.has(k);
         const chip = $("button", `cm-kind${on ? " on" : ""}`, label);
         chip.setAttribute("aria-pressed", String(on));
         chip.addEventListener(
           "click",
           edit(row, (node) => {
-            const all = KINDS.map(([x]) => x);
-            const set = new Set(node.where ? node.where.split("|") : all);
+            const set = kindsOf(node);
             if (set.has(k)) set.delete(k);
             else set.add(k);
-            node.where = set.size === all.length ? "" : [...set].join("|");
+            setKinds(node, set);
           }),
         );
         chips.append(chip);
       }
-      box.append($("div", "cm-section", $("div", "cm-section-title", "Shows for"), chips));
+      const none = on_.size === 0 ? [$("div", "card-help", "Shows nowhere: pick where it should.")] : [];
+      box.append($("div", "cm-section", $("div", "cm-section-title", "Shows for"), chips, ...none));
     }
     if (!isSep) {
       const [iconBtn, iconGrid] = iconControl(row);

@@ -18,6 +18,8 @@ interface Base {
   more?: boolean;
   /** A small tag by its name: what it changes or needs (set by TAGS below). */
   tag?: string;
+  /** Under its name instead of the help (which goes to its tooltip): Home's cards. */
+  short?: string;
 }
 
 /** Animation effects per widget (Settings > Animation > Per widget): the ones that apply to each. */
@@ -116,6 +118,8 @@ export interface Section {
   link?: [string, string];
   /** Why its settings don't show (when none applies): a quiet line in their place. */
   note?: (cfg: Cfg) => string | null;
+  /** Its settings as cards side by side (Home), its title over them. */
+  tiles?: boolean;
 }
 
 export interface Page {
@@ -209,8 +213,8 @@ const sources: Page[] = [
             path: (cfg) => (cfg.launcher?.enabled === false ? null : ["launcher", "fullscreen"]),
             default: "launcher",
             options: [
-              { value: "launcher", label: "Opens the launcher" },
-              { value: "notches", label: "Shows the notches for 2 seconds (press again for the launcher)" },
+              { value: "launcher", label: "Launcher (opens the launcher)" },
+              { value: "notches", label: "Notches (shows the notches for 2 seconds; press again for the launcher)" },
             ],
           },
           {
@@ -375,8 +379,8 @@ const sources: Page[] = [
             path: ["widgets", "clock", "today_mark"],
             default: "pill",
             options: [
-              { value: "pill", label: "Filled in your accent" },
-              { value: "underline", label: "Underlined in your accent" },
+              { value: "pill", label: "Filled (in your accent)" },
+              { value: "underline", label: "Underlined (in your accent)" },
             ],
           },
           {
@@ -482,9 +486,9 @@ const sources: Page[] = [
             default: "",
             options: [
               { value: "", label: "Nothing" },
-              { value: "record", label: "A little record, turning while it plays" },
-              { value: "bars", label: "Bars that move while it plays" },
-              { value: "cover", label: "The cover, small" },
+              { value: "record", label: "Record (a little record, turning while it plays)" },
+              { value: "bars", label: "Bars (bars that move while it plays)" },
+              { value: "cover", label: "Cover (the cover, small)" },
             ],
           },
           {
@@ -496,8 +500,8 @@ const sources: Page[] = [
             options: [
               { value: "off", label: "Off" },
               { value: "always", label: "Always" },
-              { value: "open", label: "Only while the bar is open" },
-              { value: "closed", label: "Only while the bar is closed" },
+              { value: "open", label: "Bar open (only while the bar is open)" },
+              { value: "closed", label: "Bar closed (only while the bar is closed)" },
             ],
           },
           {
@@ -622,8 +626,8 @@ const sources: Page[] = [
             path: ["widgets", "launcher", "buttons_position"],
             default: "row",
             options: [
-              { value: "row", label: "In a row below the apps" },
-              { value: "left", label: "In a column on the left" },
+              { value: "row", label: "Row (in a row below the apps)" },
+              { value: "left", label: "Column (in a column on the left)" },
             ],
           },
           {
@@ -656,9 +660,9 @@ const sources: Page[] = [
             path: ["widgets", "focus", "show"],
             default: "title",
             options: [
-              { value: "title", label: "Window title" },
-              { value: "app", label: "App name" },
-              { value: "both", label: "App name — window title" },
+              { value: "title", label: "Title (the window's title)" },
+              { value: "app", label: "App (its name)" },
+              { value: "both", label: "Both (app name — window title)" },
             ],
           },
           { kind: "slider", label: "Width", help: "Longer titles end in “…”.", path: ["widgets", "focus", "max_width"], default: 300, min: 100, max: 800, step: 10, unit: "px" },
@@ -770,8 +774,8 @@ const sources: Page[] = [
             path: ["widgets", "notifications", "click"],
             default: "open",
             options: [
-              { value: "open", label: "Opens the app that sent it" },
-              { value: "nothing", label: "Does nothing" },
+              { value: "open", label: "App (opens the app that sent it)" },
+              { value: "nothing", label: "Nothing (does nothing)" },
             ],
           },
           {
@@ -949,9 +953,9 @@ const sources: Page[] = [
             path: ["widgets", "batteries", "show"],
             default: "lowest",
             options: [
-              { value: "lowest", label: "The lowest battery" },
-              { value: "all", label: "Every battery" },
-              { value: "chosen", label: "The ones you pick" },
+              { value: "lowest", label: "Lowest (the lowest battery)" },
+              { value: "all", label: "All (every battery)" },
+              { value: "chosen", label: "Picked (the ones you pick)" },
             ],
           },
           { kind: "custom", editor: "batteryPicks" },
@@ -1042,8 +1046,8 @@ const sources: Page[] = [
             path: ["widgets", "tasks", "hover"],
             default: "list",
             options: [
-              { value: "list", label: "Lists its windows" },
-              { value: "previews", label: "Shows previews of its windows" },
+              { value: "list", label: "List (lists its windows)" },
+              { value: "previews", label: "Previews (shows previews of its windows)" },
             ],
           },
           {
@@ -1052,9 +1056,9 @@ const sources: Page[] = [
             path: ["widgets", "tasks", "scroll"],
             default: "windows",
             options: [
-              { value: "windows", label: "Cycles its windows" },
-              { value: "volume", label: "Changes its volume" },
-              { value: "off", label: "Does nothing" },
+              { value: "windows", label: "Windows (cycles its windows)" },
+              { value: "volume", label: "Volume (changes its volume)" },
+              { value: "off", label: "Nothing (does nothing)" },
             ],
           },
           {
@@ -1084,8 +1088,8 @@ const sources: Page[] = [
             path: ["widgets", "tray", "mode"],
             default: "collapsed",
             options: [
-              { value: "collapsed", label: "Collapsed: a button with the icons in a panel" },
-              { value: "expanded", label: "Expanded: every icon in the bar" },
+              { value: "collapsed", label: "Collapsed (a button with the icons in a panel)" },
+              { value: "expanded", label: "Expanded (every icon in the bar)" },
             ],
           },
           {
@@ -1356,8 +1360,8 @@ const sources: Page[] = [
             path: ["animation", "style"],
             default: "drop",
             options: [
-              { value: "drop", label: "Drop from the top edge" },
-              { value: "spread", label: "Spread out of the notches" },
+              { value: "drop", label: "Drop (from the top edge)" },
+              { value: "spread", label: "Spread (out of the notches)" },
             ],
           },
           {
@@ -1367,9 +1371,9 @@ const sources: Page[] = [
             path: ["animation", "bar_content"],
             default: "slide",
             options: [
-              { value: "slide", label: "Slide in with the bar" },
-              { value: "reveal", label: "Stay in place, the bar uncovers them" },
-              { value: "fade", label: "Stay in place and fade in" },
+              { value: "slide", label: "Slide (in with the bar)" },
+              { value: "reveal", label: "Uncover (stay in place, the bar uncovers them)" },
+              { value: "fade", label: "Fade (stay in place and fade in)" },
             ],
           },
           {
@@ -1379,8 +1383,8 @@ const sources: Page[] = [
             path: ["animation", "panel_content"],
             default: "reveal",
             options: [
-              { value: "reveal", label: "Stays in place, the panel uncovers it" },
-              { value: "fade", label: "Stays in place and fades in" },
+              { value: "reveal", label: "Uncover (stays in place, the panel uncovers it)" },
+              { value: "fade", label: "Fade (stays in place and fades in)" },
             ],
           },
         ],
@@ -1414,9 +1418,9 @@ const sources: Page[] = [
             path: ["animation", "menu_open"],
             default: "expand",
             options: [
-              { value: "expand", label: "Grows out of where it opens (submenus sideways)" },
-              { value: "fade", label: "Fades in" },
-              { value: "none", label: "No animation" },
+              { value: "expand", label: "Grow (out of where it opens; submenus sideways)" },
+              { value: "fade", label: "Fade (fades in)" },
+              { value: "none", label: "None (no animation)" },
             ],
           },
           { kind: "toggle", label: "Entries one by one", help: "Its entries come in one after another as it opens.", path: ["animation", "menu_cascade"], default: true },
@@ -1486,8 +1490,8 @@ const sources: Page[] = [
             path: ["osd", "open_bar"],
             default: "inline",
             options: [
-              { value: "inline", label: "In the bar, in place of their notch's widgets" },
-              { value: "below", label: "In a pill below the bar" },
+              { value: "inline", label: "In the bar (in place of their notch's widgets)" },
+              { value: "below", label: "Pill (in a pill below the bar)" },
             ],
           },
           { kind: "slider", label: "Pill width", path: ["osd", "width"], default: 230, min: 160, max: 400, step: 5, unit: "px" },
@@ -1615,9 +1619,9 @@ const sources: Page[] = [
             path: (cfg) => (cfg.osd?.notifications === true ? ["osd", "notification_style"] : null),
             default: "line",
             options: [
-              { value: "line", label: "One line: app, title and text" },
-              { value: "two", label: "Two lines: title over the text" },
-              { value: "compact", label: "Just the app's icon and name" },
+              { value: "line", label: "One line (app, title and text)" },
+              { value: "two", label: "Two lines (title over the text)" },
+              { value: "compact", label: "Icon (just the app's icon and name)" },
             ],
           },
           {
@@ -1637,10 +1641,10 @@ const sources: Page[] = [
             path: (cfg) => (cfg.osd?.notifications === true ? ["osd", "notification_click"] : null),
             default: "app",
             options: [
-              { value: "app", label: "Opens the app that sent it" },
-              { value: "panel", label: "Opens Kasumi's notifications panel" },
-              { value: "center", label: "Opens Windows' notification center" },
-              { value: "dismiss", label: "Dismisses it" },
+              { value: "app", label: "App (opens the app that sent it)" },
+              { value: "panel", label: "Kasumi (opens Kasumi's notifications panel)" },
+              { value: "center", label: "Windows (opens Windows' notification center)" },
+              { value: "dismiss", label: "Dismiss (dismisses it)" },
             ],
           },
           {
@@ -1768,9 +1772,9 @@ const sources: Page[] = [
             path: ["alt_tab", "position"],
             default: "top",
             options: [
-              { value: "top", label: "Out of the top bar's notch" },
-              { value: "center", label: "In the middle of the screen" },
-              { value: "bottom", label: "Out of the dock's notch" },
+              { value: "top", label: "Top bar (out of the top bar's notch)" },
+              { value: "center", label: "Middle (in the middle of the screen)" },
+              { value: "bottom", label: "Dock (out of the dock's notch)" },
             ],
           },
         ],
@@ -1793,7 +1797,7 @@ const sources: Page[] = [
             path: ["alt_tab", "monitors"],
             default: "current",
             options: [
-              { value: "current", label: "The monitor you're working on" },
+              { value: "current", label: "This monitor (the one you're working on)" },
               { value: "all", label: "All monitors" },
             ],
           },
@@ -1839,9 +1843,9 @@ const sources: Page[] = [
             options: [
               { value: "default", label: "Default (the position above)" },
               { value: "widget", label: "Out of the language widget" },
-              { value: "top", label: "Out of the top bar's notch" },
-              { value: "center", label: "In the middle of the screen" },
-              { value: "bottom", label: "Out of the dock's notch" },
+              { value: "top", label: "Top bar (out of the top bar's notch)" },
+              { value: "center", label: "Middle (in the middle of the screen)" },
+              { value: "bottom", label: "Dock (out of the dock's notch)" },
             ],
           },
           {
@@ -1971,6 +1975,12 @@ function part(page: string, title: string, names: string[], extra: Partial<Secti
   return { ...rest, fields, ...extra };
 }
 
+/** One setting of an old page under another name, with a short line (Home's cards). */
+function pick(page: string, title: string, label: string, name: string, short: string): Field {
+  const f = part(page, title, [label], { title: "" }).fields[0];
+  return { ...f, label: name, short } as Field;
+}
+
 /** The widgets page's sections, by widget type (as the page titled them). */
 const WIDGET_SECTION: Record<string, string> = {
   language: "Keyboard language",
@@ -2024,18 +2034,25 @@ export const pages: Page[] = [
     sections: [
       { title: "Your bars", help: "Click a widget for its settings.", fields: [{ kind: "custom", editor: "homeBars" }] },
       {
-        title: "What Kasumi replaces",
-        help: "Each switch hands that part back to Windows.",
+        title: "",
+        tiles: true,
         fields: [
-          ...part("general", "Launcher", ["Replace the Start menu"], { title: "" }).fields,
-          ...part("general", "Behaviour", ["Hide the Windows taskbar"], { title: "" }).fields,
-          ...part("switchers", "Alt + Tab", ["Kasumi's Alt + Tab"], { title: "" }).fields,
-          ...part("switchers", "Languages (Win + Space)", ["Kasumi's language picker"], { title: "" }).fields,
-          ...part("osd", "On-screen display", ["Show pop-ups"], { title: "" }).fields,
-          ...part("context-menu", "Context menu (experimental)", ["Kasumi's context menu"], { title: "" }).fields,
+          { kind: "custom", editor: "homePreset" },
+          pick("general", "Behaviour", "Hide the Windows taskbar", "Hide the taskbar", ""),
+          pick("appearance", "Colors", "Accent", "Accent", ""),
         ],
       },
-      part("appearance", "Colors", ["Use Windows' accent colour", "Accent"], { title: "Accent" }),
+      {
+        title: "What Kasumi replaces",
+        tiles: true,
+        fields: [
+          pick("general", "Launcher", "Replace the Start menu", "Start menu", "The Windows key opens the launcher"),
+          pick("switchers", "Alt + Tab", "Kasumi's Alt + Tab", "Alt + Tab", "Kasumi's window switcher"),
+          pick("switchers", "Languages (Win + Space)", "Kasumi's language picker", "Keyboard languages", "Win + Space picks the language"),
+          pick("osd", "On-screen display", "Show pop-ups", "Volume and brightness", "Pop-ups from the notch"),
+          pick("context-menu", "Context menu (experimental)", "Kasumi's context menu", "Context menus", "Explorer, the bars, the launcher"),
+        ],
+      },
       sec("general", "Startup"),
     ],
   },
@@ -2245,7 +2262,7 @@ export const explorerPage: Page = {
             path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "backdrop"] : null),
             default: "default",
             options: [
-              { value: "default", label: "As Windows has it" },
+              { value: "default", label: "Windows (as Windows has it)" },
               { value: "mica", label: "Mica" },
               { value: "mica_alt", label: "Mica Alt" },
               { value: "acrylic", label: "Acrylic" },
@@ -2258,7 +2275,7 @@ export const explorerPage: Page = {
             path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "title_bar"] : null),
             default: "default",
             options: [
-              { value: "default", label: "As Windows has it" },
+              { value: "default", label: "Windows (as Windows has it)" },
               { value: "dark", label: "Dark" },
               { value: "light", label: "Light" },
             ],
@@ -2269,9 +2286,9 @@ export const explorerPage: Page = {
             path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "corners"] : null),
             default: "default",
             options: [
-              { value: "default", label: "As Windows has it" },
+              { value: "default", label: "Windows (as Windows has it)" },
               { value: "round", label: "Round" },
-              { value: "small", label: "Slightly round" },
+              { value: "small", label: "Slight (slightly round)" },
               { value: "square", label: "Square" },
             ],
           },
@@ -2281,9 +2298,9 @@ export const explorerPage: Page = {
             path: (cfg) => (cfg.explorer?.enabled ? ["explorer", "border"] : null),
             default: "default",
             options: [
-              { value: "default", label: "As Windows has it" },
-              { value: "accent", label: "Accent colour" },
-              { value: "color", label: "A colour of your own" },
+              { value: "default", label: "Windows (as Windows has it)" },
+              { value: "accent", label: "Accent (your accent colour)" },
+              { value: "color", label: "Own (a colour of your own)" },
               { value: "none", label: "None" },
             ],
           },

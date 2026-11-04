@@ -131,9 +131,6 @@ pub enum Msg {
     /// Another app's tooltip to cover with Kasumi's: its text and box (screen px), or
     /// none (it hid; apptips.rs).
     AppTip(Option<(String, [i32; 4])>),
-    /// The settings window shows a widget's page (its kind): that widget glows on the
-    /// bars; none: none does.
-    Spotlight(Option<String>),
 }
 
 /// Where a view has scrolled to (shares of the track), on which monitor, for how long,
@@ -479,11 +476,6 @@ impl Native {
             Msg::LangReveal(n) => {
                 if let Some((_, back)) = self.lang_pending.take_if(|p| p.0 == n) {
                     self.lang_open(back);
-                }
-            }
-            Msg::Spotlight(kind) => {
-                for s in self.surfaces.iter_mut() {
-                    s.set_spotlight(&self.gfx, kind.clone());
                 }
             }
             Msg::AppTip(tip) => match tip {

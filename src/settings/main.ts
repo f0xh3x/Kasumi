@@ -18,7 +18,7 @@ import {
   scope,
   type Op,
 } from "./editors";
-import { $, glyph, row, toggleSwitch } from "./dom";
+import { $, glyph, row, segmented, toggleSwitch } from "./dom";
 import { kasumiLogo } from "../quick-tiles";
 import { areaOf, areas, pageAliases, pages, type Cfg, type Field, type Page, type Path } from "./schema";
 import { renderNotes, renderSetup, type Host } from "./setup";
@@ -193,7 +193,13 @@ async function saveMany(ops: Op[]): Promise<void> {
 
 // --- Controls --------------------------------------------------------------------
 
-const fieldRow = (f: { label: string; help?: string }, control: HTMLElement) => row(f.label, f.help, control);
+const fieldRow = (f: { label: string; help?: string; short?: string }, control: HTMLElement) => {
+  if (f.short === undefined) return row(f.label, f.help, control);
+  // Home's cards: a short line (or none), the whole help in the tooltip.
+  const r = row(f.label, f.short || undefined, control);
+  if (f.help) r.title = f.help;
+  return r;
+};
 
 function control(f: Field): HTMLElement | null {
   if (f.kind === "custom") {
@@ -353,6 +359,12 @@ function control(f: Field): HTMLElement | null {
         r.append(tiles);
         return r;
       }
+      // A few short choices: buttons side by side, their longer words in a tooltip.
+      const short = f.options.map((o) => o.label.split(/ \((.*)\)$/));
+      if (f.options.length <= 4 && short.reduce((n, [name]) => n + name.length, 0) <= 40) {
+        const opts = f.options.map((o, i): [string, string, string?] => [o.value, short[i][0], short[i][1]]);
+        return fieldRow(f, segmented(opts, String(value), f.label, (v) => save(path, v)));
+      }
       const select = $("select", "select") as HTMLSelectElement;
       for (const o of f.options) select.append(new Option(o.label, o.value));
       select.value = String(value);
@@ -465,6 +477,12 @@ function renderPage(page: Page): HTMLElement {
       continue;
     }
     group = null;
+    // Cards side by side, the title over them.
+    if (s.tiles) {
+      if (s.title) content.append($("h2", "tiles-title", s.title));
+      content.append($("div", "tiles", ...rows));
+      continue;
+    }
     // Untitled: just its content (a widget page's header, the widget cards).
     if (!s.title) {
       content.append(...rows);
@@ -542,15 +560,6 @@ function goto(page: string, section: string): void {
 
 const host: Host = { cfg: () => cfg, control, saveMany, reload: load, render: () => render(), toast };
 
-/** On a widget's page, that widget glows on the bars (told once per change). */
-let spotlit: string | null | undefined;
-function spotlight(): void {
-  const kind = !query && current.startsWith("w-") ? current.slice(2) : null;
-  if (kind === spotlit) return;
-  spotlit = kind;
-  invoke("settings_spotlight", { kind }).catch(() => {});
-}
-
 function render(): void {
   const app = document.getElementById("app")!;
   if (VIEW === "setup" || VIEW === "notes") {
@@ -559,7 +568,6 @@ function render(): void {
     app.querySelector(".setup-page")!.scrollTop = keep;
     return;
   }
-  spotlight();
   const scroll = app.querySelector(".content")?.scrollTop ?? 0;
   const nav = $("nav", "nav");
   // Search: typing redraws only the content, so the field keeps the focus.

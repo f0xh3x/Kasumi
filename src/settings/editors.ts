@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { POWER_ACTIONS } from "../power-actions";
 import { DEFAULT_TILES, MAX_TILES, QUICK_TILES, kasumiLogo } from "../quick-tiles";
-import { $, glyph, iconButton, input, row, select, toggleSwitch } from "./dom";
+import { $, glyph, iconButton, input, row, segmented, select, toggleSwitch } from "./dom";
 import { contextMenuEditor } from "./ctxmenu-editor";
 import { renderMarkdown } from "./markdown";
 import type { Cfg, Path } from "./schema";
@@ -354,6 +354,39 @@ const widgetHeader: Editor = (ctx) => {
     head.append(b);
   }
   return top;
+};
+
+/** Home: the preset in use; picking another applies it. */
+const homePreset: Editor = (ctx) => {
+  const box = row("Preset", "None in use", $("span"));
+  invoke<Preset[]>("presets_list")
+    .then((all) => {
+      const cur = all.find((p) => p.current);
+      box.querySelector(".row-help")!.textContent = cur ? cur.name : all.length ? "None in use" : "None saved yet";
+      const control = box.querySelector(".row-control")!;
+      if (!all.length) {
+        const go = $("button", "button", "Presets ›");
+        go.addEventListener("click", () => ctx.goto("presets", ""));
+        control.replaceChildren(go);
+        return;
+      }
+      const sel = select([...(cur ? [] : [["", "Pick one"] as [string, string]]), ...all.map((p): [string, string] => [p.name, p.name])], cur?.name ?? "");
+      sel.classList.add("select-small");
+      sel.setAttribute("aria-label", "Preset");
+      sel.addEventListener("change", async () => {
+        try {
+          await invoke("preset_apply", { name: sel.value });
+          await ctx.reload();
+          ctx.toast(`Applied “${sel.value}”`);
+        } catch (e) {
+          ctx.toast(String(e), true);
+        }
+      });
+      control.replaceChildren(sel);
+    })
+    .catch(() => {});
+  box.title = "Saved setups: pick one to switch to it (Kasumi > Presets saves and manages them).";
+  return box;
 };
 
 /** Home: each bar that's on, drawn as a bar with its widgets (a click opens one's page). */
@@ -1682,16 +1715,17 @@ const animWidget: Editor = (ctx) => {
       .map((k) => {
         const [label, key] = ANIM_EFFECTS[k];
         const v = own[`anim_${k}`];
-        const sel = select(
+        const seg = segmented(
           [
-            ["", `Like global (${global[key] === true ? "on" : "off"})`],
+            ["", "Like global", `The global setting: ${global[key] === true ? "on" : "off"}`],
             ["on", "On"],
             ["off", "Off"],
           ],
           v === true ? "on" : v === false ? "off" : "",
+          label,
+          (x) => ctx.save(["widgets", w, `anim_${k}`], x === "" ? null : x === "on"),
         );
-        sel.addEventListener("change", () => ctx.save(["widgets", w, `anim_${k}`], sel.value === "" ? null : sel.value === "on"));
-        return row(label, undefined, sel);
+        return row(label, undefined, seg);
       }),
   );
 };
@@ -1806,16 +1840,17 @@ const accentWidget: Editor = (ctx) => {
   const w = ctx.arg ?? "";
   const v = ctx.cfg.widgets?.[w]?.accent_details;
   const on = ctx.cfg.theme?.accent_details === true;
-  const sel = select(
+  const seg = segmented(
     [
-      ["", `Like global (${on ? "on" : "off"})`],
+      ["", "Like global", `The global setting: ${on ? "on" : "off"}`],
       ["on", "On"],
       ["off", "Off"],
     ],
     v === true ? "on" : v === false ? "off" : "",
+    "Accent on details",
+    (x) => ctx.save(["widgets", w, "accent_details"], x === "" ? null : x === "on"),
   );
-  sel.addEventListener("change", () => ctx.save(["widgets", w, "accent_details"], sel.value === "" ? null : sel.value === "on"));
-  return row("Accent on details", undefined, sel);
+  return row("Accent on details", undefined, seg);
 };
 
 // --- Windows setup for notifications --------------------------------------------------
@@ -2140,6 +2175,7 @@ export const editors: Record<string, Editor> = {
   widgetHeader,
   widgetCards,
   homeBars,
+  homePreset,
   clockFormat,
   weatherLocation,
   tempsSensors,

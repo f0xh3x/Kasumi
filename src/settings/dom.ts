@@ -24,6 +24,29 @@ export function select(options: [string, string][], value: string): HTMLSelectEl
   return s;
 }
 
+/** A few choices as buttons side by side: [value, name, tooltip?]. */
+export function segmented(options: [string, string, string?][], value: string, label: string, onChange: (v: string) => void): HTMLElement {
+  const seg = $("div", "segmented");
+  seg.setAttribute("role", "radiogroup");
+  seg.setAttribute("aria-label", label);
+  for (const [v, name, more] of options) {
+    const b = $("button", `seg${v === value ? " on" : ""}`, name);
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(v === value));
+    if (more) b.title = more;
+    b.addEventListener("click", () => {
+      if (b.classList.contains("on")) return;
+      for (const x of seg.children) {
+        x.classList.toggle("on", x === b);
+        x.setAttribute("aria-checked", String(x === b));
+      }
+      onChange(v);
+    });
+    seg.append(b);
+  }
+  return seg;
+}
+
 export function iconButton(code: number, title: string, onClick: () => void): HTMLButtonElement {
   const b = $("button", "icon-button", glyph(code)) as HTMLButtonElement;
   b.title = title;
