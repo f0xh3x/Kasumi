@@ -1,15 +1,15 @@
-// The context menu editor ([context_menu] layout): the menu as it shows for one kind
-// of click (file, folder, drive, several items, empty space, desktop). Drag an entry
-// by its handle to reorder it, or onto a folder to put it inside; folders and
-// Windows' submenus (Send to, Open with...) show their entries under them. Each
-// entry can be hidden, renamed and given an icon; the options button limits where
-// it shows. Plus your own folders, commands and separators.
+// The context menu editor ([context_menu] layout): the menu drawn as it shows for one
+// kind of click (file, folder, drive, several items, empty space, desktop), and beside
+// it the entry clicked: its name, icon, whether and where it shows, and the rest of its
+// options. Drag an entry by its handle to reorder it, or onto a folder to put it
+// inside; folders and Windows' submenus (Send to, Open with...) open in place. Plus
+// your own folders, commands and separators.
 //
 // The layout is one list for every kind of click (each entry can say where it shows).
 // Windows' entries Kasumi hasn't placed come where the layout says "rest"; editing
 // one of those places them all, in the order they show.
 import { invoke } from "@tauri-apps/api/core";
-import { $, glyph, iconButton, input, select, toggleSwitch } from "./dom";
+import { $, glyph, iconButton, input, row as field, select, toggleSwitch } from "./dom";
 import { ICONS, type EditorCtx } from "./editors";
 
 interface MenuNode {
@@ -125,7 +125,7 @@ function expandGroups(list: MenuNode[]) {
 }
 
 /** The editor's place across redraws: the kind of click shown, folders opened. */
-const state: { info?: Info; kind: string; open: Set<string> } = { kind: "file", open: new Set() };
+const state: { info?: Info; kind: string; open: Set<string>; sel: string | null } = { kind: "file", open: new Set(), sel: null };
 
 type Owner = () => [MenuNode, MenuNode[]] | null;
 
@@ -386,29 +386,32 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
 
   /** The icon button: the entry's icon now (or empty), a grid to choose another, its
    *  own (Default) or none. */
-  const iconControl = (row: Row): [HTMLElement, HTMLElement] => {
+  /** An entry's icon as the menu shows it (its own, Kasumi's, Windows', or none). */
+  const iconFace = (row: Row): HTMLElement | null => {
     const n = row.node;
     const own = row.entry ?? row.hits?.[0];
-    const btn = $("button", "icon-picker cm-icon") as HTMLButtonElement;
-    btn.title = "Its icon";
     const set = row.entry ? undefined : n.icon;
-    if (set === "0") {
-      // No icon.
-    } else if (set) {
-      btn.append($("span", "icon", String.fromCodePoint(parseInt(set, 16))));
-    } else if (n.kasumi && KASUMI[n.kasumi]) {
-      btn.append($("span", "icon", String.fromCodePoint(parseInt(KASUMI[n.kasumi].glyph, 16))));
-    } else if (own?.bitmap) {
+    if (set === "0") return null;
+    if (set) return $("span", "icon", String.fromCodePoint(parseInt(set, 16)));
+    if (n.kasumi && KASUMI[n.kasumi]) return $("span", "icon", String.fromCodePoint(parseInt(KASUMI[n.kasumi].glyph, 16)));
+    if (own?.bitmap) {
       const c = document.createElement("canvas");
       c.width = own.bitmap.w;
       c.height = own.bitmap.h;
       const px = Uint8ClampedArray.from(atob(own.bitmap.rgba), (ch) => ch.charCodeAt(0));
       c.getContext("2d")!.putImageData(new ImageData(px, own.bitmap.w, own.bitmap.h), 0, 0);
       c.className = "cm-bitmap";
-      btn.append(c);
-    } else if (own?.glyph) {
-      btn.append($("span", "icon", String.fromCodePoint(parseInt(own.glyph, 16))));
+      return c;
     }
+    if (own?.glyph) return $("span", "icon", String.fromCodePoint(parseInt(own.glyph, 16)));
+    return null;
+  };
+
+  const iconControl = (row: Row): [HTMLElement, HTMLElement] => {
+    const btn = $("button", "icon-picker cm-icon") as HTMLButtonElement;
+    btn.title = "Its icon";
+    const face = iconFace(row);
+    if (face) btn.append(face);
     const grid = $("div", "icon-grid");
     grid.hidden = true;
     const pick = (value: string | null) => () => {
@@ -438,11 +441,38 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     return [btn, grid];
   };
 
+  /** A row's key, to find it again after a redraw (the one selected). */
+  const rowKey = (row: Row): string => {
+    const n = row.node;
+    if (row.entry) return `e:${row.ownerKey ?? ""}:${keyOf(row.entry)}`;
+    if (n.folder) return `f:${n.folder}`;
+    if (n.kasumi) return `k:${n.kasumi}`;
+    if (n.cmd) return `c:${n.name ?? ""}|${n.cmd}`;
+    if (n.match?.length) return `m:${row.ownerKey ?? ""}:${n.match.join(",")}`;
+    if (n.separator) return `s:${row.depth}:${row.list.indexOf(n)}`;
+    return "";
+  };
+
+  /** What an entry says in the menu. */
+  const labelOf = (row: Row): string => {
+    const n = row.node;
+    if (row.entry) return n.name || row.entry.text;
+    if (n.folder) return n.folder;
+    if (n.kasumi) return n.name || (KASUMI[n.kasumi]?.label ?? n.kasumi);
+    if (n.cmd) return n.name || n.cmd;
+    return n.name || (row.hits ?? []).map((e) => e.text).join(", ");
+  };
+
+  /** One of the menu's entries: drag it by its handle, click it to change it. */
   const rowEl = (row: Row): HTMLElement => {
     const n = row.node;
     const isSep = !!n.separator && !row.entry;
-    const el = $("div", `cm-row${row.off ? " hidden-row" : ""}${n.folder ? " folder-row" : ""}`);
-    el.style.paddingLeft = `${row.depth * 24}px`;
+    const key = rowKey(row);
+    const el = $("div", `cm-row${row.off ? " hidden-row" : ""}${n.folder ? " folder-row" : ""}${key && key === state.sel ? " selected" : ""}`);
+    el.style.paddingLeft = `${6 + row.depth * 18}px`;
+    el.tabIndex = 0;
+    el.setAttribute("role", "option");
+    el.setAttribute("aria-selected", String(key === state.sel));
 
     const handle = $("span", "cm-handle", glyph(0xe76f));
     handle.title = "Drag to move (onto a folder to put it inside)";
@@ -475,7 +505,15 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     });
     el.append(handle);
 
-    // Folders and submenus open and close.
+    if (isSep) {
+      el.append($("div", "sep-line"));
+    } else {
+      el.append($("span", "cm-face", ...(iconFace(row) ? [iconFace(row)!] : [])), $("span", "cm-label", labelOf(row)));
+      const tag = n.folder ? "Folder" : n.kasumi ? "Kasumi" : n.cmd ? "Command" : "";
+      if (tag) el.append($("span", "cm-tag", tag));
+      if (n.shift) el.append($("span", "cm-tag", "Shift"));
+    }
+    // Folders and submenus open and close in place.
     if (row.parent) {
       const open = state.open.has(row.parent);
       const chev = iconButton(open ? 0xe70d : 0xe76c, open ? "Close" : "Open", () => {
@@ -484,50 +522,50 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
       });
       chev.classList.add("cm-chevron");
       el.append(chev);
-    } else {
-      el.append($("span", "cm-chevron-space"));
     }
+    const pick = () => {
+      state.sel = key;
+      render();
+    };
+    el.addEventListener("click", pick);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        pick();
+      }
+    });
+    return el;
+  };
 
-    let grid: HTMLElement | null = null;
-    if (isSep) {
-      el.append($("div", "sep-line"));
-    } else {
-      const label = row.entry
-        ? row.entry.text
-        : n.folder
-          ? n.folder
-          : n.kasumi
-            ? (KASUMI[n.kasumi]?.label ?? n.kasumi)
-            : n.cmd
-              ? n.name || n.cmd
-              : (row.hits ?? []).map((e) => e.text).join(", ");
-      const [iconBtn, iconGrid] = iconControl(row);
-      grid = iconGrid;
-      const text = input(row.entry ? "" : n.folder || n.name || "", label);
-      text.title = n.folder || n.cmd ? "" : `Its own name: ${label} (type to rename it)`;
+  /** The clicked entry's options: name, whether and where it shows, icon, what it runs,
+   *  Shift only, delete or reset. */
+  const inspector = (row: Row | undefined): HTMLElement => {
+    const box = $("div", "cm-inspector");
+    if (!row) {
+      box.append($("p", "card-help", "Click an entry in the menu to change its name, icon and where it shows."));
+      return box;
+    }
+    const n = row.node;
+    const isSep = !!n.separator && !row.entry;
+    box.append($("div", "cm-inspector-title", isSep ? "Separator" : labelOf(row)));
+    const here = KINDS.find(([k]) => k === state.kind)?.[1] ?? "";
+    const own = !!(row.owner || OWN[state.kind]);
+    if (!isSep) {
+      const text = input(row.entry ? "" : n.folder || n.name || "", labelOf(row));
       text.addEventListener("change", () =>
         edit(row, (node) => {
           if (node.folder) node.folder = text.value || "Folder";
           else node.name = text.value;
         })(),
       );
-      el.append(iconBtn, text);
-      const tag = n.folder ? "Folder" : n.kasumi ? "Kasumi" : n.cmd ? "Command" : (row.entry ?? row.hits?.[0])?.sub ? "Submenu" : "";
-      if (tag) el.append($("span", "cm-tag", tag));
-      if (n.shift) el.append($("span", "cm-tag", "Shift"));
+      box.append(field("Name", n.folder || n.cmd ? undefined : "Empty: Windows' own name.", text));
     }
-
-    const details = $("div", "cm-details");
-    details.hidden = true;
-    const here = KINDS.find(([k]) => k === state.kind)?.[1] ?? "";
-    // The eye: shown or hidden for this kind of click (a submenu's entries: in it).
-    const eye = iconButton(
-      row.off ? 0xed1a : 0xe7b3,
-      row.owner || OWN[state.kind] ? (row.off ? "Show" : "Hide") : row.off ? `Show on ${here}` : `Hide on ${here}`,
+    // Shown here: for this kind of click (a submenu's or Kasumi's own menus: at all).
+    const shown = toggleSwitch(!row.off, () =>
       edit(row, (node) => {
         const all = KINDS.map(([k]) => k);
         const set = new Set(node.where ? node.where.split("|") : all);
-        if (row.owner || OWN[state.kind]) {
+        if (own) {
           node.hide = !node.hide;
           return;
         }
@@ -538,23 +576,46 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
           set.delete(state.kind);
         }
         node.where = set.size === all.length ? "" : [...set].join("|");
-      }),
+      })(),
     );
-    const actions = $("div", "menu-row-actions", eye);
-
-    // What's behind "...": a command's program, Shift only, Delete (or Reset).
+    box.append(field(own ? "Show it" : `Show it on ${here.toLowerCase()}`, undefined, shown.el));
+    // Where it shows, every kind of click at once.
+    if (!own && !n.hide) {
+      const chips = $("div", "cm-kinds");
+      for (const [k, label] of KINDS) {
+        const on = applies(n, k);
+        const chip = $("button", `cm-kind${on ? " on" : ""}`, label);
+        chip.setAttribute("aria-pressed", String(on));
+        chip.addEventListener(
+          "click",
+          edit(row, (node) => {
+            const all = KINDS.map(([x]) => x);
+            const set = new Set(node.where ? node.where.split("|") : all);
+            if (set.has(k)) set.delete(k);
+            else set.add(k);
+            node.where = set.size === all.length ? "" : [...set].join("|");
+          }),
+        );
+        chips.append(chip);
+      }
+      box.append($("div", "cm-section", $("div", "cm-section-title", "Shows for"), chips));
+    }
+    if (!isSep) {
+      const [iconBtn, iconGrid] = iconControl(row);
+      box.append(field("Icon", undefined, iconBtn), iconGrid);
+    }
     if (n.cmd) {
-      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\...)");
+      const cmd = input(n.cmd, "Program (notepad.exe, code, C:\\...)");
       cmd.addEventListener("change", () => edit(row, (node) => (node.cmd = cmd.value))());
       const args = input(n.args ?? "", 'Arguments: {path}, {paths}, {dir} ("{path}")');
       args.addEventListener("change", () => edit(row, (node) => (node.args = args.value))());
-      details.append($("div", "cm-where", $("span", "row-help", "Runs"), cmd, args));
+      box.append($("div", "cm-section", $("div", "cm-section-title", "Runs"), cmd, args));
     }
     if ((n.folder || n.cmd) && !row.owner) {
       const shift = toggleSwitch(!!n.shift, (v) => edit(row, (node) => (node.shift = v))());
-      details.append($("div", "cm-where", $("span", "row-help", "Only while Shift is held"), shift.el));
+      box.append(field("Only while Shift is held", undefined, shift.el));
     }
-    if (!row.entry && !(n.rest)) {
+    if (!row.entry && !n.rest) {
       const windows = !!n.match && !n.folder;
       const label = windows ? "Reset (Windows' own name and place)" : n.folder ? "Delete folder (its entries move out)" : "Delete";
       const del = $("button", "button cm-delete", label) as HTMLButtonElement;
@@ -571,15 +632,14 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
           return;
         }
         window.clearTimeout(armed);
+        state.sel = null;
         edit(row, (node, list) => {
           list.splice(list.indexOf(node), 1, ...(node.folder ? (node.items ?? []) : []));
         })();
       });
-      details.append($("div", "cm-where", del));
+      box.append($("div", "cm-section", del));
     }
-    if (details.childElementCount) actions.append(iconButton(0xe712, "More", () => (details.hidden = !details.hidden)));
-    el.append(actions);
-    return $("div", "cm-item", el, ...(grid ? [grid] : []), details);
+    return box;
   };
 
   const render = () => {
@@ -612,7 +672,10 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
     } else if (!seen.length) {
       table.append($("p", "card-help", "Kasumi hasn't seen this kind of menu yet: right-click one once (with Kasumi's menu on), then come back."));
     }
+    table.setAttribute("role", "listbox");
+    table.setAttribute("aria-label", "The menu");
     for (const row of list) table.append(rowEl(row));
+    const selected = list.find((r) => state.sel && rowKey(r) === state.sel);
 
     const add = (n: MenuNode) => {
       layout.push(n);
@@ -650,12 +713,12 @@ export const contextMenuEditor = (ctx: EditorCtx): HTMLElement => {
 
     box.replaceChildren(
       tabs,
-      table,
+      $("div", "cm-split", table, inspector(selected)),
       $("div", "button-row", bFolder, bCmd, bSep, addKasumi, bReset),
       $(
         "p",
         "card-help",
-        "Drag an entry by its handle to move it, or onto a folder to put it inside. The eye hides an entry for the kind of click you're looking at (it stays here, dimmed, to bring back). New entries come at the end: drag them where you want them. Changes apply to the next menu you open. Kasumi learns Windows' entries (and their submenus') as you use the menu: right-click a .zip or an image, or open a submenu, once to see its entries here.",
+        "The menu as it opens for the kind of click picked above. Drag an entry by its handle to move it, or onto a folder to put it inside; click it to change it. Hidden entries stay here, struck through, to bring back. New entries come at the end. Changes apply to the next menu you open. Kasumi learns Windows' entries (and their submenus') as you use the menu: right-click a .zip or an image, or open a submenu, once to see its entries here.",
       ),
     );
   };

@@ -41,6 +41,12 @@ window.__TAURI_INTERNALS__ = {
       case "monitors_list": return [];
       case "fonts_list": return [];
       case "plugin:window|is_maximized": return false;
+      // A made-up File menu, as Kasumi would have seen it.
+      case "context_menu_info": return { default: [{ rest: true }], seen: { file: [
+        { text: "Open", verb: "open", glyph: "E8E5" }, { text: "Open with", verb: "openas", sub: true, glyph: "E7AC" },
+        { text: "Cut", verb: "cut", glyph: "E8C6" }, { text: "Copy", verb: "copy", glyph: "E8C8" },
+        { text: "Rename", verb: "rename", glyph: "E8AC" }, { text: "Delete", verb: "delete", glyph: "E74D" },
+        { text: "Properties", verb: "properties", glyph: "E946" } ] } };
       default: return null;
     }
   },

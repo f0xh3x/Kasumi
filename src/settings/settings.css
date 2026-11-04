@@ -774,3 +774,26 @@ body.view-setup #toast, body.view-notes #toast { bottom: 76px; }
 .shelf-title { color: var(--faint); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 2px; }
 .shelf-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; }
 .shelf-list .chip { color: var(--dim); }
+
+/* The context menu editor: the menu drawn as a menu, the clicked entry's options beside it. */
+.cm-split { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 18px; align-items: start; margin-top: 10px; }
+.cm-split .cm-rows { background: #1b1b1b; border: 1px solid #2c2c2c; border-radius: 10px; padding: 5px; display: flex; flex-direction: column; gap: 1px; max-height: 520px; overflow-y: auto; }
+.cm-split .cm-row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding-right: 4px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.cm-split .cm-row:hover { background: rgba(255, 255, 255, 0.06); }
+.cm-split .cm-row.selected { background: rgba(238, 255, 0, 0.12); outline: 1px solid rgba(238, 255, 0, 0.45); }
+.cm-split .cm-row:focus-visible { outline: 1.5px solid var(--fg); }
+.cm-split .cm-row.hidden-row .cm-label { text-decoration: line-through; color: var(--faint); }
+.cm-split .cm-handle { opacity: 0; cursor: grab; color: var(--faint); font-size: 11px; width: 12px; }
+.cm-split .cm-row:hover .cm-handle { opacity: 1; }
+.cm-face { width: 16px; display: inline-flex; justify-content: center; color: var(--dim); }
+.cm-face .icon { font-size: 13px; }
+.cm-face canvas { width: 16px; height: 16px; }
+.cm-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cm-split .cm-chevron { margin-left: auto; }
+.cm-inspector { display: flex; flex-direction: column; background: var(--raised); border-radius: 14px; padding: 10px 16px 14px; min-width: 0; }
+.cm-inspector-title { font-weight: 600; font-size: 15px; padding: 6px 0 4px; }
+.cm-section { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+.cm-section-title { color: var(--faint); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.cm-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.cm-kind { padding: 5px 10px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.06); color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+.cm-kind.on { background: rgba(238, 255, 0, 0.16); color: var(--fg); }
