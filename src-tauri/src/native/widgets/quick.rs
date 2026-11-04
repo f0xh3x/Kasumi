@@ -1,8 +1,9 @@
 //! The quick settings panel (src/widgets/quick.ts quickPanel): volume (with the
 //! output devices and per-app volume behind buttons at its start) and brightness
 //! side by side, battery and network, a row of shortcut tiles. The lists open in
-//! a box that slides open between the controls and the tiles (above the controls
-//! on a bottom dock), so the controls stay put. The Power tile swaps the tiles for
+//! a box that slides down from under the volume row over battery, network and the
+//! tiles (they fade out under it): the panel only grows if the list is longer than
+//! what it covers. The Power tile swaps the tiles for
 //! power ones (back, lock, sign out, hibernate, restart, shut down).
 
 use std::collections::HashMap;
@@ -103,6 +104,8 @@ pub struct QuickPanel {
     shown_list: Option<List>,
     slide: Option<(Instant, f32, f32)>,
     box_h: f32,
+    /// The box's openness when the panel was last measured.
+    sized: f32,
     refreshed: Option<Instant>,
     pending: Option<Act>,
     /// A slider held: its value, when it last sent one; held values for a moment after.
@@ -143,6 +146,7 @@ impl QuickPanel {
             shown_list: None,
             slide: None,
             box_h: 0.0,
+            sized: 0.0,
             refreshed: None,
             pending: None,
             held: None,
@@ -359,7 +363,9 @@ impl Panel for QuickPanel {
         self.pending.take()
     }
     fn animating(&self, now: Instant) -> bool {
-        self.openness(now).1
+        // Moving, or its last step not measured yet (the shape must end where the box does).
+        let (open, moving) = self.openness(now);
+        moving || open != self.sized
     }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         let g = cx.gfx;
@@ -369,6 +375,7 @@ impl Panel for QuickPanel {
             }
         }
         let (open, moving) = self.openness(Instant::now());
+        self.sized = open;
         if !moving && self.list.is_none() {
             self.shown_list = None;
             self.slide = None;
@@ -380,12 +387,13 @@ impl Panel for QuickPanel {
             self.pending = Some(Self::fetch_switches());
         }
         self.box_h = self.list_h(g, cx);
-        let more = if self.shown_list.is_some() { (self.box_h + 14.0) * open } else { 0.0 };
         let tiles = self.tiles_h(g, cx);
         // .quick-panel: 4 px / 2 px inside the panel's padding, 14 px between its parts.
-        let h = 4.0 + self.grid_h(g, cx).round() + more.round() + if tiles > 0.0 { 14.0 + 4.0 + tiles } else { 0.0 } + 4.0;
+        let h = 4.0 + self.grid_h(g, cx).round() + if tiles > 0.0 { 14.0 + 4.0 + tiles } else { 0.0 } + 4.0;
+        // The open list lies over what's under the volume row: taller only if it's longer.
+        let list = if self.shown_list.is_some() { self.list_y() + (self.box_h * open).round() + 4.0 } else { 0.0 };
         self.width = W + 4.0;
-        (self.width, h)
+        (self.width, h.max(list))
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
@@ -396,14 +404,6 @@ impl Panel for QuickPanel {
         let (ox, oy) = (x, y);
         let (x, mut y) = (x + 2.0, y + 4.0);
         let mut boxes: Vec<(Hit, f32, f32, f32, f32)> = Vec::new();
-        let (open, _) = self.openness(Instant::now());
-        let more_h = if self.shown_list.is_some() { ((self.box_h + 14.0) * open).round() } else { 0.0 };
-        // Bottom docks: the list box above the controls (by the dock's edge it'd hide them).
-        let bottom = cx.look.bottom;
-        if bottom && more_h > 0.0 {
-            self.draw_list(cx, x, y, more_h - 14.0, alpha, &mut boxes, (ox, oy));
-            y += more_h;
-        }
         // The grid: volume | brightness, battery | network (a row without its neighbour spans both).
         let vol = self.opts.flag("volume") != Some(false) && self.volume().is_some();
         let bri = self.opts.flag("brightness") != Some(false) && self.brightness().is_some();
@@ -416,7 +416,7 @@ impl Panel for QuickPanel {
                 // The buttons before the volume: per-app volume, output devices.
                 let mut expands = Vec::new();
                 if self.has_apps() {
-                    expands.push((0usize, if (self.list == Some(List::Apps)) != bottom { "\u{E70E}" } else { "\u{E70D}" }, 10.0, self.list == Some(List::Apps)));
+                    expands.push((0usize, if self.list == Some(List::Apps) { "\u{E70E}" } else { "\u{E70D}" }, 10.0, self.list == Some(List::Apps)));
                 }
                 if self.has_outputs() {
                     expands.push((1usize, "\u{E7F5}", 14.0, self.list == Some(List::Outputs)));
@@ -447,6 +447,11 @@ impl Panel for QuickPanel {
             }
             y += ROW_H + 12.0;
         }
+        // An open list covers the rest: it fades out under it and takes no clicks.
+        let list_at = (x, y, alpha, boxes.len());
+        let alpha = if self.shown_list.is_some() { alpha * (1.0 - self.openness(Instant::now()).0) } else { alpha };
+        let fg = with_alpha(cx.look.fg, alpha);
+        let dim = with_alpha(cx.look.dimmed(), alpha);
         // Battery and network.
         let sf = cx.secondary(cx.look.font_size);
         let sh = line(g, &sf).max(18.0);
@@ -506,11 +511,6 @@ impl Panel for QuickPanel {
             }
             y += sh;
         }
-        if !bottom && more_h > 0.0 {
-            y += 14.0;
-            self.draw_list(cx, x, y, more_h - 14.0, alpha, &mut boxes, (ox, oy));
-            y += more_h - 14.0;
-        }
         // Tiles: one row filling the width; three or fewer are slim pills. After a click
         // on Power: the power tiles instead, a back tile first.
         if self.power_row {
@@ -539,7 +539,7 @@ impl Panel for QuickPanel {
                 let lw = g.measure(text, &lf).min(tw - 12.0);
                 g.text_at(&fit_text(g, text, &lf, tw - 12.0), &lf, tx + (tw - lw) / 2.0, y + 12.0 + 14.0 + 7.0 + line(g, &lf) / 2.0, if armed { fg } else { dim });
             }
-            *self.boxes.borrow_mut() = boxes;
+            self.finish(cx, list_at, boxes, (ox, oy));
             return;
         }
         let tiles = self.tiles();
@@ -588,7 +588,7 @@ impl Panel for QuickPanel {
                 }
             }
         }
-        *self.boxes.borrow_mut() = boxes;
+        self.finish(cx, list_at, boxes, (ox, oy));
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
         let h = at.and_then(|p| self.hit(p));
@@ -735,6 +735,22 @@ impl Panel for QuickPanel {
 }
 
 impl QuickPanel {
+    /// Where the list box starts (content px): under the volume row.
+    fn list_y(&self) -> f32 {
+        let vol = self.opts.flag("volume") != Some(false) && self.volume().is_some();
+        let bri = self.opts.flag("brightness") != Some(false) && self.brightness().is_some();
+        4.0 + if vol || bri { ROW_H + 12.0 } else { 0.0 }
+    }
+    /// The open list over the rest (what's under it loses its boxes), then the boxes kept.
+    /// `at`: the list's corner, the panel's alpha and how many boxes the controls above made.
+    fn finish(&self, cx: &Ctx, (x, y, alpha, keep): (f32, f32, f32, usize), mut boxes: Vec<(Hit, f32, f32, f32, f32)>, o: (f32, f32)) {
+        if self.shown_list.is_some() {
+            boxes.truncate(keep);
+            let h = (self.box_h * self.openness(Instant::now()).0).round();
+            self.draw_list(cx, x, y, h, alpha, &mut boxes, o);
+        }
+        *self.boxes.borrow_mut() = boxes;
+    }
     fn hit(&self, p: (f32, f32)) -> Option<Hit> {
         self.boxes.borrow().iter().find(|(_, x, y, w, h)| p.0 >= *x && p.0 < x + w && p.1 >= *y && p.1 < y + h).map(|b| b.0)
     }

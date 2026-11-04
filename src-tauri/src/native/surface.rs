@@ -1406,6 +1406,10 @@ impl Surface {
             d.panel_h = h;
             d.has_panel = true;
         }
+        // Where the cursor counts as on the surface follows a panel that grows or shrinks
+        // while open (quick settings' lists): left behind, moving onto the new part
+        // closed the panel.
+        self.update_regions();
     }
 
     /// Where a widget sits once the bar is open: its place in the bar's row, else its notch.
