@@ -1,6 +1,7 @@
 """The settings' look pickers' pictures: every widget look drawn by Kasumi itself
 (--native-snapshot, from the shipped default config with one look picked and sample
-data), cropped to the widget and its panel, scaled down into public/looks/.
+data), its panel cut from the bar (as if on its own, corners rounded, see-through around
+it), scaled down into public/looks/.
 
     python -I tools/look_tiles.py
 
@@ -30,7 +31,7 @@ LOOKS = {
     "weather": ("top", ["", "sky", "curve", "week"], "panel"),
     "menu": ("top", ["", "grid", "strip", "greeting"], "panel"),
     "quick": ("bottom", ["", "blocks", "rings", "list"], "panel"),
-    "launcher": ("bottom", ["", "grid", "prompt"], "search"),
+    "launcher": ("bottom", ["", "centre", "grid", "prompt"], "search"),
     "tasks": ("bottom", ["", "labels", "dots"], "open"),  # dots: resting (closed)
 }
 
@@ -129,25 +130,74 @@ def read_png(path):
     return w, h, bpp, rows
 
 
-def crop_box(path, top):
-    """Where the picture differs from the snapshot's ground, near the middle of the screen
-    (a top bar: as wide as what hangs under the bar, the bar itself across that)."""
+def spans(path):
+    """Each row's drawn span (first and last x that isn't the snapshot's ground), the
+    picture's size and its ground colour."""
     w, h, bpp, rows = read_png(path)
     ground = rows[h // 2][:3]
-    xs, ys = [], []
-    for y in range(0, h, 2):
+    out = []
+    for y in range(h):
         r = rows[y]
-        for x in range(max(w // 2 - 420, 0), min(w // 2 + 420, w), 2):
-            px = r[x * bpp:x * bpp + 3]
-            if bpp == 4 and r[x * bpp + 3] == 0:
-                continue
-            if sum(abs(px[k] - ground[k]) for k in range(3)) > 30:
-                if not top or y > 44:
-                    xs.append(x)
-                ys.append(y)
-    if not xs:
+        xs = [x for x in range(0, w, 1) if sum(abs(r[x * bpp + k] - ground[k]) for k in range(3)) > 30]
+        out.append((xs[0], xs[-1]) if xs else None)
+    return w, h, out, ground
+
+
+def detached_box(path, top):
+    """The panel alone, cut where it meets its bar: x0, y0, x1, y1 (inclusive) and its
+    corners' radius. The panel's body is the tallest run of rows of one width; past its
+    free end (under a top bar, above a dock) its rounded corners narrow it."""
+    w, h, sp, _ = spans(path)
+    width = lambda s: s[1] - s[0] if s else 0
+    best, run = (0, 0), None
+    for y in range(h + 1):
+        s = sp[y] if y < h else None
+        if run and s and abs(width(s) - width(sp[run[0]])) <= 2 and abs(s[0] - sp[run[0]][0]) <= 2:
+            run = (run[0], y)
+            continue
+        if run and run[1] - run[0] > best[1] - best[0]:
+            best = run
+        run = (y, y) if s else None
+    y0, y1 = best
+    x0, x1 = sp[y0]
+    # The free end: rows narrowing (its corners) past the run.
+    step = 1 if top else -1
+    end, radius = (y1 if top else y0), 0
+    y = end + step
+    while 0 <= y < h and sp[y] and sp[y][0] > sp[y - step][0] - 1 and sp[y][0] - x0 < 40:
+        radius += 1
+        y += step
+    if top:
+        y1 = end + radius
+    else:
+        y0 = end - radius
+    return x0, y0, x1, y1, max(radius, 8)
+
+
+def crop_box(path):
+    """Around everything drawn near the middle of the screen (the dock with its tasks)."""
+    w, h, sp, _ = spans(path)
+    ys = [y for y in range(h) if sp[y] and sp[y][1] - sp[y][0] < w - 40]
+    xs = [x for y in ys for x in sp[y]]
+    if not ys:
         return None
-    return max(min(xs) - 14, 0), max(min(ys) - 2, 0), min(max(xs) + 14, w), min(max(ys) + 14, h)
+    return max(min(xs) - 14, 0), max(min(ys) - 2, 0), min(max(xs) + 14, w - 1), min(max(ys) + 14, h - 1)
+
+
+def save(src, target, box=None, radius=0):
+    """`src` cut to `box` (corners rounded off, see-through), at most 300 x 220."""
+    vf = []
+    if box:
+        x0, y0, x1, y1 = box
+        vf.append(f"crop={x1 - x0 + 1}:{y1 - y0 + 1}:{x0}:{y0}")
+    vf.append("format=rgba")
+    if radius:
+        r = radius
+        d = f"hypot(max(max({r}-X\\,X-(W-1-{r}))\\,0)\\,max(max({r}-Y\\,Y-(H-1-{r}))\\,0))"
+        vf.append(f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*clip({r}-{d}+0.5\\,0\\,1)'")
+    vf.append("scale='min(300,iw)':'min(220,ih)':force_original_aspect_ratio=decrease")
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", src, "-vf", ",".join(vf), target], check=True)
+    print(target)
 
 
 for widget, (bar, styles, shot) in LOOKS.items():
@@ -167,16 +217,19 @@ for widget, (bar, styles, shot) in LOOKS.items():
         if widget == "tasks" and style == "dots":
             name = f"-{bar}-closed.png"
         if widget == "launcher":
-            name = {"grid": f"-{bar}-launcher.png", "prompt": f"-{bar}-launcher-partial.png"}.get(style, name)
+            name = {"grid": f"-{bar}-launcher.png", "prompt": f"-{bar}-launcher-partial.png", "centre": f"-{bar}-launcher-centre.png"}.get(style, name)
         src = os.path.join(snap, (prefix or "") + name)
-        box = crop_box(src, bar == "top") if prefix and os.path.exists(src) else None
         target = os.path.join(out_dir, f"{widget}-{style or 'classic'}.png")
-        if not box:
+        if not (prefix and os.path.exists(src)):
             print("no picture:", widget, style or "classic", src)
             continue
-        x0, y0, x1, y1 = box
-        if bar == "top":
-            y0 = 0
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", src, "-vf", f"crop={x1 - x0}:{y1 - y0}:{x0}:{y0},scale='min(260,iw)':-2", target], check=True)
-        print(target)
+        if style == "centre":
+            # Already on its own: drawn without a bar, see-through around it.
+            save(src, target)
+        elif shot == "open" or widget == "tasks":
+            # The tasks' look is the dock itself: as it sits.
+            save(src, target, crop_box(src))
+        else:
+            x0, y0, x1, y1, r = detached_box(src, bar == "top")
+            save(src, target, (x0, y0, x1, y1), r)
 shutil.rmtree(work, ignore_errors=True)

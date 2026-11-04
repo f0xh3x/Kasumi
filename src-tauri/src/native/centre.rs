@@ -48,9 +48,8 @@ impl Centre {
         Centre { hwnd: None, veil: None, dib: None, panel: LauncherPanel::new(opts, true), scale: 1.0, dim: opts.flag("dim") != Some(false) }
     }
 
-    /// Draws the box (again) on `mon`, the screen dimmed behind it.
-    pub fn show(&mut self, gfx: &Gfx, look: &Look, opts: &Opts, mon: &Monitor) -> Result<()> {
-        let scale = mon.scale as f32;
+    /// Draws the box into its bitmap at `scale`; its size in device px.
+    fn paint(&mut self, gfx: &Gfx, look: &Look, opts: &Opts, scale: f32) -> Result<(i32, i32)> {
         self.scale = scale;
         // Its list hangs under its field, whichever edge the bar is on.
         let mut look = look.clone();
@@ -59,6 +58,28 @@ impl Centre {
         let (cw, ch) = self.panel.size(&cx);
         let (w, h) = (cw + 2.0 * PAD, ch + 2.0 * PAD);
         let (w_px, h_px) = ((w * scale).ceil() as i32, (h * scale).ceil() as i32);
+        if self.dib.as_ref().is_none_or(|d| d.w < w_px || d.h < h_px) {
+            self.dib = Some(Dib::new(w_px.max(64), h_px.max(64))?);
+        }
+        let dib = self.dib.as_ref().unwrap();
+        gfx.begin(dib.dc, w_px, h_px, scale)?;
+        gfx.fill_round(rect(0.0, 0.0, w, h), RADIUS, with_alpha(look.bg, look.opacity.max(0.92)));
+        self.panel.draw(&cx, PAD, PAD, 1.0);
+        gfx.end()?;
+        Ok((w_px, h_px))
+    }
+
+    /// Off screen (snapshot.rs): its pixels (premultiplied BGRA, `stride` px a row),
+    /// width and height.
+    pub fn snapshot(&mut self, gfx: &Gfx, look: &Look, opts: &Opts, scale: f32) -> Option<(Vec<u8>, i32, i32, i32)> {
+        let (w, h) = self.paint(gfx, look, opts, scale).ok()?;
+        let dib = self.dib.as_ref()?;
+        Some((dib.pixels().to_vec(), w, h, dib.w))
+    }
+
+    /// Draws the box (again) on `mon`, the screen dimmed behind it.
+    pub fn show(&mut self, gfx: &Gfx, look: &Look, opts: &Opts, mon: &Monitor) -> Result<()> {
+        let (w_px, h_px) = self.paint(gfx, look, opts, mon.scale as f32)?;
         if self.dim {
             self.show_veil(mon)?;
         }
@@ -85,14 +106,7 @@ impl Centre {
                 h
             }
         };
-        if self.dib.as_ref().is_none_or(|d| d.w < w_px || d.h < h_px) {
-            self.dib = Some(Dib::new(w_px.max(64), h_px.max(64))?);
-        }
         let dib = self.dib.as_ref().unwrap();
-        gfx.begin(dib.dc, w_px, h_px, scale)?;
-        gfx.fill_round(rect(0.0, 0.0, w, h), RADIUS, with_alpha(look.bg, look.opacity.max(0.92)));
-        self.panel.draw(&cx, PAD, PAD, 1.0);
-        gfx.end()?;
         let pos = POINT { x: mon.left + (mon.width() - w_px) / 2, y: mon.top + ((mon.bottom - mon.top) as f32 * TOP) as i32 };
         let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
         unsafe {

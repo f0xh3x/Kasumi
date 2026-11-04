@@ -128,7 +128,7 @@ pub fn run(args: &[String]) {
                 let apps = ["Code", "Discord", "Spotify", "Steam", "Calculator", "Firefox", "Notepad", "Terminal"];
                 let mut list: Vec<Value> = apps.iter().map(|a| serde_json::json!({ "id": format!("app:{a}"), "name": a })).collect();
                 list.push(serde_json::json!({ "id": "ms-settings:personalization-background", "name": "Background", "keys": "wallpaper desktop picture slideshow" }));
-                surface.data(&gfx, "launcher:apps", &Value::Array(list));
+                surface.data(&gfx, "launcher:apps", &Value::Array(list.clone()));
                 // A name, a sum (with [widgets.launcher] calculator), a Settings page's search
                 // word (with [widgets.launcher] settings) and an app with open windows (with
                 // [widgets.launcher] windows and `tasks` in --data).
@@ -147,6 +147,16 @@ pub fn run(args: &[String]) {
                     if surface.render(&gfx).is_ok() {
                         let (px, w, h) = surface.pixels();
                         save_png(&dir.join(format!("{label}-launcher-{shot}.png")), px, w, h);
+                    }
+                    // The centred launcher ([widgets.launcher] style = "centre"): its box alone.
+                    if shot == "search" && super::widgets::launcher::centred() {
+                        let opts = surface.launcher_opts();
+                        let mut c = super::centre::Centre::new(&opts);
+                        super::widgets::Panel::data(&mut c.panel, "launcher:apps", &Value::Array(list.clone()));
+                        if let Some((px, w, h, stride)) = c.snapshot(&gfx, surface.look(), &opts, m.scale as f32) {
+                            let rows: Vec<u8> = (0..h as usize).flat_map(|y| px[y * stride as usize * 4..(y * stride as usize + w as usize) * 4].to_vec()).collect();
+                            save_png(&dir.join(format!("{label}-launcher-centre.png")), &rows, w, h);
+                        }
                     }
                     super::widgets::launcher::set_open(false, &label);
                 }
