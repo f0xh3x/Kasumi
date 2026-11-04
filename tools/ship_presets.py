@@ -9,7 +9,7 @@ src = os.path.join(os.environ["APPDATA"], "Kasumi", "presets")
 dst = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src-tauri", "presets")
 os.makedirs(dst, exist_ok=True)
 
-for name in ["Default", "Modern", "Classic status bar", "Classic taskbar"]:
+for name in ["Default", "Modern", "Kasumi"]:
     text = open(os.path.join(src, name + ".toml"), encoding="utf-8").read().replace("\r\n", "\n")
     out, i = [], 0
     lines = text.split("\n")

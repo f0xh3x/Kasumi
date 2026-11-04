@@ -83,8 +83,9 @@ pub async fn open_notes_window(app: AppHandle, version: Option<String>) {
     open_notes(&app, version.as_deref().unwrap_or(env!("CARGO_PKG_VERSION")));
 }
 
-/// At start: a first run (no config.toml before this start) opens the setup; a
-/// new version since the last start shows what's new (`[general] update_notes`).
+/// At start: a first run (no config.toml before this start) opens Settings (the
+/// first-time setup is paused until it's reworked); a new version since the last
+/// start shows what's new (`[general] update_notes`).
 /// The version is remembered in `last-version` beside the config.
 pub fn startup(app: &AppHandle, first_run: bool) {
     let marker = crate::config::dir().join("last-version");
@@ -102,8 +103,8 @@ pub fn startup(app: &AppHandle, first_run: bool) {
         // Once the bars are up.
         std::thread::sleep(std::time::Duration::from_secs(3));
         if first_run {
-            eprintln!("[kasumi] first run: opening the setup");
-            open_setup(&app);
+            eprintln!("[kasumi] first run: opening settings");
+            open(&app);
         } else {
             eprintln!("[kasumi] updated from {}: showing what's new", last.as_deref().unwrap_or("an older version"));
             open_notes(&app, current);

@@ -1911,18 +1911,6 @@ const sources: Page[] = [
         ],
       },
       {
-        title: "First-time setup",
-        fields: [
-          {
-            kind: "action",
-            label: "Run the setup again",
-            help: "The welcome window: presets, or startup, your bars, widgets and pop-ups step by step.",
-            button: "Open",
-            run: "setup",
-          },
-        ],
-      },
-      {
         title: "Files",
         fields: [
           { kind: "action", label: "Config file", help: "Everything here is stored in config.toml.", button: "Open", run: "open_config" },

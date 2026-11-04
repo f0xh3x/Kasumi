@@ -27,8 +27,7 @@ fn dir() -> PathBuf {
 const SHIPPED: &[(&str, &str)] = &[
     ("Default", include_str!("../presets/Default.toml")),
     ("Modern", include_str!("../presets/Modern.toml")),
-    ("Classic status bar", include_str!("../presets/Classic status bar.toml")),
-    ("Classic taskbar", include_str!("../presets/Classic taskbar.toml")),
+    ("Kasumi", include_str!("../presets/Kasumi.toml")),
 ];
 
 /// The shipped presets, for the first-time setup's cards: each bar's style

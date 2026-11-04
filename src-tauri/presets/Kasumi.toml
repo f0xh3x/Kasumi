@@ -9,6 +9,7 @@ edge_px = 8        # cursor must be within this distance of the top edge
 
 [general]
 hide_in_fullscreen = true # hide the notch while a game or video is fullscreen
+rounded_corners = false
 
 [theme]
 background = "#000000"
@@ -19,7 +20,7 @@ warn = "#ff9f43"           # hot temperatures
 font_size = 13
 
 [geometry]
-expanded_height = 38      # full-width bar height when open (same as the notch)
+expanded_height = 30      # full-width bar height when open (same as the notch)
 corner_radius = 14        # bottom corners of the bar while it spreads (square at the screen edges)
 concave_radius = 33       # width of the flare from the edge into the notch's slanted middle
 notch_height = 30         # default collapsed notch height (per-notch override: height)
@@ -37,7 +38,14 @@ panel_stiffness = 775     # panels (calendar) dropping out of a notch
 panel_damping = 43
 mass = 1
 style = "drop"            # drop: bar slides out of the top edge | spread: grows sideways out of the notches
+bar_content = "reveal"
 panel_content = "reveal"
+hover_nudge = false
+cascade = true
+rolling = true
+magnify = true
+notification_nudge = true
+marker_glide = true
 
 # On-screen display: the notch grows into a pill showing the new level.
 [osd]
@@ -64,7 +72,7 @@ match = "*"
 
 [widgets.clock]
 format = "%H:%M"
-enabled = true
+week_numbers = false
 
 # LibreHardwareMonitor remote web server (Options > Remote Web Server).
 [widgets.temps]
@@ -89,44 +97,39 @@ enabled = false
 [widgets.media]
 max_width = 240                              # px for "title — artist" before it ellipsizes
 scroll = true
-enabled = false
+enabled = true
+style = "glow"
 
 # Open-Meteo, no API key. Pick your city in Settings > Widgets > Weather.
 [widgets.weather]
 units = "metric"                             # metric | imperial
 interval_min = 15
 hours = 8                                    # hours shown in the weather panel
-enabled = false
+enabled = true
+style = "sky"
 
 # Notification-area icons, hosted from apps' Shell_NotifyIcon calls (Explorer's tray keeps working).
 [widgets.tray]
 icons_per_row = 5
-hide = []                      # process names whose icons are left out
-enabled = true
+hide = ["explorer.exe"]                      # process names whose icons are left out
 
 # Hamburger menu. action: "open" (a path or shell: folder), "restart", "shutdown".
 # confirm = true needs a second click within 3 s.
 [widgets.menu]
 width = 210
 items = [{ action = "open", icon = "", label = "This PC", target = "shell:MyComputerFolder" }, { action = "open", icon = "", label = "Downloads", target = "~/Downloads" }, { action = "open", icon = "", label = "Documents", target = "~/Documents" }, { action = "open", icon = "", label = "Pictures", target = "~/Pictures" }, { action = "open", icon = "", label = "Recycle bin", target = "shell:RecycleBinFolder" }, { separator = true }, { action = "settings", icon = "", label = "Settings" }, { separator = true }, { label = "Sleep", icon = "", action = "sleep" }, { action = "restart", confirm = true, icon = "", label = "Restart" }, { action = "shutdown", confirm = true, icon = "", label = "Shut down" }, { label = "Lock", icon = "", action = "lock" }]
-enabled = true
+style = "strip"
 
 [widgets.language]
 enabled = false
 
 [widgets.buttons]
-items = [{ action = "restart", confirm = true, icon = "", label = "Restart" }, { action = "shutdown", confirm = true, icon = "", label = "Shut down" }]
-enabled = false
-
-[widgets.tasks]
+items = [{ action = "settings", icon = "", label = "Settings" }, { icon = "", items = [{ action = "open", icon = "", label = "My PC", target = "shell:MyComputerFolder" }, { label = "Recycle Bin", icon = "", action = "open", target = "shell:RecycleBinFolder" }, { action = "open", icon = "", label = "Downloads", target = "shell:Downloads" }], label = "Quick Access" }]
 enabled = true
-labels = "none"
 
 [widgets.quick]
-enabled = true
-
-[widgets.launcher]
-enabled = false
+tiles = ["wifi", "bluetooth", "display", "sound", "kasumi", "power"]
+style = ""
 
 [notch]
 merge = true
@@ -143,29 +146,35 @@ offset = 150
 
 [surfaces.top]
 edge = "top"
-mode = "always"
-left = []
-center = []
-right = []
-notch = []
+mode = "bar"
+left = ["menu"]
+center = ["clock"]
+right = ["media", "weather"]
+notch = ["clock", "media", "weather"]
 hot_left = true
 hot_right = false
 hot_edge = false
 hot_corner_size = 12
-reserve_space = true
-enabled = false
 
 [surfaces.bottom]
 edge = "bottom"
-mode = "always"
+mode = "dock"
 rest = "small"
 open = "medium"
-left = ["menu", "tasks"]
-center = []
-right = ["tray", "quick", "clock"]
+left = ["buttons"]
+center = ["tasks", "tray", "quick"]
+right = []
 notch = []
-enabled = true
-reserve_space = true
 
 [shell]
 hide_taskbar = true
+
+[launcher]
+start_menu = true
+
+[context_menu]
+enabled = true
+
+[alt_tab]
+position = "center"
+desktop = "first"
