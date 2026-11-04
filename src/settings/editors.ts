@@ -289,6 +289,13 @@ export function placements(cfg: Cfg, type: string): string[] {
 /** A widget type is on a bar somewhere. */
 export const isPlaced = (cfg: Cfg, type: string): boolean => placements(cfg, type).length > 0;
 
+/** What a widget needs from outside Kasumi to show anything. */
+const NEEDS: Record<string, string> = {
+  temps: "Needs LibreHardwareMonitor",
+  workspaces: "Needs Komorebi",
+  claude: "Needs Claude Code",
+};
+
 /** A widget page's header: where it is (and a way to the layout), or that it isn't on a
  *  bar, with buttons putting it on one (the right of a bar, the middle of a dock). */
 const widgetHeader: Editor = (ctx) => {
@@ -297,6 +304,7 @@ const widgetHeader: Editor = (ctx) => {
   const head = $("div", "widget-head");
   const toLayout = $("button", "button", "Edit the layout");
   toLayout.addEventListener("click", () => ctx.goto("layout", ""));
+  if (NEEDS[type]) head.append($("span", "row-tag", NEEDS[type]));
   if (where.length) {
     head.append(...where.map((w) => $("span", "widget-where", w)), toLayout);
     return head;
@@ -325,7 +333,7 @@ const widgetCards: Editor = (ctx) => {
   const cards = WIDGETS.map((w) => ({ ...w, where: placements(ctx.cfg, w.id) }));
   cards.sort((a, b) => Number(!a.where.length) - Number(!b.where.length));
   for (const w of cards) {
-    const card = $("button", `widget-card${w.where.length ? "" : " off"}`, glyph(w.icon), $("span", "widget-card-text", $("b", "", w.label), $("small", "", w.where[0] ?? "Not on a bar")));
+    const card = $("button", `widget-card${w.where.length ? "" : " off"}`, glyph(w.icon), $("span", "widget-card-text", $("b", "", w.label), $("small", "", w.where[0] ?? NEEDS[w.id] ?? "Not on a bar")));
     card.addEventListener("click", () => ctx.goto(`w-${w.id}`, ""));
     grid.append(card);
   }

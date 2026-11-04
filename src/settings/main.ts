@@ -28,6 +28,17 @@ const VIEW = new URLSearchParams(location.search).get("view");
 if (VIEW) document.body.classList.add(`view-${VIEW}`);
 
 let cfg: Cfg = {};
+/** Cards whose More is open (remembered; a card's key: page and title). */
+const moreOpen = new Set<string>(JSON.parse(localStorage.getItem("settings-more") ?? "[]"));
+const saveMore = () => localStorage.setItem("settings-more", JSON.stringify([...moreOpen]));
+
+/** A setting's row with its tag (what it changes or needs) by its name. */
+function fieldControl(f: Field): HTMLElement | null {
+  const r = control(f);
+  if (r && "tag" in f && f.tag) r.querySelector(".row-label")?.append($("span", "row-tag", f.tag));
+  return r;
+}
+
 /** Each page's open tab (pages with tabs: the widgets'). */
 const tabs: Record<string, string> = {};
 const TAB_ORDER = ["Content", "Look", "Motion"];
@@ -311,8 +322,30 @@ function renderPage(page: Page): HTMLElement {
     // Widgets page: some sections belong to the Global view, some to a monitor's.
     if (s.scope === "global" && scope.monitor) continue;
     if (s.scope === "monitor" && !scope.monitor) continue;
-    const rows = s.fields.map(control).filter((r): r is HTMLElement => r !== null);
-    if (!rows.length) continue;
+    // Expert settings fold under More (open once opened, until closed again).
+    const shown = s.fields.filter((f) => !("more" in f && f.more));
+    const expert = s.fields.filter((f) => "more" in f && f.more);
+    let rows = shown.map(fieldControl).filter((r): r is HTMLElement => r !== null);
+    const extra = expert.map(fieldControl).filter((r): r is HTMLElement => r !== null);
+    if (extra.length) {
+      const key = `${page.id}:${s.title}`;
+      const isOpen = moreOpen.has(key);
+      const more = $("button", `more-toggle${isOpen ? " open" : ""}`, glyph(0xe76c), isOpen ? "Less" : `More (${extra.length})`);
+      more.setAttribute("aria-expanded", String(isOpen));
+      more.addEventListener("click", () => {
+        if (moreOpen.has(key)) moreOpen.delete(key);
+        else moreOpen.add(key);
+        saveMore();
+        render();
+      });
+      rows = [...rows, more, ...(isOpen ? extra : [])];
+    }
+    if (!rows.length) {
+      // None of its settings applies: say why, quietly.
+      const why = s.note?.(cfg);
+      if (why) content.append($("p", "quiet-note", glyph(0xe946), $("span", "", why)));
+      continue;
+    }
     if (s.collapsible && s.attach && last) {
       last.append(collapsible(s.title, $("div", "sub-body", ...rows), `${page.id}:${s.title}`, s.icon));
       continue;
@@ -363,7 +396,7 @@ function renderResults(q: string): HTMLElement {
       if (s.scope === "monitor" && !scope.monitor) continue;
       const whole = has(p.label, s.title, s.help);
       const fields = s.fields.filter((f) => whole || ("label" in f && has(p.label, s.title, f.label, f.help)));
-      const rows = fields.map(control).filter((r): r is HTMLElement => r !== null);
+      const rows = fields.map(fieldControl).filter((r): r is HTMLElement => r !== null);
       if (!rows.length) continue;
       found++;
       const area = areaOf(p.id);

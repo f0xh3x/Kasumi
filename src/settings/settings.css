@@ -101,6 +101,16 @@ body.maximized { border: 0; border-radius: 0; }
 .nav-logo { display: inline-flex; width: 15px; justify-content: center; }
 .nav-logo svg { width: 15px; height: 15px; fill: currentColor; }
 .page-crumb { color: var(--faint); font-size: 12px; margin-bottom: 2px; }
+/* A card's More: its expert settings folded away. */
+.more-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 0 2px; border: 0; border-top: 1px solid var(--line); background: none; color: var(--faint); font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.more-toggle:hover { color: var(--fg); }
+.more-toggle .icon { font-size: 10px; transition: transform 120ms ease; }
+.more-toggle.open .icon { transform: rotate(90deg); }
+/* What a setting changes or needs. */
+.row-tag { margin-left: 8px; padding: 1px 7px; border-radius: 99px; background: rgba(255, 159, 67, 0.14); color: #ffb36b; font-size: 10.5px; font-weight: 600; vertical-align: 1px; }
+/* Why a group of settings isn't shown. */
+.quiet-note { display: flex; align-items: flex-start; gap: 10px; margin: 0 4px 16px; color: var(--faint); font-size: 12.5px; }
+.quiet-note .icon { font-size: 13px; margin-top: 2px; }
 /* A widget page's tabs. */
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 16px; }
 .tab { padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--dim); font: inherit; font-weight: 600; cursor: pointer; }

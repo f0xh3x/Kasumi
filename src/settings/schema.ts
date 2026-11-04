@@ -14,6 +14,10 @@ interface Base {
   help?: string;
   path: PathSpec;
   default: unknown;
+  /** Expert: folded under the card's More (set by EXPERT below). */
+  more?: boolean;
+  /** A small tag by its name: what it changes or needs (set by TAGS below). */
+  tag?: string;
 }
 
 /** Animation effects per widget (Settings > Animation > Per widget): the ones that apply to each. */
@@ -70,8 +74,8 @@ export type Field =
   | (Base & { kind: "select"; options: { value: string; label: string }[] })
   | (Base & { kind: "color" })
   | (Base & { kind: "list"; placeholder?: string })
-  | { kind: "autostart"; label: string; help?: string }
-  | { kind: "action"; label: string; help?: string; button: string; run: string; confirm?: string }
+  | { kind: "autostart"; label: string; help?: string; more?: boolean; tag?: string }
+  | { kind: "action"; label: string; help?: string; button: string; run: string; confirm?: string; more?: boolean; tag?: string }
   /** A structured editor from editors.ts. */
   | { kind: "custom"; editor: string };
 
@@ -110,6 +114,8 @@ export interface Section {
   tab?: string;
   /** A card pointing to another page (its settings live there): [button, page]. */
   link?: [string, string];
+  /** Why its settings don't show (when none applies): a quiet line in their place. */
+  note?: (cfg: Cfg) => string | null;
 }
 
 export interface Page {
@@ -432,7 +438,7 @@ const sources: Page[] = [
           {
             kind: "select",
             label: "Panel shows",
-            path: ["widgets", "weather", "forecast"],
+            path: (cfg) => (["curve", "week"].includes(cfg.widgets?.weather?.style) ? null : ["widgets", "weather", "forecast"]),
             default: "hourly",
             options: [
               { value: "hourly", label: "The next hours" },
@@ -442,7 +448,7 @@ const sources: Page[] = [
           {
             kind: "slider",
             label: "Hours in the panel",
-            path: (cfg) => (cfg.widgets?.weather?.forecast === "daily" ? null : ["widgets", "weather", "hours"]),
+            path: (cfg) => (cfg.widgets?.weather?.forecast === "daily" || ["curve", "week"].includes(cfg.widgets?.weather?.style) ? null : ["widgets", "weather", "hours"]),
             default: 8,
             min: 3,
             max: 12,
@@ -991,7 +997,7 @@ const sources: Page[] = [
           {
             kind: "select",
             label: "Icons",
-            help: "Monochrome keeps the detail in grey; Accent paints each icon's shape in the accent colour (Appearance).",
+            help: "Monochrome keeps the detail in grey; Accent paints each icon's shape in the accent colour (Look › Colours).",
             path: ["widgets", "tasks", "icons"],
             default: "color",
             options: [
@@ -1017,7 +1023,7 @@ const sources: Page[] = [
           {
             kind: "select",
             label: "Labels",
-            path: ["widgets", "tasks", "labels"],
+            path: (cfg) => (["labels", "dots"].includes(cfg.widgets?.tasks?.style) ? null : ["widgets", "tasks", "labels"]),
             default: "none",
             options: [
               { value: "none", label: "Icons only" },
@@ -1086,7 +1092,7 @@ const sources: Page[] = [
           {
             kind: "select",
             label: "Icons",
-            help: "Monochrome keeps the detail in grey; Accent paints each icon's shape in the accent colour (Appearance).",
+            help: "Monochrome keeps the detail in grey; Accent paints each icon's shape in the accent colour (Look › Colours).",
             path: ["widgets", "tray", "icons"],
             default: "color",
             options: [
@@ -1286,7 +1292,7 @@ const sources: Page[] = [
           {
             kind: "toggle",
             label: "Accent on widget details",
-            help: "Hover highlights, the line under the app in front, sliders, bars and key readings in the accent colour. Each widget can differ under Per widget below.",
+            help: "Hover highlights, the line under the app in front, sliders, bars and key readings in the accent colour. Each widget can differ on its own page (Widgets › its Look tab).",
             path: ["theme", "accent_details"],
             default: false,
           },
@@ -1389,7 +1395,7 @@ const sources: Page[] = [
       },
       {
         title: "Effects",
-        help: "For every widget's panel and numbers; each widget can differ under Per widget below.",
+        help: "For every widget's panel and numbers; each widget can differ on its own page (Widgets › its Motion tab).",
         fields: [
           { kind: "toggle", label: "Hover nudge", help: "A notch grows a little as the cursor comes near it.", path: ["animation", "hover_nudge"], default: false },
           { kind: "toggle", label: "Cascade", help: "A widget's panel shows its content one piece after another: calendar days, weather hours, notifications...", path: ["animation", "cascade"], default: false },
@@ -1401,7 +1407,7 @@ const sources: Page[] = [
       },
       {
         title: "Context menu",
-        help: "Kasumi's own right-click menu (Settings › Context menu).",
+        help: "Kasumi's own right-click menu (Windows parts › Context menus).",
         fields: [
           {
             kind: "select",
@@ -1682,9 +1688,9 @@ const sources: Page[] = [
       },
       {
         title: "Look",
-        help: "Kasumi's menus (in Explorer, on the bars and in the launcher) look like the bars (Appearance), or have their own colours and background.",
+        help: "Kasumi's menus (in Explorer, on the bars and in the launcher) look like the bars (Look › Colours), or have their own colours and background.",
         fields: [
-          { kind: "toggle", label: "Own look", help: "Off: the same as Appearance.", path: ["context_menu", "own_style"], default: false },
+          { kind: "toggle", label: "Own look", help: "Off: the same as the bars (Look › Colours).", path: ["context_menu", "own_style"], default: false },
           {
             kind: "color",
             label: "Background tint",
@@ -1754,7 +1760,7 @@ const sources: Page[] = [
     sections: [
       {
         title: "Switchers",
-        help: "Kasumi's own pop-ups for switching windows and keyboard languages, in place of Windows' ones. Native Kasumi only (Settings › About).",
+        help: "Kasumi's own pop-ups for switching windows and keyboard languages, in place of Windows' ones. Native Kasumi only (Kasumi › Updates and files).",
         fields: [
           {
             kind: "select",
@@ -2040,7 +2046,11 @@ export const pages: Page[] = [
     icon: 0xe8b0,
     sections: [
       sec("widgets", "Layout for", { title: "Which bar" }),
-      part("widgets", "Bar settings", ["Reserve space", "Hot corner: left", "Hot corner: right", "Anywhere along the edge", "Hot corner size", "Edge zone size"], { title: "Hot corners and space", scope: "global" }),
+      part("widgets", "Bar settings", ["Reserve space", "Hot corner: left", "Hot corner: right", "Anywhere along the edge", "Hot corner size", "Edge zone size"], {
+        title: "Hot corners and space",
+        scope: "global",
+        note: (cfg) => (cfg.surfaces?.[scope.surface]?.enabled === false ? "This bar is off: switch it on under Layout to set how it opens." : "Hot corners are for bars that open from their notches; this one is always open."),
+      }),
       sec("behaviour", "Opening and closing"),
       part("general", "Behaviour", ["Hide in fullscreen"], { title: "Fullscreen apps" }),
     ],
@@ -2051,7 +2061,11 @@ export const pages: Page[] = [
     icon: 0xe740,
     sections: [
       sec("widgets", "Layout for", { title: "Which bar" }),
-      part("widgets", "Bar settings", ["Size at rest", "Size when open"], { title: "This bar's size", scope: "global" }),
+      part("widgets", "Bar settings", ["Size at rest", "Size when open"], {
+        title: "This bar's size",
+        scope: "global",
+        note: (cfg) => (cfg.surfaces?.[scope.surface]?.enabled === false ? "This bar is off: switch it on under Layout." : "Sizes at rest and when open are for docks: pick a dock above to see them."),
+      }),
       part("appearance", "Bar and panels", ["Bar height", "Side padding", "Gap between widgets"], { title: "Bar" }),
       sec("appearance", "Bar sizes", { title: "Dock sizes" }),
     ],
@@ -2110,6 +2124,35 @@ export const pages: Page[] = [
   { ...source("presets") },
   { ...source("about"), label: "Updates and files" },
 ];
+
+// --- Expert settings and tags --------------------------------------------------------
+
+/** Settings most people never need, folded under their card's More, by page. (A section
+ *  called Springs folds all but Bounce.) */
+const EXPERT: Record<string, string[]> = {
+  opening: ["Hot corner size", "Edge zone size", "Open delay", "Close delay", "Top edge band"],
+  shape: ["Flare width", "Round-off width", "Panel fillet"],
+  colors: ["Secondary text opacity"],
+  osd: ["Pill width", "Pill height", "Length", "Width"],
+};
+
+/** What a setting changes or needs, by its name. */
+const TAGS: Record<string, string> = {
+  "Hide the Windows taskbar": "Changes Windows",
+  "Replace the Start menu": "Changes Windows",
+  "Take over the volume keys": "Changes Windows",
+  Background: "Blur: Windows 11",
+};
+
+for (const p of pages) {
+  for (const sc of p.sections) {
+    for (const f of sc.fields) {
+      if (!("label" in f)) continue;
+      if ((sc.title === "Springs" && f.label !== "Bounce") || EXPERT[p.id]?.includes(f.label)) f.more = true;
+      if (TAGS[f.label]) f.tag = TAGS[f.label];
+    }
+  }
+}
 
 /** The sidebar's places: each opens its first page; the others show under it while
  *  it's open. `icon` 0: Kasumi's logo. */
