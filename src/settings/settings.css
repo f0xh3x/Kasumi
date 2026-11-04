@@ -826,3 +826,6 @@ body.view-setup #toast, body.view-notes #toast { bottom: 76px; }
 .needs-note { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255, 180, 84, 0.1); border: 1px solid rgba(255, 180, 84, 0.3); }
 .needs-note-text { flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--dim); line-height: 1.45; }
 .needs-note-text b { color: var(--fg); font-size: 13px; }
+
+/* Keyboard: where the focus is, always visible (only when moving by keyboard). */
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }

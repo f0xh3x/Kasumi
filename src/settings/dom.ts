@@ -52,5 +52,11 @@ export function toggleSwitch(on: boolean, onChange: (on: boolean) => void) {
 export function row(label: string, help: string | undefined, control: HTMLElement): HTMLElement {
   const text = $("div", "row-text", $("div", "row-label", label));
   if (help) text.append($("div", "row-help", help));
+  // Screen readers: the control is named by the row's label (and described by its help).
+  const target = control.matches("button, input, select, textarea") ? control : control.querySelector("button, input, select, textarea");
+  if (target && !target.hasAttribute("aria-label")) {
+    target.setAttribute("aria-label", label);
+    if (help) target.setAttribute("aria-description", help);
+  }
   return $("div", "row", text, $("div", "row-control", control));
 }

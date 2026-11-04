@@ -583,6 +583,8 @@ export const CHIP_LEGEND: [number, string][] = [
 
 /** The placement's open widget popup (kept while the editor redraws after a change). */
 let placementOpen: string | null = null;
+/** A chip moved by the keyboard: focused again after the redraw. */
+let refocus: string | null = null;
 
 /**
  * The selected bar drawn as a bar (or a dock): its left, centre and right, with the
@@ -706,7 +708,35 @@ const placement: Editor = (ctx) => {
     if (needs) el.append($("span", "chip-needs", glyph(0xe71b)));
     el.draggable = true;
     el.dataset.id = id;
-    el.title = (onBar ? `${w.label}: click for its options, drag to move it` : `${w.label}: drag onto the bar`) + (needs ? ` (needs ${needs.app})` : "");
+    el.title = (onBar ? `${w.label}: click for its options, drag (or arrow keys) to move it, Delete to take it off` : `${w.label}: drag onto the bar`) + (needs ? ` (needs ${needs.app})` : "");
+    if (refocus === id)
+      requestAnimationFrame(() => {
+        if (!el.isConnected) return;
+        el.focus();
+        refocus = null;
+      });
+    // Keyboard: arrows move it along the bar (past a side's end: into the next side),
+    // Delete takes it off.
+    if (onBar) {
+      el.addEventListener("keydown", (e) => {
+        const side = SIDES.find((x) => L[x].includes(id));
+        if (!side) return;
+        const at = L[side].indexOf(id);
+        const si = SIDES.indexOf(side);
+        let to: [Side, number] | null = null;
+        if (e.key === "ArrowLeft") to = at > 0 ? [side, at - 1] : si > 0 ? [SIDES[si - 1], L[SIDES[si - 1]].length] : null;
+        if (e.key === "ArrowRight") to = at < L[side].length - 1 ? [side, at + 1] : si < SIDES.length - 1 ? [SIDES[si + 1], 0] : null;
+        if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          drop(id, "disabled", 0);
+          return;
+        }
+        if (!to) return;
+        e.preventDefault();
+        refocus = id;
+        drop(id, to[0], to[1]);
+      });
+    }
     el.setAttribute("aria-haspopup", String(onBar));
     el.addEventListener("click", (e) => {
       e.stopPropagation();

@@ -391,9 +391,19 @@ function renderPage(page: Page): HTMLElement {
       const b = $("button", `tab${t === tab ? " active" : ""}`, t);
       b.setAttribute("role", "tab");
       b.setAttribute("aria-selected", String(t === tab));
+      b.tabIndex = t === tab ? 0 : -1;
       b.addEventListener("click", () => {
         tabs[page.id] = t;
         render();
+      });
+      // Arrows go to the next tab (and keep the focus on the tabs).
+      b.addEventListener("keydown", (e) => {
+        const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!step) return;
+        e.preventDefault();
+        tabs[page.id] = names[(names.indexOf(t) + step + names.length) % names.length];
+        render();
+        (document.querySelector('.tabs [aria-selected="true"]') as HTMLElement | null)?.focus();
       });
       tabBar.append(b);
     }
@@ -584,6 +594,7 @@ function render(): void {
   for (const a of areas) {
     const icon = a.icon ? glyph(a.icon) : $("span", "icon nav-logo", kasumiLogo());
     const item = $("button", `nav-item${a === here && !query ? " active" : ""}`, icon, a.label);
+    if (a === here && !query) item.setAttribute("aria-current", "true");
     item.setAttribute("data-area", a.id);
     item.addEventListener("click", () => open(a.pages[0]));
     nav.append(item);
@@ -594,6 +605,7 @@ function render(): void {
       // Widgets: the ones on a bar (and the open one).
       if (id.startsWith("w-") && id !== current && !isPlaced(cfg, id.slice(2))) continue;
       const sub = $("button", `nav-sub${id === current && !query ? " active" : ""}`, p.label);
+      if (id === current && !query) sub.setAttribute("aria-current", "page");
       sub.setAttribute("data-page", id);
       sub.addEventListener("click", () => open(id));
       nav.append(sub);
