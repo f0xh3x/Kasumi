@@ -60,11 +60,25 @@ fn window(app: &AppHandle, label: &'static str, url: &str, title: &'static str, 
                 if let Ok(h) = w.hwnd() {
                     crate::win::round_corners(h.0 as isize);
                 }
+                // Closed on a widget's page: that widget stops glowing.
+                if label == "settings" {
+                    w.on_window_event(|e| {
+                        if matches!(e, tauri::WindowEvent::Destroyed) {
+                            crate::native::post(crate::native::Msg::Spotlight(None));
+                        }
+                    });
+                }
                 let _ = w.set_focus();
             }
             Err(e) => eprintln!("[kasumi] {label} window: {e}"),
         }
     });
+}
+
+/// The settings show a widget's page (its kind), or none: that widget glows on the bars.
+#[tauri::command]
+pub fn settings_spotlight(kind: Option<String>) {
+    crate::native::post(crate::native::Msg::Spotlight(kind));
 }
 
 #[tauri::command]

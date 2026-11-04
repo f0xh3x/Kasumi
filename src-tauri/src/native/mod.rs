@@ -131,6 +131,9 @@ pub enum Msg {
     /// Another app's tooltip to cover with Kasumi's: its text and box (screen px), or
     /// none (it hid; apptips.rs).
     AppTip(Option<(String, [i32; 4])>),
+    /// The settings window shows a widget's page (its kind): that widget glows on the
+    /// bars; none: none does.
+    Spotlight(Option<String>),
 }
 
 /// Where a view has scrolled to (shares of the track), on which monitor, for how long,
@@ -476,6 +479,11 @@ impl Native {
             Msg::LangReveal(n) => {
                 if let Some((_, back)) = self.lang_pending.take_if(|p| p.0 == n) {
                     self.lang_open(back);
+                }
+            }
+            Msg::Spotlight(kind) => {
+                for s in self.surfaces.iter_mut() {
+                    s.set_spotlight(&self.gfx, kind.clone());
                 }
             }
             Msg::AppTip(tip) => match tip {
@@ -1019,7 +1027,7 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                     act
                 });
                 report(n);
-                let bar_menu = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).is_some_and(|s| s.take_bar_menu());
+                let bar_menu = n.surfaces.iter_mut().find(|s| s.hwnd == hwnd).and_then(|s| s.take_bar_menu());
                 Some((act, bar_menu, n.app.clone()))
             })
             .flatten();
@@ -1027,13 +1035,13 @@ unsafe extern "system" fn surface_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                 if let Some(act) = act {
                     run_act(act, app.clone());
                 }
-                // A right-click on a bar's empty space: Kasumi's bar menu; on an app in the
-                // launcher: its menu.
+                // A right-click on an app in the launcher: its menu; on a bar's empty space
+                // or a widget with no menu of its own: Kasumi's bar menu.
                 if let Some(app) = app {
-                    if bar_menu {
-                        ctxmenu::bar_menu(app);
-                    } else if let Some(id) = widgets::launcher::take_menu() {
+                    if let Some(id) = widgets::launcher::take_menu() {
                         ctxmenu::launcher_menu(app, id);
+                    } else if let Some(widget) = bar_menu {
+                        ctxmenu::bar_menu(app, widget);
                     }
                 }
             }

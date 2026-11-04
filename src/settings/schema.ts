@@ -2022,8 +2022,21 @@ export const pages: Page[] = [
     label: "Home",
     icon: 0xe80f,
     sections: [
+      { title: "Your bars", help: "Click a widget for its settings.", fields: [{ kind: "custom", editor: "homeBars" }] },
+      {
+        title: "What Kasumi replaces",
+        help: "Each switch hands that part back to Windows.",
+        fields: [
+          ...part("general", "Launcher", ["Replace the Start menu"], { title: "" }).fields,
+          ...part("general", "Behaviour", ["Hide the Windows taskbar"], { title: "" }).fields,
+          ...part("switchers", "Alt + Tab", ["Kasumi's Alt + Tab"], { title: "" }).fields,
+          ...part("switchers", "Languages (Win + Space)", ["Kasumi's language picker"], { title: "" }).fields,
+          ...part("osd", "On-screen display", ["Show pop-ups"], { title: "" }).fields,
+          ...part("context-menu", "Context menu (experimental)", ["Kasumi's context menu"], { title: "" }).fields,
+        ],
+      },
+      part("appearance", "Colors", ["Use Windows' accent colour", "Accent"], { title: "Accent" }),
       sec("general", "Startup"),
-      part("general", "Behaviour", ["Hide the Windows taskbar"], { title: "Quick switches" }),
     ],
   },
   // Bars and dock
@@ -2109,6 +2122,28 @@ export const pages: Page[] = [
   },
   { ...source("switchers") },
   {
+    id: "keyboard",
+    label: "Keyboard",
+    icon: 0xe765,
+    sections: [
+      {
+        title: "Start",
+        help: "The Windows key and the launcher's own hotkey.",
+        fields: part("general", "Launcher", ["Replace the Start menu", "Hotkey"], { title: "" }).fields,
+      },
+      {
+        title: "Switching",
+        help: "Alt + Tab between windows, Win + Space between keyboard languages, Win + 1…9 to the dock's apps.",
+        fields: [
+          ...part("switchers", "Alt + Tab", ["Kasumi's Alt + Tab"], { title: "" }).fields,
+          ...part("switchers", "Languages (Win + Space)", ["Kasumi's language picker"], { title: "" }).fields,
+          ...part("widget-settings", "Tasks", ["Win + 1…9 opens apps"], { title: "" }).fields,
+        ],
+      },
+      { title: "Volume", fields: part("osd", "Volume", ["Take over the volume keys"], { title: "" }).fields },
+    ],
+  },
+  {
     id: "osd",
     label: "Pop-ups",
     icon: 0xe7f4,
@@ -2167,7 +2202,7 @@ export const areas: Area[] = [
   { id: "bars", label: "Bars and dock", icon: 0xe71d, pages: ["layout", "opening", "size", "notches"] },
   { id: "widgets", label: "Widgets", icon: 0xeca5, pages: ["widget-settings", ...WIDGETS.map((w) => `w-${w.id}`)] },
   { id: "look", label: "Look", icon: 0xe790, pages: ["colors", "shape", "text", "motion"] },
-  { id: "windows", label: "Windows parts", icon: 0xe7c4, pages: ["start", "switchers", "osd", "notifications", "context-menu"] },
+  { id: "windows", label: "Windows parts", icon: 0xe7c4, pages: ["start", "keyboard", "switchers", "osd", "notifications", "context-menu"] },
   { id: "kasumi", label: "Kasumi", icon: 0, pages: ["presets", "about"] },
 ];
 

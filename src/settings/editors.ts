@@ -290,10 +290,32 @@ export function placements(cfg: Cfg, type: string): string[] {
 export const isPlaced = (cfg: Cfg, type: string): boolean => placements(cfg, type).length > 0;
 
 /** What a widget needs from outside Kasumi to show anything. */
-const NEEDS: Record<string, string> = {
-  temps: "Needs LibreHardwareMonitor",
-  workspaces: "Needs Komorebi",
-  claude: "Needs Claude Code",
+/** Widgets that show another app's data: that app, what it's for, where to get it. */
+const NEEDS: Record<string, { app: string; note: string; url: string }> = {
+  temps: {
+    app: "LibreHardwareMonitor",
+    note: "Windows doesn't share temperatures with apps, so this reads them from LibreHardwareMonitor (free). Install it, run it, and turn on Options > Remote Web Server; leave it running (it can start with Windows and stay in the tray).",
+    url: "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases",
+  },
+  workspaces: {
+    app: "Komorebi",
+    note: "Shows the workspaces of Komorebi, a tiling window manager (free). Without Komorebi running, the widget stays hidden.",
+    url: "https://github.com/LGUG2Z/komorebi/releases",
+  },
+  claude: {
+    app: "Claude Code",
+    note: "Shows your Claude Code usage, read from Claude Code on this PC. Without it, the widget has nothing to show.",
+    url: "https://claude.com/claude-code",
+  },
+};
+
+/** The mark of a widget that needs another app. */
+const needsTag = (type: string): HTMLElement | null => {
+  const n = NEEDS[type];
+  if (!n) return null;
+  const tag = $("span", "row-tag needs-tag", glyph(0xe71b), `Needs ${n.app}`);
+  tag.title = `Needs ${n.app}, a separate app`;
+  return tag;
 };
 
 /** A widget page's header: where it is (and a way to the layout), or that it isn't on a
@@ -304,10 +326,17 @@ const widgetHeader: Editor = (ctx) => {
   const head = $("div", "widget-head");
   const toLayout = $("button", "button", "Edit the layout");
   toLayout.addEventListener("click", () => ctx.goto("layout", ""));
-  if (NEEDS[type]) head.append($("span", "row-tag", NEEDS[type]));
+  // Needs another app: what for, and where to get it, above the rest.
+  const needs = NEEDS[type];
+  const top = needs ? $("div", "widget-top") : head;
+  if (needs) {
+    const get = $("button", "button", `Get ${needs.app}`);
+    get.addEventListener("click", () => invoke("run_action", { action: "open", target: needs.url }).catch(console.error));
+    top.append($("div", "needs-note", $("div", "needs-note-text", $("b", "", `Needs ${needs.app}`), $("span", "", needs.note)), get), head);
+  }
   if (where.length) {
     head.append(...where.map((w) => $("span", "widget-where", w)), toLayout);
-    return head;
+    return top;
   }
   // The launcher works without its icon: it opens from the middle of a bar or dock.
   const launcher = type === "launcher";
@@ -324,7 +353,35 @@ const widgetHeader: Editor = (ctx) => {
     });
     head.append(b);
   }
-  return head;
+  return top;
+};
+
+/** Home: each bar that's on, drawn as a bar with its widgets (a click opens one's page). */
+const homeBars: Editor = (ctx) => {
+  const wrap = $("div", "placer home-bars");
+  const cat = catalog(ctx.cfg);
+  for (const s of shownSurfaces(ctx.cfg)) {
+    const l = surfaceLayout(ctx.cfg, s);
+    const strip = $("div", `bar-strip${ctx.cfg.surfaces?.[s]?.mode === "dock" ? " dock" : ""}`);
+    strip.setAttribute("aria-label", surfaceName(s));
+    for (const side of SIDES) {
+      const zone = $("div", `bar-zone ${side}`);
+      for (const id of l[side]) {
+        const w = cat.find((x) => x.id === id);
+        if (!w || !enabled(ctx.cfg, id)) continue;
+        const b = $("button", "chip", glyph(w.icon), w.label);
+        b.title = `${w.label} settings`;
+        b.addEventListener("click", () => ctx.goto(`w-${typeOf(id)}`, ""));
+        zone.append(b);
+      }
+      strip.append(zone);
+    }
+    wrap.append($("div", "shelf-title", surfaceName(s)), strip);
+  }
+  const edit = $("button", "button", "Edit the layout");
+  edit.addEventListener("click", () => ctx.goto("layout", ""));
+  wrap.append($("div", "", edit));
+  return wrap;
 };
 
 /** Every widget as a card (the ones on a bar first, saying where): a click opens its page. */
@@ -333,7 +390,8 @@ const widgetCards: Editor = (ctx) => {
   const cards = WIDGETS.map((w) => ({ ...w, where: placements(ctx.cfg, w.id) }));
   cards.sort((a, b) => Number(!a.where.length) - Number(!b.where.length));
   for (const w of cards) {
-    const card = $("button", `widget-card${w.where.length ? "" : " off"}`, glyph(w.icon), $("span", "widget-card-text", $("b", "", w.label), $("small", "", w.where[0] ?? NEEDS[w.id] ?? "Not on a bar")));
+    const tag = needsTag(w.id);
+    const card = $("button", `widget-card${w.where.length ? "" : " off"}`, glyph(w.icon), $("span", "widget-card-text", $("b", "", w.label), $("small", "", w.where[0] ?? "Not on a bar"), ...(tag ? [tag] : [])));
     card.addEventListener("click", () => ctx.goto(`w-${w.id}`, ""));
     grid.append(card);
   }
@@ -644,9 +702,11 @@ const placement: Editor = (ctx) => {
     const w = cat.find((x) => x.id === id)!;
     const el = $("button", `chip${onBar && placementOpen === id ? " open" : ""}`, glyph(w.icon), w.label);
     if (onBar && options(id).notch) el.append($("span", "chip-notch"));
+    const needs = NEEDS[typeOf(id)];
+    if (needs) el.append($("span", "chip-needs", glyph(0xe71b)));
     el.draggable = true;
     el.dataset.id = id;
-    el.title = onBar ? `${w.label}: click for its options, drag to move it` : `${w.label}: drag onto the bar`;
+    el.title = (onBar ? `${w.label}: click for its options, drag to move it` : `${w.label}: drag onto the bar`) + (needs ? ` (needs ${needs.app})` : "");
     el.setAttribute("aria-haspopup", String(onBar));
     el.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -2049,6 +2109,7 @@ export const editors: Record<string, Editor> = {
   placement,
   widgetHeader,
   widgetCards,
+  homeBars,
   clockFormat,
   weatherLocation,
   tempsSensors,

@@ -532,6 +532,15 @@ function goto(page: string, section: string): void {
 
 const host: Host = { cfg: () => cfg, control, saveMany, reload: load, render: () => render(), toast };
 
+/** On a widget's page, that widget glows on the bars (told once per change). */
+let spotlit: string | null | undefined;
+function spotlight(): void {
+  const kind = !query && current.startsWith("w-") ? current.slice(2) : null;
+  if (kind === spotlit) return;
+  spotlit = kind;
+  invoke("settings_spotlight", { kind }).catch(() => {});
+}
+
 function render(): void {
   const app = document.getElementById("app")!;
   if (VIEW === "setup" || VIEW === "notes") {
@@ -540,6 +549,7 @@ function render(): void {
     app.querySelector(".setup-page")!.scrollTop = keep;
     return;
   }
+  spotlight();
   const scroll = app.querySelector(".content")?.scrollTop ?? 0;
   const nav = $("nav", "nav");
   // Search: typing redraws only the content, so the field keeps the focus.

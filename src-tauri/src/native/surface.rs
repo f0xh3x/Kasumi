@@ -273,7 +273,11 @@ pub struct Surface {
     tip_since: Option<Instant>,
     tip_blocked: Option<String>,
     /// A right-click on its empty space: the bar menu, for the native thread to show.
-    bar_menu: bool,
+    /// A right-click asked for the bar menu: on its empty space (None), or on a widget
+    /// with no menu of its own (its name: the menu offers its settings).
+    bar_menu: Option<Option<String>>,
+    /// The kind of widget whose settings page is open: it glows (Msg::Spotlight).
+    spotlight: Option<String>,
     /// Its apps' icons on screen as last published (native::set_icon_rects).
     sent_icons: Vec<(String, [i32; 4])>,
     /// A notification pop-up clicked ([osd] notification_click = "panel") while the bar
@@ -373,7 +377,8 @@ impl Surface {
             tip_want: None,
             tip_since: None,
             tip_blocked: None,
-            bar_menu: false,
+            bar_menu: None,
+            spotlight: None,
             sent_icons: Vec::new(),
             notes_pending: None,
             alt_panel: None,
@@ -1800,6 +1805,7 @@ impl Surface {
                 let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: if dock { row_h_dock } else { row as f32 }, open: bar_open };
                 let alpha = alpha * p.cover_k(now).unwrap_or(1.0);
                 if alpha > 0.0 {
+                    self.spot(gfx, p, x, cy, if dock { dock_widths[wi] } else { p.width }, cx.h, alpha);
                     p.w.draw(&cx, x, cy, alpha);
                 }
                 drawn.push((wi, Some((x, cy, alpha))));
@@ -1876,6 +1882,7 @@ impl Surface {
                 };
                 if a > 0.0 {
                     let cx = Ctx { gfx, look: &self.look, opts: &p.opts, h: h_bar as f32, open: 1.0 };
+                    self.spot(gfx, p, x, cy, p.open_width, cx.h, a);
                     p.w.draw(&cx, x, cy, a);
                 }
                 drawn.push((wi, if a > 0.0 { Some((x, cy, a)) } else { None }));
@@ -2283,6 +2290,9 @@ impl Surface {
                 Reply::Do(Act::Tray { id, button, at }) => Reply::Do(Act::Tray { id, button, at: to_screen(at) }),
                 other => other,
             };
+            if button == Button::Right && matches!(reply, Reply::None) {
+                self.bar_menu = Some(Some(self.widgets[wi].name.clone()));
+            }
             match reply {
                 Reply::TogglePanel => {
                     self.toggle_panel_of(gfx, wi);
@@ -2295,14 +2305,34 @@ impl Surface {
                 other => other,
             }
         } else {
-            self.bar_menu = button == Button::Right;
+            if button == Button::Right {
+                self.bar_menu = Some(None);
+            }
             Reply::None
         };
         self.answer(gfx, reply)
     }
 
-    /// A right-click on its empty space asked for the bar menu.
-    pub fn take_bar_menu(&mut self) -> bool {
+    /// The widget kind whose settings page is open (none: none), drawn glowing.
+    pub fn set_spotlight(&mut self, gfx: &Gfx, kind: Option<String>) {
+        if self.spotlight != kind {
+            self.spotlight = kind;
+            self.redraw(gfx);
+        }
+    }
+
+    /// Behind a widget whose settings page is open: a soft accent box.
+    fn spot(&self, gfx: &Gfx, p: &Placed, x: f32, cy: f32, w: f32, h: f32, alpha: f32) {
+        let Some(kind) = self.spotlight.as_deref() else { return };
+        if p.name.split('#').next() != Some(kind) || w <= 0.0 {
+            return;
+        }
+        let r = super::gfx::rect(x - 6.0, cy - h / 2.0 + 3.0, w + 12.0, h - 6.0);
+        gfx.fill_round(r, (h - 6.0) / 2.0, with_alpha(self.look.accent, 0.28 * alpha));
+    }
+
+    /// A right-click asked for the bar menu (on a widget with no menu of its own: its name).
+    pub fn take_bar_menu(&mut self) -> Option<Option<String>> {
         std::mem::take(&mut self.bar_menu)
     }
 

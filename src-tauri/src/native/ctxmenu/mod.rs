@@ -1223,8 +1223,8 @@ fn key(vk: VIRTUAL_KEY) {
 
 // --- Kasumi's bar menu (right-click on a bar's empty space; on the native thread) ------
 
-/// The bar menu at the cursor.
-pub fn bar_menu(app: tauri::AppHandle) {
+/// The bar menu at the cursor (right-clicked on a widget: first, that widget's settings).
+pub fn bar_menu(app: tauri::AppHandle, widget: Option<String>) {
     if !init_ui() {
         return;
     }
@@ -1248,8 +1248,41 @@ pub fn bar_menu(app: tauri::AppHandle) {
         Some(Sub::Ready(v)) => Some(v.clone()),
         _ => None,
     };
-    let entries = layout::arrange_with(&rules, &[], bar_entries(crate::presets::names()), &ctx, None, &children);
+    let mut entries = layout::arrange_with(&rules, &[], bar_entries(crate::presets::names()), &ctx, None, &children);
+    // Instances are named `<kind>#<n>`; their settings are the kind's.
+    let kind = widget.as_deref().map(|w| w.split('#').next().unwrap_or(w));
+    if let Some((kind, label)) = kind.and_then(|k| Some((k, widget_label(k)?))) {
+        entries.insert(0, shell::Entry::separator());
+        entries.insert(0, shell::Entry::named(&format!("{label} settings…"), Action::App(format!("page:w-{kind}")), Some(shell::Icon::Glyph('\u{E713}'))));
+    }
     show(entries, POINT { x, y }, None, None, Some(app), Some(ctx), look(cfg.as_ref()), true, anim);
+}
+
+/// A widget's name in the settings (its page there: `w-<kind>`).
+fn widget_label(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "clock" => "Clock",
+        "temps" => "PC temps",
+        "weather" => "Weather",
+        "media" => "Media",
+        "tray" => "Tray",
+        "language" => "Language",
+        "menu" => "Menu",
+        "tasks" => "Tasks",
+        "quick" => "Quick settings",
+        "buttons" => "Buttons",
+        "launcher" => "Launcher",
+        "focus" => "Focused app",
+        "netspeed" => "Network speed",
+        "disk" => "Disk usage",
+        "privacy" => "Privacy",
+        "claude" => "Claude Code",
+        "clipboard" => "Clipboard",
+        "notifications" => "Notifications",
+        "workspaces" => "Workspaces",
+        "batteries" => "Batteries",
+        _ => return None,
+    })
 }
 
 // --- The launcher's menu (right-click an app; on the native thread) -------------------
