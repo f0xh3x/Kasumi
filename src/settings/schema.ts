@@ -501,7 +501,6 @@ const sources: Page[] = [
               { value: "off", label: "Off" },
               { value: "always", label: "Always" },
               { value: "open", label: "Bar open (only while the bar is open)" },
-              { value: "closed", label: "Bar closed (only while the bar is closed)" },
             ],
           },
           {
@@ -1410,7 +1409,7 @@ const sources: Page[] = [
       },
       {
         title: "Context menu",
-        help: "Kasumi's own right-click menu (Windows parts › Context menus).",
+        help: "Kasumi's own right-click menu (Shell › Context menus).",
         fields: [
           {
             kind: "select",
@@ -2037,7 +2036,6 @@ export const pages: Page[] = [
         title: "",
         tiles: true,
         fields: [
-          { kind: "custom", editor: "homePreset" },
           pick("general", "Behaviour", "Hide the Windows taskbar", "Hide the taskbar", ""),
           pick("appearance", "Colors", "Accent", "Accent", ""),
         ],
@@ -2062,7 +2060,7 @@ export const pages: Page[] = [
     label: "Layout",
     icon: 0xe71d,
     sections: [
-      sec("widgets", "Layout for", { title: "Which bar" }),
+      sec("widgets", "Layout for", { title: "" }),
       sec("widgets", "Bar"),
       part("widgets", "Bar settings", ["<surfaceStyle>"], { title: "Style", scope: "global" }),
       sec("widgets", "This monitor"),
@@ -2074,7 +2072,7 @@ export const pages: Page[] = [
     label: "Opening",
     icon: 0xe8b0,
     sections: [
-      sec("widgets", "Layout for", { title: "Which bar" }),
+      sec("widgets", "Layout for", { title: "" }),
       part("widgets", "Bar settings", ["Reserve space", "Hot corner: left", "Hot corner: right", "Anywhere along the edge", "Hot corner size", "Edge zone size"], {
         title: "Hot corners and space",
         scope: "global",
@@ -2089,7 +2087,7 @@ export const pages: Page[] = [
     label: "Size",
     icon: 0xe740,
     sections: [
-      sec("widgets", "Layout for", { title: "Which bar" }),
+      sec("widgets", "Layout for", { title: "" }),
       part("widgets", "Bar settings", ["Size at rest", "Size when open"], {
         title: "This bar's size",
         scope: "global",
@@ -2127,7 +2125,7 @@ export const pages: Page[] = [
     sections: [part("appearance", "Colors", ["<fontPicker>", "<fontPicker::secondary>", "Text size"], { title: "Fonts", help: "For every widget; one widget's own font is on its page (Widgets)." })],
   },
   { ...source("animation"), id: "motion", label: "Motion", sections: all("animation", (x) => x.group !== "Per widget") },
-  // Windows parts
+  // Shell
   {
     id: "start",
     label: "Start and taskbar",
@@ -2219,7 +2217,7 @@ export const areas: Area[] = [
   { id: "bars", label: "Bars and dock", icon: 0xe71d, pages: ["layout", "opening", "size", "notches"] },
   { id: "widgets", label: "Widgets", icon: 0xeca5, pages: ["widget-settings", ...WIDGETS.map((w) => `w-${w.id}`)] },
   { id: "look", label: "Look", icon: 0xe790, pages: ["colors", "shape", "text", "motion"] },
-  { id: "windows", label: "Windows parts", icon: 0xe7c4, pages: ["start", "keyboard", "switchers", "osd", "notifications", "context-menu"] },
+  { id: "windows", label: "Shell", icon: 0xe7c4, pages: ["start", "keyboard", "switchers", "osd", "notifications", "context-menu"] },
   { id: "kasumi", label: "Kasumi", icon: 0, pages: ["presets", "about"] },
 ];
 

@@ -356,38 +356,20 @@ const widgetHeader: Editor = (ctx) => {
   return top;
 };
 
-/** Home: the preset in use; picking another applies it. */
-const homePreset: Editor = (ctx) => {
-  const box = row("Preset", "None in use", $("span"));
-  invoke<Preset[]>("presets_list")
-    .then((all) => {
-      const cur = all.find((p) => p.current);
-      box.querySelector(".row-help")!.textContent = cur ? cur.name : all.length ? "None in use" : "None saved yet";
-      const control = box.querySelector(".row-control")!;
-      if (!all.length) {
-        const go = $("button", "button", "Presets ›");
-        go.addEventListener("click", () => ctx.goto("presets", ""));
-        control.replaceChildren(go);
-        return;
-      }
-      const sel = select([...(cur ? [] : [["", "Pick one"] as [string, string]]), ...all.map((p): [string, string] => [p.name, p.name])], cur?.name ?? "");
-      sel.classList.add("select-small");
-      sel.setAttribute("aria-label", "Preset");
-      sel.addEventListener("change", async () => {
-        try {
-          await invoke("preset_apply", { name: sel.value });
-          await ctx.reload();
-          ctx.toast(`Applied “${sel.value}”`);
-        } catch (e) {
-          ctx.toast(String(e), true);
-        }
-      });
-      control.replaceChildren(sel);
-    })
-    .catch(() => {});
-  box.title = "Saved setups: pick one to switch to it (Kasumi > Presets saves and manages them).";
-  return box;
-};
+/** A bar as a strip: its name, then its left, centre and right, each labelled; `fill`
+ *  puts the widgets in a side and says what an empty side shows. */
+function barStrip(cfg: Cfg, s: string, fill: (side: Side, zone: HTMLElement) => string): HTMLElement {
+  const zones = $("div", "strip-zones");
+  for (const side of SIDES) {
+    const zone = $("div", `bar-zone ${side}`, $("span", "zone-label", { left: "Left", center: "Centre", right: "Right" }[side]));
+    const empty = fill(side, zone);
+    if (!zone.querySelector(".chip")) zone.append($("span", "bar-zone-empty", empty));
+    zones.append(zone);
+  }
+  const strip = $("div", "bar-strip", $("div", "strip-name", glyph(surfaceIcon(s)), surfaceName(s, cfg.surfaces?.[s])), zones);
+  strip.setAttribute("aria-label", surfaceName(s, cfg.surfaces?.[s]));
+  return strip;
+}
 
 /** Home: each bar that's on, drawn as a bar with its widgets (a click opens one's page). */
 const homeBars: Editor = (ctx) => {
@@ -395,21 +377,19 @@ const homeBars: Editor = (ctx) => {
   const cat = catalog(ctx.cfg);
   for (const s of shownSurfaces(ctx.cfg)) {
     const l = surfaceLayout(ctx.cfg, s);
-    const strip = $("div", `bar-strip${ctx.cfg.surfaces?.[s]?.mode === "dock" ? " dock" : ""}`);
-    strip.setAttribute("aria-label", surfaceName(s));
-    for (const side of SIDES) {
-      const zone = $("div", `bar-zone ${side}`);
-      for (const id of l[side]) {
-        const w = cat.find((x) => x.id === id);
-        if (!w || !enabled(ctx.cfg, id)) continue;
-        const b = $("button", "chip", glyph(w.icon), w.label);
-        b.title = `${w.label} settings`;
-        b.addEventListener("click", () => ctx.goto(`w-${typeOf(id)}`, ""));
-        zone.append(b);
-      }
-      strip.append(zone);
-    }
-    wrap.append($("div", "shelf-title", surfaceName(s)), strip);
+    wrap.append(
+      barStrip(ctx.cfg, s, (side, zone) => {
+        for (const id of l[side]) {
+          const w = cat.find((x) => x.id === id);
+          if (!w || !enabled(ctx.cfg, id)) continue;
+          const b = $("button", "chip", glyph(w.icon), w.label);
+          b.title = `${w.label}: click for its settings`;
+          b.addEventListener("click", () => ctx.goto(`w-${typeOf(id)}`, ""));
+          zone.append(b);
+        }
+        return "Nothing here";
+      }),
+    );
   }
   const edit = $("button", "button", "Edit the layout");
   edit.addEventListener("click", () => ctx.goto("layout", ""));
@@ -431,49 +411,52 @@ const widgetCards: Editor = (ctx) => {
   return grid;
 };
 
-/** Global / per-monitor selector at the top of the Widgets page. */
+/** Which monitor and which bar the page's settings are for: two rows of buttons side by
+ *  side at the top of the page (All monitors | each monitor) (Top bar | Dock). */
 const scopeSelector: Editor = (ctx) => {
-  const bar = $("div", "scope-bar");
-  const draw = (list: MonitorInfo[]) => {
-    bar.replaceChildren();
-    const chip = (label: string, value: string | null, icon: number) => {
-      const b = $("button", `scope-chip${scope.monitor === value ? " active" : ""}`, glyph(icon), label);
-      b.addEventListener("click", () => {
-        scope.monitor = value;
-        ctx.rerender();
-      });
-      bar.append(b);
-    };
-    chip("Global", null, 0xe774);
-    for (const m of list) {
-      chip(m.primary ? `${m.name} · primary` : m.name, m.name, 0xe7f4);
-      // Monitors with their own layout of the selected bar are marked.
-      if (ownsLayout(ctx.cfg, m.name)) {
-        const b = bar.lastElementChild as HTMLElement;
-        b.append($("span", "scope-own", "own layout"));
-        b.title = `${m.name} has its own layout of this bar`;
-      }
-    }
+  const group = (label: string) => {
+    const g = $("div", "scope-seg");
+    g.setAttribute("role", "radiogroup");
+    g.setAttribute("aria-label", label);
+    return g;
   };
-  loadMonitors().then(draw);
-  const help = scope.monitor
-    ? `Layout for ${scope.monitor}. Widget settings below are shared by all monitors.`
-    : "The layout every monitor uses unless it has its own.";
-  const ids = surfaceIds(ctx.cfg);
-  if (!ids.includes(scope.surface)) scope.surface = ids.includes("top") ? "top" : ids[0];
-  if (ids.length < 2) return $("div", "", bar, $("p", "card-help", help));
-  // Several bars/docks: pick which one the placement below edits.
-  const surfaces = $("div", "scope-bar");
-  for (const id of ids) {
-    const s = ctx.cfg.surfaces?.[id] ?? {};
-    const b = $("button", `scope-chip${scope.surface === id ? " active" : ""}${s.enabled === false || (!ctx.cfg.surfaces?.[id] && id !== "top") ? " off" : ""}`, glyph(surfaceIcon(id)), surfaceName(id, s));
+  const option = (g: HTMLElement, text: string, on: boolean, pick: () => void, extra = "") => {
+    const b = $("button", `scope-opt${on ? " on" : ""}${extra}`, text);
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(on));
     b.addEventListener("click", () => {
-      scope.surface = id;
+      if (on) return;
+      pick();
       ctx.rerender();
     });
-    surfaces.append(b);
+    g.append(b);
+    return b;
+  };
+  const wrap = $("div", "scope-row");
+  // Monitors: only with more than one.
+  const monitors = group("Monitor");
+  loadMonitors().then((list) => {
+    if (list.length < 2 && !scope.monitor) return;
+    option(monitors, "All monitors", scope.monitor === null, () => (scope.monitor = null)).title = "The layout every monitor uses unless it has its own";
+    for (const m of list) {
+      const own = ownsLayout(ctx.cfg, m.name);
+      const b = option(monitors, own ? `${m.name} · own` : m.name, scope.monitor === m.name, () => (scope.monitor = m.name));
+      b.title = `${m.name}${m.primary ? " (primary)" : ""}${own ? ": has its own layout of this bar" : ""}`;
+    }
+    wrap.prepend(monitors);
+  });
+  const ids = surfaceIds(ctx.cfg);
+  if (!ids.includes(scope.surface)) scope.surface = ids.includes("top") ? "top" : ids[0];
+  if (ids.length > 1) {
+    const bars = group("Bar");
+    for (const id of ids) {
+      const s = ctx.cfg.surfaces?.[id];
+      const off = !s ? id !== "top" : s.enabled === false;
+      option(bars, surfaceName(id, s ?? {}), scope.surface === id, () => (scope.surface = id), off ? " off" : "").title = off ? "Switched off" : "";
+    }
+    wrap.append(bars);
   }
-  return $("div", "stack-tight", surfaces, bar, $("p", "card-help", help));
+  return wrap;
 };
 
 /** "Show the top / bottom bar": switching the bottom bar on the first time makes it a dock. */
@@ -826,17 +809,13 @@ const placement: Editor = (ctx) => {
   };
 
   // The bar (or dock): left, centre, right.
-  const m = mode(cur);
-  const strip = $("div", `bar-strip ${m === "dock" ? "dock" : ""}`);
-  strip.setAttribute("aria-label", `The ${surfaceName(cur).toLowerCase()}`);
-  for (const side of SIDES) {
-    const list = $("div", `bar-zone ${side}`);
-    for (const id of listOf(side)) list.append(chip(id, true));
-    if (!list.childElementCount) list.append($("span", "bar-zone-empty", side === "center" ? "Centre" : side === "left" ? "Left" : "Right"));
-    dropZone(list, list, side, true);
-    strip.append(list);
-  }
-  root.append(strip);
+  root.append(
+    barStrip(ctx.cfg, cur, (side, list) => {
+      for (const id of listOf(side)) list.append(chip(id, true));
+      dropZone(list, list, side, true);
+      return "Drop a widget here";
+    }),
+  );
 
   // The open widget's options, under the bar.
   const open = placementOpen && listOf("left").concat(listOf("center"), listOf("right")).includes(placementOpen) ? placementOpen : null;
@@ -2175,7 +2154,6 @@ export const editors: Record<string, Editor> = {
   widgetHeader,
   widgetCards,
   homeBars,
-  homePreset,
   clockFormat,
   weatherLocation,
   tempsSensors,
