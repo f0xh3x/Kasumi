@@ -58,6 +58,11 @@ const pageId = (want: string | null): string | null => {
   return id && pages.some((p) => p.id === id) ? id : null;
 };
 let current = pageId(new URLSearchParams(location.search).get("page")) ?? pages[0].id;
+// Opened on a tab (?tab=Look).
+{
+  const want = new URLSearchParams(location.search).get("tab");
+  if (want) tabs[current] = want;
+}
 /** The sidebar's search: while it holds text, the content lists the settings matching it. */
 let query = "";
 /** Only what's changed from the defaults (the sidebar's Changed button). */
@@ -322,6 +327,32 @@ function control(f: Field): HTMLElement | null {
       return fieldRow(f, input);
     }
     case "select": {
+      // A widget's look: a tile each, with Kasumi's own picture of it (public/looks,
+      // drawn by tools/look_tiles.py; a look without one shows its name only).
+      if (path[0] === "widgets" && path[2] === "style") {
+        const tiles = $("div", "look-tiles");
+        tiles.setAttribute("role", "radiogroup");
+        tiles.setAttribute("aria-label", f.label);
+        for (const o of f.options) {
+          const [name, rest] = o.label.split(/ \((.*)\)$/);
+          const on = String(value) === o.value;
+          const img = document.createElement("img");
+          img.src = `looks/${path[1]}-${o.value || "classic"}.png`;
+          img.alt = "";
+          img.addEventListener("error", () => img.remove());
+          const tile = $("button", `look-tile${on ? " on" : ""}`, $("span", "look-pic", img), $("b", "", name), ...(rest ? [$("small", "", rest)] : []));
+          tile.setAttribute("role", "radio");
+          tile.setAttribute("aria-checked", String(on));
+          tile.addEventListener("click", () => {
+            if (!on) save(path, o.value).then(() => render());
+          });
+          tiles.append(tile);
+        }
+        const r = row(f.label, f.help, $("span"));
+        r.classList.add("look-row");
+        r.append(tiles);
+        return r;
+      }
       const select = $("select", "select") as HTMLSelectElement;
       for (const o of f.options) select.append(new Option(o.label, o.value));
       select.value = String(value);
