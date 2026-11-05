@@ -143,7 +143,7 @@ impl Widget for Netspeed {
 /// Microphone / camera / location in use: a warning-coloured icon each, only while some app uses it.
 pub const DEVICES: [(&str, &str, &str); 3] = [("mic", "\u{E720}", "Microphone"), ("camera", "\u{E714}", "Camera"), ("location", "\u{E81D}", "Location")];
 
-/// The Security widget: the microphone, camera or location while an app uses them (in
+/// The Privacy widget: the microphone, camera or location while an app uses them (in
 /// the warning colour), the microphone crossed out in red while muted; with `switches`
 /// a shield at rest, and switches for all three in its panel.
 pub struct Privacy {

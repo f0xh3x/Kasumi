@@ -1641,8 +1641,8 @@ impl Surface {
         (bumps, frame)
     }
 
-    /// The bars' skin ([theme] skin): "floating", "islands" or "" (a dock's islands are
-    /// its own: there it floats).
+    /// The bar's skin ([surfaces.<id>] skin): "floating", "islands" or "" (a dock's
+    /// islands are its own: there it floats).
     fn skin(&self) -> &'static str {
         match self.layout.theme.skin.as_str() {
             "floating" => "floating",

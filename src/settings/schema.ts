@@ -36,7 +36,7 @@ const ANIM_WIDGETS: [string, string, number, string][] = [
   ["menu", "Menu", 0xe700, `${PANEL_FX}`],
   ["launcher", "Launcher", 0xe721, `${PANEL_FX}`],
   ["clipboard", "Clipboard", 0xe77f, `${PANEL_FX}`],
-  ["privacy", "Security", 0xe720, `${PANEL_FX}`],
+  ["privacy", "Privacy", 0xe720, `${PANEL_FX}`],
   ["claude", "Claude Code", 0xe8bd, `${PANEL_FX}`],
   ["netspeed", "Network speed", 0xe74b, "roll"],
   ["disk", "Disk usage", 0xeda2, "roll"],
@@ -834,7 +834,7 @@ const sources: Page[] = [
         ],
       },
       {
-        title: "Security",
+        title: "Privacy",
         collapsible: true,
         icon: 0xe720,
         help: "Shows while an app uses your microphone, camera or location; click for which apps.",
@@ -1509,23 +1509,6 @@ const sources: Page[] = [
         ],
       },
       {
-        title: "Bar style",
-        help: "How the bars and docks sit on the screen. Rounded screen corners show with Attached only.",
-        fields: [
-          {
-            kind: "select",
-            label: "Style",
-            path: ["theme", "skin"],
-            default: "",
-            options: [
-              { value: "", label: "Attached (grows out of the screen's edge)" },
-              { value: "floating", label: "Floating (held off the edge, rounded all round)" },
-              { value: "islands", label: "Islands (each group of widgets its own pill)" },
-            ],
-          },
-        ],
-      },
-      {
         title: "Notch shape",
         fields: [
           { kind: "slider", label: "Notch height", path: ["geometry", "notch_height"], default: 30, min: 20, max: 48, step: 1, unit: "px" },
@@ -1763,7 +1746,7 @@ const sources: Page[] = [
         ],
       },
       {
-        title: "File copies",
+        title: "Files and downloads",
         collapsible: true,
         group: "Pop-ups",
         icon: 0xe8c8,
@@ -2337,7 +2320,6 @@ export const pages: Page[] = [
     label: "Shape",
     icon: 0xf156,
     sections: [
-      sec("appearance", "Bar style"),
       sec("appearance", "Notch shape"),
       part("appearance", "Bar and panels", ["Panel fillet", "Panel corners"], { title: "Panels" }),
       sec("general", "Screen corners"),

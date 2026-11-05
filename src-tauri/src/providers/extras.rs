@@ -193,7 +193,7 @@ fn privacy() -> serde_json::Value {
         apps.dedup();
         out.insert(dev.into(), json!(apps));
     }
-    // What's switched off (the Security widget's switches).
+    // What's switched off (the Privacy widget's switches).
     out.insert("blocked".into(), json!({ "mic": super::security::mic_muted(), "camera": super::security::denied("webcam"), "location": super::security::denied("location") }));
     serde_json::Value::Object(out)
 }

@@ -505,8 +505,8 @@ pub struct Theme {
     /// line, sliders, bars, the weather panel's temperature... (each widget can
     /// differ: `[widgets.<w>] accent_details`).
     pub accent_details: bool,
-    /// The bars' skin: "" (attached to the edge), "floating" (held off the edge and the
-    /// sides, rounded all round) or "islands" (each group of widgets its own pill).
+    /// The bar's skin, filled in from its own `[surfaces.<id>] skin` (layout_for).
+    #[serde(skip)]
     pub skin: String,
     pub font_size: f64,
     /// Opacity of the bars, notches and panels (percent); text stays solid.
@@ -838,6 +838,9 @@ pub struct SurfaceCfg {
     pub shrink_when_covered: bool,
     /// Reserve the bar's space on screen (like the taskbar): maximized windows stop at it.
     pub reserve_space: bool,
+    /// Its shape on the screen: "" (attached to the edge), "floating" (held off the edge
+    /// and the sides, rounded all round) or "islands" (each group of widgets its own pill).
+    pub skin: String,
     /// Hot zones (absent: the top bar falls back to the old [timing] switches).
     pub hot_left: Option<bool>,
     pub hot_right: Option<bool>,
@@ -860,6 +863,7 @@ impl Default for SurfaceCfg {
             open: SizeName::Small,
             shrink_when_covered: true,
             reserve_space: false,
+            skin: String::new(),
             hot_left: None,
             hot_right: None,
             hot_edge: None,

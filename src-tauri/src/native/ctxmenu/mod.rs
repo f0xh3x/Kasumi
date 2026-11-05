@@ -1275,7 +1275,7 @@ fn widget_label(kind: &str) -> Option<&'static str> {
         "focus" => "Focused app",
         "netspeed" => "Network speed",
         "disk" => "Disk usage",
-        "privacy" => "Security",
+        "privacy" => "Privacy",
         "claude" => "Claude Code",
         "clipboard" => "Clipboard",
         "notifications" => "Notifications",

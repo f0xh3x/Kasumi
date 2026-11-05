@@ -1,4 +1,4 @@
-//! The Security (privacy) widget's switches: every microphone muted (Core Audio, each
+//! The Privacy widget's switches: every microphone muted (Core Audio, each
 //! active capture device), and the camera and location allowed or not for apps (the
 //! per-user privacy settings Windows' Settings › Privacy writes: ConsentStore "Value",
 //! for Store apps and for desktop apps).

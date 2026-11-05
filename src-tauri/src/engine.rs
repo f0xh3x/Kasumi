@@ -798,6 +798,7 @@ pub fn layout_for(
         },
         theme: {
             let mut t = cfg.theme.clone();
+            t.skin = s.skin.clone();
             if t.accent_sync {
                 if let Some(a) = win::system_accent() {
                     t.accent = a;
