@@ -723,12 +723,9 @@ impl Widget for Tray {
         let (side, _) = self.cell();
         let img = self.h * 0.55;
         let (cells, _) = self.cells(Instant::now());
+        // No hover highlight in the bar (as every other widget there): the hint says what's under the cursor.
         for c in &cells {
             let a = alpha * c.alpha;
-            let boxed = matches!(c.hit, TrayHit::Icon(_)) || self.counted() || self.slides();
-            if self.hovered == Some(c.hit) && boxed {
-                g.fill_round(rect(x + c.x, cy - side / 2.0, c.w, side), 8.0, with_alpha(cx.hover_bg(0.12), a));
-            }
             match c.hit {
                 TrayHit::Icon(i) => {
                     if let Some((_, b)) = self.icons.get(i).and_then(|icon| self.bitmaps.get(&icon.id)) {
