@@ -42,6 +42,8 @@ const SKIN_RADIUS: f64 = 12.0;
 const SKIN_BAND: f64 = 16.0;
 /// Islands: the space around each group of widgets.
 const ISLAND_PAD: f32 = 14.0;
+/// The skins are paused (not offered in settings, not drawn) until they're reworked.
+const SKINS: bool = false;
 
 /// How long a panel's cascade of `n` pieces takes (main.ts cascade).
 fn cascade_length(n: usize) -> std::time::Duration {
@@ -1644,7 +1646,7 @@ impl Surface {
     /// The bar's skin ([surfaces.<id>] skin): "floating", "islands" or "" (docks keep
     /// their own shape).
     fn skin(&self) -> &'static str {
-        if self.dock() {
+        if !SKINS || self.dock() {
             return "";
         }
         match self.layout.theme.skin.as_str() {

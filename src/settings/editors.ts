@@ -484,6 +484,9 @@ const surfaceManager: Editor = (ctx) => {
 };
 
 /** Style of the selected bar; picking "Always on" also reserves its space. */
+/** The bars' shapes (Floating, Islands): paused, not offered until they're reworked. */
+const SHAPES = false;
+
 const surfaceStyle: Editor = (ctx) => {
   const cur = scope.surface;
   const s = ctx.cfg.surfaces?.[cur];
@@ -507,8 +510,9 @@ const surfaceStyle: Editor = (ctx) => {
     "Status bar: notches that open into a full-width bar. Dock: notches that grow in place. Always on: the full bar, always shown (reserves its space).",
     sel,
   );
-  // A status bar's shape on the screen (docks keep their own).
-  if ((s.mode ?? "bar") !== "bar") return style;
+  // A status bar's shape on the screen (docks keep their own). Hidden until the
+  // skins are reworked (SHAPES).
+  if (!SHAPES || (s.mode ?? "bar") !== "bar") return style;
   const shape = segmented(
     [
       ["", "Attached", "Grows out of the screen's edge"],
