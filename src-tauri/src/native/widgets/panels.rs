@@ -522,15 +522,23 @@ enum TempsStyle {
     Table,
 }
 
-/// CPU / GPU temperatures, load, power and memory from LibreHardwareMonitor, in its
-/// look ([widgets.temps] style): cards (a 60 s sparkline each), dials, a graph or a table.
+/// CPU / GPU temperatures (LibreHardwareMonitor) or load (Windows), power and memory,
+/// in its look ([widgets.temps] style): cards (a 60 s sparkline each), dials, a graph or
+/// a table; under it the apps using the most, each with End (a second click ends it).
 pub struct TempsPanel {
     opts: Opts,
     style: TempsStyle,
     t: Value,
     /// The last five minutes of readings (CPU, GPU), oldest first.
     history: [Vec<f32>; 2],
+    /// Where the apps' list starts (content y), as last measured.
+    apps_y: f32,
+    /// The End button under the cursor, and one armed (its program, until when).
+    hover_end: Option<usize>,
+    armed: Option<(String, std::time::Instant)>,
 }
+
+const APP_ROW: f32 = 26.0;
 
 /// Readings the graph keeps (five minutes at the default once a second).
 const GRAPH: usize = 300;
@@ -548,7 +556,116 @@ impl TempsPanel {
             Some("table") => TempsStyle::Table,
             _ => TempsStyle::Cards,
         };
-        TempsPanel { opts: opts.clone(), style, t: Value::Null, history: [Vec::new(), Vec::new()] }
+        TempsPanel { opts: opts.clone(), style, t: Value::Null, history: [Vec::new(), Vec::new()], apps_y: 0.0, hover_end: None, armed: None }
+    }
+    /// Temperatures known (LibreHardwareMonitor running): else the panel shows load.
+    fn heat(&self) -> bool {
+        self.get("cpu").is_some() || self.get("gpu").is_some()
+    }
+    /// A part's main reading ("cpu" / "gpu"): its temperature, else its load.
+    fn reading(&self, k: &str) -> Option<f64> {
+        if self.heat() { self.get(k) } else { self.get(&format!("{k}Load")) }
+    }
+    fn shown(&self, v: f64) -> String {
+        if self.heat() { deg(v) } else { format!("{}%", v.round()) }
+    }
+    fn reading_color(&self, cx: &Ctx, v: Option<f64>) -> Color {
+        if self.heat() {
+            self.temp_color(cx, v)
+        } else if v.is_some_and(|v| v >= 90.0) {
+            cx.look.warn
+        } else if cx.opts.accent {
+            cx.look.accent
+        } else {
+            cx.look.fg
+        }
+    }
+    /// The apps using the most, as the provider lists them.
+    fn apps(&self) -> Vec<&Value> {
+        self.t.get("top").and_then(|t| t.as_array()).map(|a| a.iter().collect()).unwrap_or_default()
+    }
+    /// LibreHardwareMonitor is to be used but isn't answering.
+    fn lhm_missing(&self) -> bool {
+        self.t.get("lhm").and_then(|v| v.as_bool()) == Some(true) && self.t.get("lhmOk").and_then(|v| v.as_bool()) == Some(false)
+    }
+    /// The look's own size (without the apps and the note).
+    fn main_size(&self, cx: &Ctx) -> (f32, f32) {
+        let g = cx.gfx;
+        let small = line(g, &cx.secondary(11.0));
+        match self.style {
+            TempsStyle::Cards => (400.0, Self::card_h(g, cx) + 10.0 + small),
+            TempsStyle::Dials => (4.0 * DIAL_R + 2.0 * DIAL_W + 22.0, DIAL_W / 2.0 + DIAL_R + 10.0 + line(g, &cx.secondary(12.0)) + 14.0 + small),
+            TempsStyle::Graph => (400.0, line(g, &cx.secondary(12.0)) + 10.0 + 100.0 + 10.0 + small),
+            TempsStyle::Table => (TABLE_W, small + 4.0 + self.table_rows().len() as f32 * TABLE_ROW),
+        }
+    }
+    /// The apps' list and the note under the look: its height.
+    fn extra_h(&self, cx: &Ctx) -> f32 {
+        let small = line(cx.gfx, &cx.secondary(11.0));
+        let n = self.apps().len();
+        let mut h = 0.0;
+        if n > 0 {
+            h += 14.0 + small + 4.0 + n as f32 * APP_ROW;
+        }
+        if self.lhm_missing() {
+            h += 10.0 + small;
+        }
+        h
+    }
+    fn draw_extra(&self, cx: &Ctx, x: f32, y: f32, w: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let (f, small) = (cx.secondary(12.0), cx.secondary(11.0));
+        let mut yy = y;
+        let apps = self.apps();
+        if !apps.is_empty() {
+            yy += 14.0;
+            let mut hx = x;
+            for ch in "USING THE MOST".chars() {
+                hx += g.text_at(&ch.to_string(), &small, hx, yy + line(g, &small) / 2.0, dim) + 0.5;
+            }
+            yy += line(g, &small) + 4.0;
+            for (i, a) in apps.iter().enumerate() {
+                let cy = yy + APP_ROW / 2.0;
+                let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let cpu = a.get("cpu").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let mem = a.get("mem").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let exe = a.get("exe").and_then(|v| v.as_str()).unwrap_or("");
+                let end = a.get("end").and_then(|v| v.as_bool()).unwrap_or(false);
+                let bw = if end { 52.0 } else { 0.0 };
+                if end {
+                    let armed = self.armed.as_ref().is_some_and(|(e, t)| e == exe && std::time::Instant::now() < *t);
+                    let (label, bg) = if armed {
+                        ("Sure?", with_alpha(rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.35), alpha))
+                    } else if self.hover_end == Some(i) {
+                        ("End", with_alpha(cx.hover_bg(0.18), alpha))
+                    } else {
+                        ("End", white(0.1 * alpha))
+                    };
+                    g.fill_round(rect(x + w - bw, cy - 11.0, bw, 22.0), 7.0, bg);
+                    g.text_at(label, &small, x + w - bw + (bw - g.measure(label, &small)) / 2.0, cy, fg);
+                }
+                let what = format!("{}% · {}", cpu.round(), super::basic::format_bytes(mem));
+                let ww = g.measure(&what, &small);
+                let right = x + w - bw - if end { 10.0 } else { 0.0 };
+                g.text_at(&what, &small, right - ww, cy, dim);
+                g.text_at(&fit_text(g, name, &f, right - ww - 12.0 - x), &f, x, cy, fg);
+                yy += APP_ROW;
+            }
+        }
+        if self.lhm_missing() {
+            yy += 10.0;
+            g.text_at(&fit_text(g, "Temperatures: LibreHardwareMonitor isn't running", &small, w), &small, x, yy + line(g, &small) / 2.0, dim);
+        }
+    }
+    /// The End button (its row) under a point (content px).
+    fn end_at(&self, w: f32, p: (f32, f32)) -> Option<usize> {
+        let i = ((p.1 - self.apps_y) / APP_ROW).floor();
+        let apps = self.apps();
+        if i < 0.0 || i as usize >= apps.len() || p.0 < w - 52.0 || p.0 > w {
+            return None;
+        }
+        apps[i as usize].get("end").and_then(|v| v.as_bool()).unwrap_or(false).then_some(i as usize)
     }
     fn get(&self, k: &str) -> Option<f64> {
         self.t.get(k).and_then(|v| v.as_f64())
@@ -619,9 +736,9 @@ impl TempsPanel {
             g.text_at(&fit_text(g, &hw, &small, card_w - lw - 6.0), &small, left + lw + 6.0, yy + lh / 2.0, dim);
             yy += lh + 5.0;
             let main_h = 24.0f32.max(line(g, &cx.main(22.0)));
-            let t = self.get(temp);
-            let tt = t.map_or("–".into(), deg);
-            let tw = g.text_at(&tt, &cx.main(22.0), left, yy + main_h / 2.0, with_alpha(self.temp_color(cx, t), alpha)).max(46.0);
+            let t = self.reading(temp);
+            let tt = t.map_or("–".into(), |v| self.shown(v));
+            let tw = g.text_at(&tt, &cx.main(22.0), left, yy + main_h / 2.0, with_alpha(self.reading_color(cx, t), alpha)).max(46.0);
             // The sparkline: the last minute, stretched to the card.
             let hist = &self.history[i][self.history[i].len().saturating_sub(HISTORY)..];
             if hist.len() >= 2 {
@@ -651,8 +768,9 @@ impl TempsPanel {
         use std::f32::consts::PI;
         let g = cx.gfx;
         let small = cx.secondary(12.0);
-        let share = |t: f64| ((t - DIAL_LO) / (DIAL_HI - DIAL_LO)).clamp(0.0, 1.0) as f32;
-        let warn = share(self.warn());
+        let (lo, hi) = if self.heat() { (DIAL_LO, DIAL_HI) } else { (0.0, 100.0) };
+        let share = |t: f64| ((t - lo) / (hi - lo)).clamp(0.0, 1.0) as f32;
+        let warn = share(if self.heat() { self.warn() } else { 90.0 });
         let dial_w = 2.0 * DIAL_R + DIAL_W;
         for (i, (label, temp, load)) in [("CPU", "cpu", "cpuLoad"), ("GPU", "gpu", "gpuLoad")].iter().enumerate() {
             let cx0 = x + dial_w / 2.0 + i as f32 * (dial_w + 22.0);
@@ -660,20 +778,22 @@ impl TempsPanel {
             // Left to right over the top: the track, the warning end, the reading.
             g.polyline(&arc_points(cx0, cy0, DIAL_R, PI, 0.0), DIAL_W, white(0.15 * alpha));
             g.polyline(&arc_points(cx0, cy0, DIAL_R, PI * (1.0 - warn), 0.0), DIAL_W, with_alpha(cx.look.warn, 0.5 * alpha));
-            let t = self.get(temp);
-            let color = with_alpha(self.temp_color(cx, t), alpha);
+            let t = self.reading(temp);
+            let color = with_alpha(self.reading_color(cx, t), alpha);
             if let Some(v) = t.map(share).filter(|v| *v > 0.0) {
                 g.polyline(&arc_points(cx0, cy0, DIAL_R, PI, PI * (1.0 - v)), DIAL_W, color);
             }
             let big = cx.main(26.0);
-            let tt = t.map_or("–".into(), deg);
+            let tt = t.map_or("–".into(), |v| self.shown(v));
             let tw = g.measure(&tt, &big);
             g.text_at(&tt, &big, cx0 - tw / 2.0, cy0 - 14.0, color);
-            let lt = format!("{label} · load {}%", fixed(self.get(load), 0));
+            let lt = if self.heat() { format!("{label} · load {}%", fixed(self.get(load), 0)) } else { label.to_string() };
             let lw = g.measure(&lt, &small);
             let ly = cy0 + 10.0 + line(g, &small) / 2.0;
             let nw = g.text_at(label, &small, cx0 - lw / 2.0, ly, with_alpha(cx.look.fg, alpha));
-            g.text_at(&lt[label.len()..], &small, cx0 - lw / 2.0 + nw, ly, with_alpha(cx.look.dimmed(), alpha));
+            if lt.len() > label.len() {
+                g.text_at(&lt[label.len()..], &small, cx0 - lw / 2.0 + nw, ly, with_alpha(cx.look.dimmed(), alpha));
+            }
         }
         let my = y + DIAL_W / 2.0 + DIAL_R + 10.0 + line(g, &small) + 14.0 + line(g, &cx.secondary(11.0)) / 2.0;
         self.memory_row(cx, x, my, 2.0 * dial_w + 22.0, alpha);
@@ -691,7 +811,7 @@ impl TempsPanel {
         for (i, (label, k)) in [("CPU", "cpu"), ("GPU", "gpu")].iter().enumerate() {
             g.fill_round(rect(kx, y + hh / 2.0 - 3.0, 6.0, 6.0), 3.0, with_alpha(colors[i], alpha));
             kx += 12.0;
-            kx += g.text_at(&format!("{label} {}", self.get(k).map_or("–".into(), deg)), &body, kx, y + hh / 2.0, fg) + 16.0;
+            kx += g.text_at(&format!("{label} {}", self.reading(k).map_or("–".into(), |v| self.shown(v))), &body, kx, y + hh / 2.0, fg) + 16.0;
         }
         let span = "last 5 minutes";
         g.text_at(span, &small, x + 400.0 - g.measure(span, &small), y + hh / 2.0, dim);
@@ -699,18 +819,19 @@ impl TempsPanel {
         let top = y + hh + 10.0;
         let (ch, axis) = (100.0, 28.0);
         let all = self.history.iter().flatten().cloned();
-        let lo = all.clone().fold(30.0f32, f32::min).floor();
-        let hi = all.fold(self.warn() as f32 + 5.0, f32::max).ceil();
+        let (warn, unit) = if self.heat() { (self.warn() as f32, "°") } else { (90.0, "%") };
+        let lo = if self.heat() { all.clone().fold(30.0f32, f32::min).floor() } else { 0.0 };
+        let hi = if self.heat() { all.fold(warn + 5.0, f32::max).ceil() } else { 100.0 };
         let yv = |v: f32| top + ch - (v - lo) / (hi - lo) * ch;
-        let warn_y = yv(self.warn() as f32);
+        let warn_y = yv(warn);
         let mut dx = x + axis;
         while dx < x + 400.0 {
             g.polyline(&[(dx, warn_y), ((dx + 3.0).min(x + 400.0), warn_y)], 1.0, with_alpha(cx.look.warn, 0.6 * alpha));
             dx += 7.0;
         }
         g.fill_rect(rect(x + axis, yv(lo + (hi - lo) / 2.0).round(), 400.0 - axis, 1.0), white(0.08 * alpha));
-        for v in [self.warn() as f32, lo] {
-            g.text_at(&format!("{}°", v.round()), &small, x, yv(v), dim);
+        for v in [warn, lo] {
+            g.text_at(&format!("{}{unit}", v.round()), &small, x, yv(v), dim);
         }
         let step = (400.0 - axis - 4.0) / (GRAPH - 1) as f32;
         for (i, h) in self.history.iter().enumerate().rev() {
@@ -727,7 +848,11 @@ impl TempsPanel {
         // Under it: load, power, memory.
         let fy = top + ch + 10.0 + line(g, &small) / 2.0;
         let pct = |k: &str| fixed(self.get(k), 0);
-        let left = format!("Load {}% · {}%     Power {} W · {} W", pct("cpuLoad"), pct("gpuLoad"), pct("cpuPower"), pct("gpuPower"));
+        let left = if self.heat() {
+            format!("Load {}% · {}%     Power {} W · {} W", pct("cpuLoad"), pct("gpuLoad"), pct("cpuPower"), pct("gpuPower"))
+        } else {
+            "CPU and graphics load".to_string()
+        };
         g.text_at(&left, &small, x, fy, dim);
         if let Some((u, t)) = self.memory() {
             let m = format!("RAM {u:.1} / {t:.1} GB");
@@ -794,7 +919,7 @@ impl Panel for TempsPanel {
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         self.t = v.clone();
         for (i, k) in ["cpu", "gpu"].iter().enumerate() {
-            if let Some(t) = self.get(k) {
+            if let Some(t) = self.reading(k) {
                 self.history[i].push(t as f32);
                 if self.history[i].len() > GRAPH {
                     self.history[i].remove(0);
@@ -811,19 +936,15 @@ impl Panel for TempsPanel {
         if !self.t.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
             return (if self.style == TempsStyle::Table { TABLE_W } else { 400.0 }, line(g, &cx.secondary(11.0)));
         }
-        let small = line(g, &cx.secondary(11.0));
-        match self.style {
-            TempsStyle::Cards => (400.0, Self::card_h(g, cx) + 10.0 + small),
-            TempsStyle::Dials => (4.0 * DIAL_R + 2.0 * DIAL_W + 22.0, DIAL_W / 2.0 + DIAL_R + 10.0 + line(g, &cx.secondary(12.0)) + 14.0 + small),
-            TempsStyle::Graph => (400.0, line(g, &cx.secondary(12.0)) + 10.0 + 100.0 + 10.0 + small),
-            TempsStyle::Table => (TABLE_W, small + 4.0 + self.table_rows().len() as f32 * TABLE_ROW),
-        }
+        let (w, h) = self.main_size(cx);
+        self.apps_y = h + 14.0 + line(g, &cx.secondary(11.0)) + 4.0;
+        (w, h + self.extra_h(cx))
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
         let small = cx.secondary(11.0);
         if !self.t.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
-            g.text_at("LibreHardwareMonitor web server not reachable", &small, x, y + line(g, &small) / 2.0, with_alpha(cx.look.dimmed(), alpha));
+            g.text_at("Waiting for the first readings", &small, x, y + line(g, &small) / 2.0, with_alpha(cx.look.dimmed(), alpha));
             return;
         }
         match self.style {
@@ -832,6 +953,34 @@ impl Panel for TempsPanel {
             TempsStyle::Graph => self.draw_graph(cx, x, y, alpha),
             TempsStyle::Table => self.draw_table(cx, x, y, alpha),
         }
+        let (w, h) = self.main_size(cx);
+        self.draw_extra(cx, x, y + h, w, alpha);
+    }
+    fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
+        let w = if self.style == TempsStyle::Table { TABLE_W } else if self.style == TempsStyle::Dials { 4.0 * DIAL_R + 2.0 * DIAL_W + 22.0 } else { 400.0 };
+        let h = at.and_then(|p| self.end_at(w, p));
+        let changed = h != self.hover_end;
+        self.hover_end = h;
+        changed
+    }
+    fn click(&mut self, button: Button, _at: (f32, f32)) -> Reply {
+        let Some(i) = self.hover_end.filter(|_| button == Button::Left) else { return Reply::None };
+        let Some(exe) = self.apps().get(i).and_then(|a| a.get("exe")).and_then(|e| e.as_str()).map(String::from) else { return Reply::None };
+        // A second click within 3 s ends it.
+        if self.armed.as_ref().is_some_and(|(e, t)| *e == exe && std::time::Instant::now() < *t) {
+            self.armed = None;
+            return Reply::Do(Act::call(move |_| crate::providers::perf::end_app(&exe)));
+        }
+        self.armed = Some((exe, std::time::Instant::now() + std::time::Duration::from_secs(3)));
+        Reply::Redraw
+    }
+    fn tooltip(&self) -> Option<String> {
+        let a = self.apps().into_iter().nth(self.hover_end?)?;
+        Some(format!("End {} (click twice)", a.get("name").and_then(|n| n.as_str()).unwrap_or("it")))
+    }
+    fn closed(&mut self) {
+        self.hover_end = None;
+        self.armed = None;
     }
 }
 
@@ -1064,11 +1213,67 @@ impl Panel for DiskPanel {
 pub struct PrivacyPanel {
     rows: Vec<(&'static str, String, &'static str)>,
     width: f32,
+    /// [widgets.privacy] switches: the three switches under the list.
+    switches: bool,
+    blocked: [bool; 3],
+    /// Where the switches start (content y), the one under the cursor.
+    sw_y: f32,
+    hover_sw: Option<usize>,
+}
+
+const SW_ROW: f32 = 32.0;
+
+impl PrivacyPanel {
+    pub fn new(opts: &Opts) -> PrivacyPanel {
+        PrivacyPanel { rows: Vec::new(), width: 240.0, switches: opts.flag("switches") == Some(true), blocked: [false; 3], sw_y: 0.0, hover_sw: None }
+    }
+    fn sw_at(&self, p: (f32, f32)) -> Option<usize> {
+        if !self.switches || p.1 < self.sw_y || p.0 < 0.0 || p.0 > self.width {
+            return None;
+        }
+        let i = ((p.1 - self.sw_y) / SW_ROW) as usize;
+        (i < 3).then_some(i)
+    }
 }
 
 impl PrivacyPanel {
-    pub fn new() -> PrivacyPanel {
-        PrivacyPanel { rows: Vec::new(), width: 240.0 }
+    /// The switches: on (allowed, unmuted) or off, each a pill to click.
+    fn draw_switches(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        if !self.switches {
+            return;
+        }
+        let g = cx.gfx;
+        let top = y + self.sw_y;
+        g.fill_rect(rect(x, (top - 8.0).round(), self.width, 1.0), white(0.08 * alpha));
+        let names = ["Microphone", "Camera", "Location"];
+        let off_glyphs = ["\u{EC54}", "\u{E714}", "\u{E81D}"];
+        for i in 0..3 {
+            let cy = top + i as f32 * SW_ROW + SW_ROW / 2.0;
+            let on = !self.blocked[i];
+            if self.hover_sw == Some(i) {
+                g.fill_round(rect(x - 6.0, cy - SW_ROW / 2.0 + 2.0, self.width + 12.0, SW_ROW - 4.0), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+            }
+            let glyph = if on { super::extras::DEVICES[i].1 } else { off_glyphs[i] };
+            let color = if on { cx.look.fg } else { rgba(1.0, 90.0 / 255.0, 90.0 / 255.0, 1.0) };
+            g.text_at(glyph, &Font::icons(14.0), x, cy + 1.0, with_alpha(color, alpha));
+            g.text_at(names[i], &cx.body(), x + 24.0, cy, with_alpha(cx.look.fg, alpha));
+            let state = match (i, on) {
+                (0, false) => "muted",
+                (_, false) => "off for apps",
+                _ => "",
+            };
+            let f = cx.secondary(12.0);
+            // The switch: 30 × 18, the knob at its end.
+            let (sw, sh) = (30.0, 18.0);
+            let sx = x + self.width - sw;
+            let fill = if on { if cx.opts.accent { cx.look.accent } else { cx.look.fg } } else { white(0.2) };
+            g.fill_round(rect(sx, cy - sh / 2.0, sw, sh), sh / 2.0, with_alpha(fill, alpha));
+            let kx = if on { sx + sw - 3.0 - 12.0 } else { sx + 3.0 };
+            g.fill_round(rect(kx, cy - 6.0, 12.0, 12.0), 6.0, if on { with_alpha(cx.look.bg, alpha) } else { white(alpha) });
+            if !state.is_empty() {
+                g.text_at(state, &f, sx - 10.0 - g.measure(state, &f), cy, with_alpha(cx.look.dimmed(), alpha));
+            }
+        }
     }
 }
 
@@ -1076,7 +1281,25 @@ impl Panel for PrivacyPanel {
     fn keys(&self) -> &'static [&'static str] {
         &["privacy"]
     }
+    fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
+        let h = at.and_then(|p| self.sw_at(p));
+        let changed = h != self.hover_sw;
+        self.hover_sw = h;
+        changed
+    }
+    fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
+        let Some(i) = self.sw_at(at).filter(|_| button == Button::Left) else { return Reply::None };
+        // Shown at once; the next reading confirms it.
+        let on = self.blocked[i];
+        self.blocked[i] = !on;
+        let kind = ["mic", "camera", "location"][i];
+        Reply::Do(Act::call(move |_| crate::providers::security::set(kind, on)))
+    }
+    fn closed(&mut self) {
+        self.hover_sw = None;
+    }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
+        self.blocked = super::extras::blocked(v);
         self.rows = super::extras::DEVICES
             .iter()
             .flat_map(|(key, glyph, label)| v.get(*key).and_then(|a| a.as_array()).cloned().unwrap_or_default().into_iter().filter_map(move |app| Some((*glyph, app.as_str()?.to_string(), *label))))
@@ -1086,12 +1309,18 @@ impl Panel for PrivacyPanel {
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         let g = cx.gfx;
         let lh = line(g, &cx.body());
-        if self.rows.is_empty() {
-            return (g.measure("Nothing is using the microphone, camera or location.", &cx.secondary(cx.look.font_size)).max(240.0), lh);
-        }
-        let w = self.rows.iter().map(|(_, app, label)| 14.0 + 10.0 + g.measure(app, &cx.body()) + 10.0 + g.measure(label, &cx.secondary(cx.look.font_size))).fold(240.0, f32::max);
+        let (w, h) = if self.rows.is_empty() {
+            (g.measure("Nothing is using the microphone, camera or location.", &cx.secondary(cx.look.font_size)).max(260.0), lh)
+        } else {
+            let w = self.rows.iter().map(|(_, app, label)| 14.0 + 10.0 + g.measure(app, &cx.body()) + 10.0 + g.measure(label, &cx.secondary(cx.look.font_size))).fold(260.0, f32::max);
+            (w, self.rows.len() as f32 * lh + (self.rows.len() as f32 - 1.0) * 8.0)
+        };
         self.width = w;
-        (w, self.rows.len() as f32 * lh + (self.rows.len() as f32 - 1.0) * 8.0)
+        if !self.switches {
+            return (w, h);
+        }
+        self.sw_y = h + 14.0;
+        (w, h + 14.0 + 3.0 * SW_ROW)
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
@@ -1110,6 +1339,7 @@ impl Panel for PrivacyPanel {
             let lw = g.measure(label, &f);
             g.text_at(label, &f, x + w - lw, cy, dim);
         }
+        self.draw_switches(cx, x, y, alpha);
     }
 }
 

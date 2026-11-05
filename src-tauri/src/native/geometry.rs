@@ -87,6 +87,8 @@ pub struct Frame {
     /// Current depth of the full-width bar.
     pub base: f64,
     pub bumps: Vec<BumpFrame>,
+    /// The hull's ends (where the bar meets the edge).
+    pub hull: (f64, f64),
 }
 
 pub fn lerp(a: f64, b: f64, k: f64) -> f64 {
@@ -213,8 +215,10 @@ fn bump(p: &mut Vec<Cmd>, g: &Geometry, left: f64, right: f64, top: f64, bottom:
 /// `t`: expand progress (0 collapsed, 1 open; may overshoot); `s`: spread (0 the
 /// hull spans the notches, 1 the screen); bumps left to right. `corner_radius`:
 /// rounded screen corners drawn with the shape (0: off); `combine`: merge notches
-/// that would touch.
-pub fn compute(g: &Geometry, w: f64, corner_radius: f64, combine: bool, t: f64, s: f64, bumps: &[Bump]) -> Frame {
+/// that would touch; `inset`: a margin kept from the screen's sides (the floating
+/// skin: the spread bar stops short of them and keeps its rounded corners).
+#[allow(clippy::too_many_arguments)]
+pub fn compute(g: &Geometry, w: f64, corner_radius: f64, combine: bool, t: f64, s: f64, inset: f64, bumps: &[Bump]) -> Frame {
     let h = g.expanded_height;
     let r = g.concave_radius;
     let t0 = t.max(0.0);
@@ -233,7 +237,7 @@ pub fn compute(g: &Geometry, w: f64, corner_radius: f64, combine: bool, t: f64, 
                 return BumpFrame { cx: (pl + pr) / 2.0, anchor_cx, left: b.x, right: b.x + b.width, row_depth, depth, panel: Some((pl, pr)), panel_x: pl };
             }
             // Centered on its notch but kept on screen; each side morphs toward the panel's.
-            let panel_left = (anchor_cx - b.panel_width / 2.0).clamp(0.0, (w - b.panel_width).max(0.0));
+            let panel_left = (anchor_cx - b.panel_width / 2.0).clamp(inset, (w - inset - b.panel_width).max(inset));
             let mut left = lerp(anchor_cx - b.width / 2.0, panel_left, p);
             let mut right = lerp(anchor_cx + b.width / 2.0, panel_left + b.panel_width, p);
             // A panel that ends up flush with a screen edge grows out of it from the start.
@@ -260,9 +264,10 @@ pub fn compute(g: &Geometry, w: f64, corner_radius: f64, combine: bool, t: f64, 
             hull.iter().map(|b| b.x + b.width).fold(f64::NEG_INFINITY, f64::max) + pad,
         )
     };
-    let hl = lerp(hl0, hl0.min(0.0), s);
-    let hr = lerp(hr0, hr0.max(w), s);
-    let (hr_, hc) = fit(g.panel_concave_radius, g.corner_radius * (1.0 - s).clamp(0.0, 1.0), base, hr - hl);
+    let hl = lerp(hl0, hl0.min(inset), s);
+    let hr = lerp(hr0, hr0.max(w - inset), s);
+    let round = if inset > 0.0 { 1.0 } else { (1.0 - s).clamp(0.0, 1.0) };
+    let (hr_, hc) = fit(g.panel_concave_radius, g.corner_radius * round, base, hr - hl);
 
     let mut p = vec![Cmd::M(Pt(-OFF, 0.0))];
     let mut extra: Vec<Cmd> = Vec::new();
@@ -355,7 +360,38 @@ pub fn compute(g: &Geometry, w: f64, corner_radius: f64, combine: bool, t: f64, 
         corners.push(Cmd::Z);
     }
 
-    Frame { path: p, corners, base, bumps: frames }
+    Frame { path: p, corners, base, bumps: frames, hull: (hl, hr) }
+}
+
+/// A closed rectangle hanging from the edge, its far corners rounded by `r`, drawn
+/// the way the shape is (down its left side, along, up its right): extra figures of
+/// the shape (the islands skin's pieces), or a mask's.
+pub fn hanging_rect(x0: f64, top: f64, x1: f64, bottom: f64, r: f64) -> Vec<Cmd> {
+    let r = r.min((x1 - x0).max(0.0) / 2.0).min((bottom - top).max(0.0));
+    vec![
+        Cmd::M(Pt(x0, top)),
+        Cmd::L(Pt(x0, bottom - r)),
+        Cmd::C(Pt(x0, bottom - r + K * r), Pt(x0 + r - K * r, bottom), Pt(x0 + r, bottom)),
+        Cmd::L(Pt(x1 - r, bottom)),
+        Cmd::C(Pt(x1 - r + K * r, bottom), Pt(x1, bottom - r + K * r), Pt(x1, bottom - r)),
+        Cmd::L(Pt(x1, top)),
+        Cmd::Z,
+    ]
+}
+
+/// As `hanging_rect`, with the corners at the edge (`top`) rounded instead: the skins'
+/// mask piece over a part's top.
+pub fn standing_rect(x0: f64, top: f64, x1: f64, bottom: f64, r: f64) -> Vec<Cmd> {
+    let r = r.min((x1 - x0).max(0.0) / 2.0).min((bottom - top).max(0.0));
+    vec![
+        Cmd::M(Pt(x0 + r, top)),
+        Cmd::C(Pt(x0 + r - K * r, top), Pt(x0, top + r - K * r), Pt(x0, top + r)),
+        Cmd::L(Pt(x0, bottom)),
+        Cmd::L(Pt(x1, bottom)),
+        Cmd::L(Pt(x1, top + r)),
+        Cmd::C(Pt(x1, top + r - K * r), Pt(x1 - r + K * r, top), Pt(x1 - r, top)),
+        Cmd::Z,
+    ]
 }
 
 #[cfg(test)]
@@ -369,7 +405,7 @@ mod tests {
     #[test]
     fn closed_notch_spans_its_flares() {
         let g = Geometry::default();
-        let f = compute(&g, 1000.0, 0.0, true, 0.0, 1.0, &[notch(450.0, 100.0)]);
+        let f = compute(&g, 1000.0, 0.0, true, 0.0, 1.0, 0.0, &[notch(450.0, 100.0)]);
         assert_eq!(f.base, 0.0);
         assert_eq!(f.bumps[0].row_depth, 30.0);
         assert_eq!((f.bumps[0].left, f.bumps[0].right), (450.0, 550.0));
@@ -380,8 +416,8 @@ mod tests {
     #[test]
     fn touching_notches_merge() {
         let g = Geometry::default();
-        let apart = compute(&g, 1000.0, 0.0, true, 0.0, 1.0, &[notch(100.0, 100.0), notch(600.0, 100.0)]);
-        let close = compute(&g, 1000.0, 0.0, true, 0.0, 1.0, &[notch(100.0, 100.0), notch(210.0, 100.0)]);
+        let apart = compute(&g, 1000.0, 0.0, true, 0.0, 1.0, 0.0, &[notch(100.0, 100.0), notch(600.0, 100.0)]);
+        let close = compute(&g, 1000.0, 0.0, true, 0.0, 1.0, 0.0, &[notch(100.0, 100.0), notch(210.0, 100.0)]);
         // Each bump is 8 commands; merged ones draw one bump.
         assert_eq!(apart.path.len() - close.path.len(), 8);
     }
@@ -390,7 +426,7 @@ mod tests {
     fn panel_stays_on_screen() {
         let g = Geometry::default();
         let b = Bump { x: 10.0, width: 0.0, panel_width: 200.0, panel_height: 100.0, p: 1.0, ..Default::default() };
-        let f = compute(&g, 1000.0, 0.0, true, 1.0, 1.0, &[b]);
+        let f = compute(&g, 1000.0, 0.0, true, 1.0, 1.0, 0.0, &[b]);
         assert_eq!(f.bumps[0].panel_x, 0.0);
         assert_eq!(f.bumps[0].depth, g.expanded_height + 100.0);
     }

@@ -668,7 +668,7 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
         "menu" => Box::new(menu::Menu::new(opts)),
         "weather" => Box::new(panels::WeatherPanel::new(opts)),
         "temps" => Box::new(panels::TempsPanel::new(opts)),
-        "privacy" => Box::new(panels::PrivacyPanel::new()),
+        "privacy" => Box::new(panels::PrivacyPanel::new(opts)),
         "tray" => Box::new(panels::TrayPanel::new(opts)),
         "claude" => Box::new(panels2::ClaudePanel::new(opts)),
         "media" => Box::new(panels2::MediaPanel::new(opts)),

@@ -33,6 +33,15 @@ use crate::win::Monitor;
 
 /// Space between a notch's content and the start of its curves, each side (main.ts).
 const NOTCH_PAD: f64 = 10.0;
+/// The skins ([theme] skin): how far the shape is held off the edge and (floating) the
+/// screen's sides, the radius of its corners at the edge, and how deep the cut that
+/// rounds them reaches (past the notches' flares).
+const SKIN_GAP: f32 = 6.0;
+const SKIN_MARGIN: f64 = 8.0;
+const SKIN_RADIUS: f64 = 12.0;
+const SKIN_BAND: f64 = 16.0;
+/// Islands: the space around each group of widgets.
+const ISLAND_PAD: f32 = 14.0;
 
 /// How long a panel's cascade of `n` pieces takes (main.ts cascade).
 fn cascade_length(n: usize) -> std::time::Duration {
@@ -261,6 +270,8 @@ pub struct Surface {
     /// per kind: one that couldn't be made isn't tried every frame).
     backdrop: Option<super::backdrop::Backdrop>,
     backdrop_for: Option<super::backdrop::Kind>,
+    /// The islands skin: each group of the open bar's widgets, its span (left, right).
+    islands: Vec<(f64, f64)>,
     /// The window's size and position as last drawn (physical).
     size: SIZE,
     pos: POINT,
@@ -368,6 +379,7 @@ impl Surface {
             offscreen,
             backdrop: None,
             backdrop_for: None,
+            islands: Vec::new(),
             size: SIZE { cx: w, cy: 1 },
             pos: POINT::default(),
             tracking: false,
@@ -1266,6 +1278,10 @@ impl Surface {
         }
         // Centre: around a middle notch (widgets listed before its own sit left of it).
         let middle = l.notches.iter().filter(|n| !n.hidden && n.widgets.iter().any(|x| l.bar.center.contains(x))).last();
+        // The islands skin: the groups' spans (the middle notch counts as the centre's).
+        let mut centre_span: Vec<(f32, f32)> = middle.map(|m| (m.x as f32, (m.x + m.width) as f32)).into_iter().collect();
+        let left_ids = left.clone();
+        let right_ids = right.clone();
         let first_pinned = l.bar.center.iter().position(|n| l.notches.iter().any(|m| m.widgets.contains(n)));
         match (middle, first_pinned) {
             (Some(m), Some(first)) => {
@@ -1276,11 +1292,13 @@ impl Surface {
                 let mut x = x0 - gap - span(&before);
                 for &wi in &before {
                     places.push((wi, x));
+                    centre_span.push((x, x + self.widgets[wi].open_width));
                     x += self.widgets[wi].open_width + gap;
                 }
                 let mut x = x1 + gap;
                 for &wi in &after {
                     places.push((wi, x));
+                    centre_span.push((x, x + self.widgets[wi].open_width));
                     x += self.widgets[wi].open_width + gap;
                 }
             }
@@ -1289,10 +1307,21 @@ impl Surface {
                 let mut x = w / 2.0 - span(&center) / 2.0;
                 for &wi in &center {
                     places.push((wi, x));
+                    centre_span.push((x, x + self.widgets[wi].open_width));
                     x += self.widgets[wi].open_width + gap;
                 }
             }
         }
+        let side_span = |ids: &[usize]| -> Vec<(f32, f32)> { places.iter().filter(|(wi, _)| ids.contains(wi)).map(|&(wi, x)| (x, x + self.widgets[wi].open_width)).collect() };
+        let islands: Vec<(f64, f64)> = [side_span(&left_ids), centre_span, side_span(&right_ids)]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                let a = s.iter().map(|p| p.0).fold(f32::INFINITY, f32::min) - ISLAND_PAD;
+                let b = s.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max) + ISLAND_PAD;
+                (a.max(0.0) as f64, b.min(w) as f64)
+            })
+            .collect();
         let was: Vec<Option<f32>> = self.widgets.iter().map(|p| p.bar_x).collect();
         let visible = self.expanded && self.expand.value > 0.5;
         let now = Instant::now();
@@ -1314,6 +1343,7 @@ impl Surface {
         for wi in fades {
             self.widgets[wi].fades = true;
         }
+        self.islands = islands;
     }
 
     /// Panels' sizes, and where bar dropdowns hang (main.ts measureBarDrops).
@@ -1587,16 +1617,95 @@ impl Surface {
         let dock = self.dock();
         let l = &self.layout;
         let val = |s: &Spring| if use_target { s.target } else { s.value };
-        let frame = geometry::compute(
+        let skin = self.skin();
+        // Islands: the bar never spans the screen; each group gets a piece of its own.
+        let islands = skin == "islands";
+        let mut frame = geometry::compute(
             &l.geometry,
             l.width,
-            l.corner_radius,
+            if skin.is_empty() { l.corner_radius } else { 0.0 },
             l.combine_notches,
-            if dock { 0.0 } else { val(&self.expand) },
-            if dock { 0.0 } else { val(&self.spread) },
+            if dock || islands { 0.0 } else { val(&self.expand) },
+            if dock || islands { 0.0 } else { val(&self.spread) },
+            if skin == "floating" { SKIN_MARGIN } else { 0.0 },
             &bumps,
         );
+        if islands {
+            let t = val(&self.expand).max(0.0) * l.geometry.expanded_height;
+            if t > 0.5 {
+                for &(x0, x1) in &self.islands {
+                    frame.path.extend(geometry::hanging_rect(x0, -geometry::OFF, x1, t, l.geometry.corner_radius));
+                }
+            }
+        }
         (bumps, frame)
+    }
+
+    /// The bars' skin ([theme] skin): "floating", "islands" or "" (a dock's islands are
+    /// its own: there it floats).
+    fn skin(&self) -> &'static str {
+        match self.layout.theme.skin.as_str() {
+            "floating" => "floating",
+            "islands" if !self.dock() => "islands",
+            "islands" => "floating",
+            _ => "",
+        }
+    }
+
+    /// How far the skin holds the shape off the edge (logical px, whole device px).
+    fn skin_gap(&self) -> f32 {
+        if self.skin().is_empty() { 0.0 } else { (SKIN_GAP * self.scale()).round() / self.scale() }
+    }
+
+    /// The content's offset in the window: down from a top edge, up from a bottom one.
+    fn skin_dy(&self) -> f32 {
+        if self.bottom() { -self.skin_gap() } else { self.skin_gap() }
+    }
+
+    /// Where the content's origin is on screen (the window's, past the skin's gap).
+    fn content_pos(&self) -> POINT {
+        POINT { x: self.pos.x, y: self.pos.y + (self.skin_dy() * self.scale()).round() as i32 }
+    }
+
+    /// The skin's mask: each part's top (where it meets the edge) rounded, the notches'
+    /// flares cut off; below that, everything (floating: within its margins).
+    fn skin_mask(&self, frame: &Frame, k: f64) -> Vec<geometry::Cmd> {
+        let l = &self.layout;
+        let w = l.width;
+        let inset = if self.skin() == "floating" { SKIN_MARGIN } else { 0.0 };
+        let mut tops: Vec<(f64, f64)> = Vec::new();
+        if frame.base > 0.5 {
+            tops.push(frame.hull);
+        }
+        for bf in &frame.bumps {
+            if bf.right - bf.left >= 1.0 {
+                tops.push((bf.left, bf.right));
+            }
+        }
+        if self.skin() == "islands" && self.expand.value > 0.02 {
+            tops.extend(self.islands.iter().copied());
+        }
+        tops.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Parts that touch (merged notches, a notch in an island) are one top.
+        let reach = 2.0 * l.geometry.concave_radius * k + 6.0;
+        // Docks draw their curves bigger (k): the cut reaches past their flares too.
+        let band = SKIN_BAND * k;
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (a, b) in tops {
+            match merged.last_mut() {
+                Some(last) if a - last.1 < reach => last.1 = last.1.max(b),
+                _ => merged.push((a, b)),
+            }
+        }
+        let mut out = Vec::new();
+        for (a, b) in merged {
+            let (a, b) = (a.max(inset), b.min(w - inset));
+            if b - a >= 1.0 {
+                out.extend(geometry::standing_rect(a, 0.0, b, band + SKIN_RADIUS, SKIN_RADIUS));
+            }
+        }
+        out.extend(geometry::standing_rect(inset, band, w - inset, 1e5, 0.0));
+        out
     }
 
     /// Panels' cascades: one starts as its panel begins to open, and resets once it's shut.
@@ -1698,7 +1807,7 @@ impl Surface {
         let h_bar = l.geometry.expanded_height;
         // How much of the window shows: the deepest part of the shape, the corners below it.
         let deepest = frame.bumps.iter().map(|b| b.depth).fold(frame.base, f64::max).max(bumps.iter().map(|b| b.height).fold(0.0, f64::max));
-        let shown_h = ((deepest + l.corner_radius + 2.0) * scale as f64).ceil() as i32;
+        let shown_h = ((deepest + l.corner_radius + 2.0 + self.skin_gap() as f64) * scale as f64).ceil() as i32;
         if shown_h > self.dib.h {
             self.dib = Dib::new(self.dib.w, shown_h + 64)?;
         }
@@ -1714,8 +1823,14 @@ impl Surface {
         };
 
         gfx.begin(self.dib.dc, w_px, h_px, scale)?;
+        // A skin: everything held off the edge, the shape cut to rounded parts.
+        let dy = self.skin_dy();
+        if dy != 0.0 {
+            unsafe { gfx.rt.SetTransform(&Matrix3x2 { M11: 1.0, M12: 0.0, M21: 0.0, M22: 1.0, M31: 0.0, M32: dy }) };
+        }
         let fill = with_alpha(self.look.bg, self.look.opacity);
         let shape = gfx.path(&frame.path, flip)?;
+        let shape = if self.skin().is_empty() { shape } else { gfx.intersect(&shape, &gfx.path(&self.skin_mask(&frame, bumps.iter().map(|b| b.scale).fold(1.0, f64::max)), flip)?)? };
         let corners = if frame.corners.is_empty() { None } else { Some(gfx.path(&frame.corners, flip)?) };
         unsafe {
             gfx.brush.SetColor(&fill);
@@ -1992,7 +2107,7 @@ impl Surface {
                 Some(c) => gfx.union(&shape, c).ok().map(|g| g.into()),
                 None => Some(shape.clone().into()),
             };
-            if let Some(px) = whole.and_then(|g| gfx.scaled(&g, scale).ok()) {
+            if let Some(px) = whole.and_then(|g| gfx.moved_scaled(&g, dy, scale).ok()) {
                 b.update(pos.x, pos.y, w_px, h_px, &px, self.shown);
             }
         }
@@ -2006,7 +2121,7 @@ impl Surface {
         if self.offscreen {
             return;
         }
-        let (s, pos) = (self.scale(), self.pos);
+        let (s, pos) = (self.scale(), self.content_pos());
         let half = 16.0;
         let mut rects: Vec<(String, [i32; 4])> = Vec::new();
         for p in &self.widgets {
@@ -2039,6 +2154,7 @@ impl Surface {
                     continue;
                 }
                 let Some((left, top)) = self.panels[pi].drawn else { continue };
+                let top = top + self.skin_dy();
                 for (h, (x, y, w, hh)) in self.panels[pi].p.thumbs() {
                     let r = [((left + x) * scale) as i32, ((top + y) * scale) as i32, ((left + x + w) * scale) as i32, ((top + y + hh) * scale) as i32];
                     want.push((h, r));
@@ -2117,6 +2233,17 @@ impl Surface {
                 regions.push(Rect { x: bf.left - r, y: h - 1.0, width: bf.right - bf.left + 2.0 * r, height: bf.depth - h + 1.0 });
             }
         }
+        // A skin: the shape is held off the edge; the hover areas reach over the gap.
+        let gap = self.skin_gap() as f64;
+        if gap > 0.0 {
+            for r in &mut regions {
+                if r.y <= 0.0 {
+                    r.height += gap;
+                } else {
+                    r.y += gap;
+                }
+            }
+        }
         let key = regions.iter().map(|r| format!("{:.1},{:.1},{:.1},{:.1}", r.x, r.y, r.width, r.height)).collect::<Vec<_>>().join(";");
         if key != self.sent_regions {
             self.sent_regions = key;
@@ -2134,7 +2261,7 @@ impl Surface {
 
     /// Physical client px → logical window px.
     fn logical(&self, p: (i32, i32)) -> (f32, f32) {
-        (p.0 as f32 / self.scale(), p.1 as f32 / self.scale())
+        (p.0 as f32 / self.scale(), p.1 as f32 / self.scale() - self.skin_dy())
     }
 
     /// The widget under a screen point given as {x, y} (physical px), with the point
@@ -2228,7 +2355,7 @@ impl Surface {
             (Some((x, y)), _) if in_panel.is_some() => in_panel.map(|text| {
                 let s = self.scale();
                 let y = if self.bottom() { y - 18.0 } else { y + 22.0 };
-                (text, (self.pos.x + (x * s) as i32, self.pos.y + (y * s) as i32))
+                (text, (self.pos.x + (x * s) as i32, self.content_pos().y + (y * s) as i32))
             }),
             (Some((x, _)), Some((wi, _))) if self.layout.tooltips && !panel_open => self.widgets[wi].w.tooltip().zip(self.widgets[wi].drawn).map(|(text, (_, cy, _))| {
                 let l = &self.layout;
@@ -2241,7 +2368,7 @@ impl Surface {
                 let s = self.scale();
                 // Past the row's far side (below a top bar, above a bottom one).
                 let edge = if self.bottom() { cy - row / 2.0 - super::tooltip::GAP } else { cy + row / 2.0 + super::tooltip::GAP };
-                (text, (self.pos.x + (x * s) as i32, self.pos.y + (edge * s) as i32))
+                (text, (self.pos.x + (x * s) as i32, self.content_pos().y + (edge * s) as i32))
             }),
             _ => None,
         };
@@ -2268,7 +2395,7 @@ impl Surface {
         let reply = if let Some((_, pi, local)) = self.panel_at(x, y) {
             // A tray click's point, local to the panel's content: on screen, in device px.
             let origin = self.panels[pi].drawn.unwrap_or((0.0, 0.0));
-            let (pos, scale) = (self.pos, self.scale());
+            let (pos, scale) = (self.content_pos(), self.scale());
             let to_screen = move |at: (f32, f32)| (pos.x as f32 + (origin.0 + at.0) * scale, pos.y as f32 + (origin.1 + at.1) * scale);
             match self.panels[pi].p.click(button, local) {
                 Reply::CloseAnd(Act::Tray { id, button, at }) => Reply::CloseAnd(Act::Tray { id, button, at: to_screen(at) }),
@@ -2277,7 +2404,7 @@ impl Surface {
         } else if let Some((wi, local)) = self.widget_at(gfx, x, y) {
             // A tray click's point, local to the widget: on screen, in device px.
             let origin = self.widgets[wi].drawn.map_or((0.0, 0.0), |(wx, cy, _)| (wx, cy));
-            let (pos, scale) = (self.pos, self.scale());
+            let (pos, scale) = (self.content_pos(), self.scale());
             let to_screen = move |at: (f32, f32)| (pos.x as f32 + (origin.0 + at.0) * scale, pos.y as f32 + (origin.1 + at.1) * scale);
             // A click opens or closes a panel for good (not as a hover).
             self.hover_panel = None;

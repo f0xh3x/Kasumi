@@ -135,9 +135,25 @@ pub struct ClipboardPanel {
     hover_x: bool,
     hover_clear: bool,
     hover_search: bool,
+    /// The newest screenshots ([widgets.clipboard] screenshots): path, when, thumbnail.
+    show_shots: bool,
+    shots: Vec<(String, f64, Option<Pixels>)>,
+    shot_bmps: HashMap<String, windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
+    hover_shot: Option<ShotHit>,
+}
+
+/// Under the cursor in the screenshots' strip.
+#[derive(Clone, Copy, PartialEq)]
+enum ShotHit {
+    Shot(usize),
+    Snip,
 }
 
 const CLIP_W: f32 = 300.0;
+/// The screenshots' strip: its heading row, a picture's height, the gap under it.
+const SHOT_HEAD: f32 = 24.0;
+const SHOT_H: f32 = 56.0;
+const SHOT_GAP: f32 = 12.0;
 /// Compact: the search box (and the gap under it), a row.
 const CLIP_SEARCH: f32 = 30.0 + 6.0;
 const CLIP_ROW: f32 = 28.0;
@@ -149,14 +165,81 @@ impl ClipboardPanel {
             Some("compact") => ClipStyle::Compact,
             _ => ClipStyle::List,
         };
-        ClipboardPanel { style, items: Vec::new(), thumbs: HashMap::new(), boxes: Vec::new(), scroll: Scroll::default(), hovered: None, hover_x: false, hover_clear: false, hover_search: false }
+        ClipboardPanel {
+            style,
+            items: Vec::new(),
+            thumbs: HashMap::new(),
+            boxes: Vec::new(),
+            scroll: Scroll::default(),
+            hovered: None,
+            hover_x: false,
+            hover_clear: false,
+            hover_search: false,
+            show_shots: opts.flag("screenshots") == Some(true),
+            shots: Vec::new(),
+            shot_bmps: HashMap::new(),
+            hover_shot: None,
+        }
+    }
+    /// The screenshots' strip's height (none without screenshots).
+    fn shots_h(&self) -> f32 {
+        if self.show_shots { SHOT_HEAD + SHOT_H + SHOT_GAP } else { 0.0 }
+    }
+    /// A screenshot's box in the strip (content px).
+    fn shot_box(i: usize) -> (f32, f32, f32, f32) {
+        let w = (CLIP_W - 2.0 * 6.0) / 3.0;
+        (i as f32 * (w + 6.0), SHOT_HEAD, w, SHOT_H)
+    }
+    /// Snip's box: the heading row's right end.
+    fn snip_box() -> (f32, f32, f32, f32) {
+        (CLIP_W - 54.0, 0.0, 54.0, 20.0)
+    }
+    fn shot_at(&self, p: (f32, f32)) -> Option<ShotHit> {
+        if !self.show_shots || p.1 >= self.shots_h() {
+            return None;
+        }
+        let inside = |(x, y, w, h): (f32, f32, f32, f32)| p.0 >= x && p.0 < x + w && p.1 >= y && p.1 < y + h;
+        if inside(Self::snip_box()) {
+            return Some(ShotHit::Snip);
+        }
+        (0..self.shots.len()).find(|&i| inside(Self::shot_box(i))).map(ShotHit::Shot)
+    }
+    /// The strip: "SCREENSHOTS", Snip, the newest three (a click copies one).
+    fn draw_shots(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let small = cx.secondary(11.0);
+        let dim = with_alpha(cx.look.dimmed(), alpha);
+        let mut hx = x;
+        for ch in "SCREENSHOTS".chars() {
+            hx += g.text_at(&ch.to_string(), &small, hx, y + 10.0, dim) + 0.5;
+        }
+        let (sx, sy, sw, sh) = Self::snip_box();
+        let on = self.hover_shot == Some(ShotHit::Snip);
+        g.fill_round(rect(x + sx, y + sy, sw, sh), 6.0, if on { with_alpha(cx.hover_bg(0.18), alpha) } else { white(0.1 * alpha) });
+        let gw = g.text_at("\u{E7A8}", &Font::icons(11.0), x + sx + 7.0, y + sy + sh / 2.0 + 1.0, with_alpha(cx.look.fg, alpha));
+        g.text_at("Snip", &small, x + sx + 7.0 + gw + 5.0, y + sy + sh / 2.0, with_alpha(cx.look.fg, alpha));
+        if self.shots.is_empty() {
+            g.text_at("Screenshots you take show up here", &cx.secondary(12.0), x, y + SHOT_HEAD + SHOT_H / 2.0, dim);
+            return;
+        }
+        for (i, (path, _, _)) in self.shots.iter().enumerate() {
+            let (bx, by, bw, bh) = Self::shot_box(i);
+            let r = rect(x + bx, y + by, bw, bh);
+            match self.shot_bmps.get(path) {
+                Some(b) => g.fill_picture(b, r, 6.0, alpha),
+                None => g.fill_round(r, 6.0, white(0.08 * alpha)),
+            }
+            if self.hover_shot == Some(ShotHit::Shot(i)) {
+                g.fill_round(r, 6.0, white(0.15 * alpha));
+            }
+        }
     }
     fn text_w() -> f32 {
         CLIP_W - 16.0 - 8.0 - 14.0
     }
     /// Where the scrolled area starts (under the search box).
     fn top(&self) -> f32 {
-        if self.style == ClipStyle::Compact && !self.items.is_empty() { CLIP_SEARCH } else { 0.0 }
+        self.shots_h() + if self.style == ClipStyle::Compact && !self.items.is_empty() { CLIP_SEARCH } else { 0.0 }
     }
     /// A picture scaled into `w` × `h` at most.
     fn fit(px: &Pixels, w: f32, h: f32) -> (f32, f32) {
@@ -175,7 +258,8 @@ impl ClipboardPanel {
     fn hit(&self, p: (f32, f32)) -> (Option<usize>, bool, bool, bool) {
         let top = self.top();
         if p.1 < top {
-            return (None, false, false, p.1 < CLIP_SEARCH - 6.0);
+            let search = self.style == ClipStyle::Compact && p.1 >= self.shots_h() && p.1 < self.shots_h() + CLIP_SEARCH - 6.0;
+            return (None, false, false, search);
         }
         let list_h = self.scroll.shown();
         if p.1 > top + list_h {
@@ -338,9 +422,20 @@ impl ClipboardPanel {
 
 impl Panel for ClipboardPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["clipboard"]
+        &["clipboard", "screenshots"]
     }
-    fn data(&mut self, _key: &str, v: &Value) -> bool {
+    fn data(&mut self, key: &str, v: &Value) -> bool {
+        if key == "screenshots" {
+            self.shots = v
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| Some((s.get("path")?.as_str()?.to_string(), s.get("time").and_then(|t| t.as_f64()).unwrap_or(0.0), s.get("thumb").and_then(decode))))
+                .collect();
+            let paths: Vec<String> = self.shots.iter().map(|s| s.0.clone()).collect();
+            self.shot_bmps.retain(|p, _| paths.contains(p));
+            return true;
+        }
         self.items = v
             .as_array()
             .map(|a| {
@@ -368,11 +463,18 @@ impl Panel for ClipboardPanel {
                 }
             }
         }
+        for (path, _, px) in &self.shots {
+            if let (Some(px), false) = (px, self.shot_bmps.contains_key(path)) {
+                if let Ok(b) = g.bitmap(px.0, px.1, &px.2) {
+                    self.shot_bmps.insert(path.clone(), b);
+                }
+            }
+        }
         let f = cx.secondary(12.0);
         if self.items.is_empty() {
             self.boxes.clear();
             self.scroll.fit(line(g, &f), 360.0);
-            return (CLIP_W, line(g, &f));
+            return (CLIP_W, self.shots_h() + line(g, &f));
         }
         let (boxes, h) = self.layout(g, &f, &cx.secondary(10.5));
         self.boxes = boxes;
@@ -383,6 +485,11 @@ impl Panel for ClipboardPanel {
         let g = cx.gfx;
         let f = cx.secondary(12.0);
         let dim = with_alpha(cx.look.dimmed(), alpha);
+        if self.show_shots {
+            self.draw_shots(cx, x, y, alpha);
+        }
+        let y0 = y;
+        let y = y + self.shots_h();
         if self.items.is_empty() {
             g.text_at("Copy something and it shows up here.", &f, x, y + line(g, &f) / 2.0, dim);
             return;
@@ -395,7 +502,7 @@ impl Panel for ClipboardPanel {
             let gw = g.text_at("\u{E721}", &Font::icons(12.0), x + 10.0, cy + 1.0, dim);
             g.text_at("Type to find a copy", &f, x + 10.0 + gw + 8.0, cy, dim);
         }
-        let top = y + self.top();
+        let top = y0 + self.top();
         g.clip(rect(x - 2.0, top, CLIP_W + 4.0, self.scroll.shown()));
         for (i, (c, b)) in self.items.iter().zip(&self.boxes).enumerate() {
             let (bx, by, bw, bh) = (x + b.0, top + b.1 - self.scroll.offset, b.2, b.3);
@@ -444,12 +551,19 @@ impl Panel for ClipboardPanel {
         g.text_at("Clear", &f, x + CLIP_W - w - 6.0, cyy, if self.hover_clear { with_alpha(cx.look.fg, alpha) } else { dim });
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
-        let (row, x, clear, search) = at.map_or((None, false, false, false), |p| self.hit(p));
-        let changed = row != self.hovered || x != self.hover_x || clear != self.hover_clear || search != self.hover_search;
+        let shot = at.and_then(|p| self.shot_at(p));
+        let (row, x, clear, search) = if shot.is_some() { (None, false, false, false) } else { at.map_or((None, false, false, false), |p| self.hit(p)) };
+        let changed = row != self.hovered || x != self.hover_x || clear != self.hover_clear || search != self.hover_search || shot != self.hover_shot;
+        self.hover_shot = shot;
         (self.hovered, self.hover_x, self.hover_clear, self.hover_search) = (row, x, clear, search);
         changed
     }
     fn tooltip(&self) -> Option<String> {
+        match self.hover_shot {
+            Some(ShotHit::Snip) => return Some("Take a screenshot (Windows' snipping)".into()),
+            Some(ShotHit::Shot(i)) => return self.shots.get(i).map(|s| format!("Copy this screenshot ({})", ago(s.1))),
+            None => {}
+        }
         if self.hover_search {
             return Some("Search your copies in the launcher (1 to 9 paste one)".into());
         }
@@ -462,6 +576,14 @@ impl Panel for ClipboardPanel {
     fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
         if button != Button::Left {
             return Reply::None;
+        }
+        match self.shot_at(at) {
+            Some(ShotHit::Snip) => return Reply::CloseAnd(Act::open("ms-screenclip:")),
+            Some(ShotHit::Shot(i)) => {
+                let path = self.shots[i].0.clone();
+                return Reply::CloseAnd(Act::call(move |_| crate::providers::files::copy_picture(&path)));
+            }
+            None => {}
         }
         match self.hit(at) {
             (_, _, _, true) => {
@@ -488,6 +610,7 @@ impl Panel for ClipboardPanel {
     }
     fn closed(&mut self) {
         (self.hovered, self.hover_x, self.hover_clear, self.hover_search) = (None, false, false, false);
+        self.hover_shot = None;
         self.scroll.offset = 0.0;
     }
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {

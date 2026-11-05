@@ -318,6 +318,23 @@ pub struct Calendar {
     /// The month shown: months away from this one. Week: the month shown under today.
     shift: i32,
     full: bool,
+    /// [widgets.clock] world_clocks and screen_time: their data, and whether the clock
+    /// shows 12-hour times.
+    world: Option<serde_json::Value>,
+    screen: Option<serde_json::Value>,
+    show_screen: bool,
+    twelve: bool,
+}
+
+/// The sections under the calendar: their gap to what's above, a line, its gap.
+const SECTION_TOP: f32 = TIMER_TOP + 1.0 + 10.0;
+const CITY_ROW: f32 = 22.0;
+const APP_ROW: f32 = 20.0;
+
+/// "2 h 4 m" / "15 m".
+fn spent(secs: f64) -> String {
+    let m = (secs / 60.0).round() as i64;
+    if m >= 60 { format!("{} h {} m", m / 60, m % 60) } else { format!("{m} m") }
 }
 
 /// What can be clicked: the timer row's buttons, the month's arrows, this week's strip
@@ -381,6 +398,10 @@ impl Default for Calendar {
             beat: Instant::now(),
             shift: 0,
             full: false,
+            world: None,
+            screen: None,
+            show_screen: false,
+            twelve: false,
         }
     }
 }
@@ -388,7 +409,107 @@ impl Default for Calendar {
 impl Calendar {
     pub fn new(opts: &Opts) -> Calendar {
         let style = if opts.str("style") == Some("week") { CalStyle::Week } else { CalStyle::Month };
-        Calendar { style, look: MonthLook::of(opts), timers: opts.flag("timers") == Some(true), ..Default::default() }
+        let format = opts.str("format").unwrap_or("%H:%M");
+        Calendar {
+            style,
+            look: MonthLook::of(opts),
+            timers: opts.flag("timers") == Some(true),
+            show_screen: opts.flag("screen_time") == Some(true),
+            twelve: format.contains("%I") || format.contains("%l") || format.contains("%p"),
+            ..Default::default()
+        }
+    }
+
+    /// The other places' times: name, minutes from UTC; this PC's offset.
+    fn cities(&self) -> (Vec<(String, i64)>, i64) {
+        let Some(w) = &self.world else { return (Vec::new(), 0) };
+        let list = w.get("list").and_then(|l| l.as_array()).into_iter().flatten().filter_map(|c| Some((c.get("name")?.as_str()?.to_string(), c.get("offset")?.as_i64()?))).collect();
+        (list, w.get("local").and_then(|l| l.as_i64()).unwrap_or(0))
+    }
+    /// Screen time's apps today: name, seconds.
+    fn screen_apps(&self) -> Vec<(String, f64)> {
+        let Some(st) = self.screen.as_ref().filter(|_| self.show_screen) else { return Vec::new() };
+        st.get("apps").and_then(|a| a.as_array()).into_iter().flatten().filter_map(|a| Some((a.get("name")?.as_str()?.to_string(), a.get("secs")?.as_f64()?))).collect()
+    }
+    /// The sections' height: world clocks, screen time.
+    fn extras_h(&self, cx: &Ctx) -> f32 {
+        let mut h = 0.0;
+        let n = self.cities().0.len();
+        if n > 0 {
+            h += SECTION_TOP + n as f32 * CITY_ROW;
+        }
+        if self.show_screen && self.screen.is_some() {
+            h += SECTION_TOP + cx.gfx.text("Ag", &cx.secondary(11.0)).map_or(14.0, |t| t.height) + 6.0 + self.screen_apps().len() as f32 * APP_ROW;
+        }
+        h
+    }
+    /// A time of day from minutes since midnight, as the clock shows them.
+    fn time_of(&self, mins: i64) -> String {
+        let m = mins.rem_euclid(1440);
+        let (h, mm) = (m / 60, m % 60);
+        if self.twelve {
+            format!("{}:{mm:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
+        } else {
+            format!("{h:02}:{mm:02}")
+        }
+    }
+    fn draw_extras(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let small = cx.secondary(11.0);
+        let f = cx.secondary(12.0);
+        let mut yy = y;
+        let (cities, local) = self.cities();
+        if !cities.is_empty() {
+            g.fill_rect(rect(x, yy + TIMER_TOP, CAL_W, 1.0), white(0.08 * alpha));
+            yy += SECTION_TOP;
+            let utc = (crate::native::widgets::extras::now_secs() / 60.0).floor() as i64;
+            for (name, off) in cities {
+                let cy = yy + CITY_ROW / 2.0;
+                let diff = off - local;
+                let rel = if diff == 0 {
+                    "here".to_string()
+                } else {
+                    let h = diff as f64 / 60.0;
+                    let n = if h.fract() == 0.0 { format!("{}", h.abs()) } else { format!("{:.1}", h.abs()) };
+                    format!("{}{n} h", if diff > 0 { "+" } else { "−" })
+                };
+                let rw = g.measure(&rel, &small);
+                g.text_at(&rel, &small, x + CAL_W - rw, cy, dim);
+                let t = self.time_of(utc + off);
+                let tf = cx.main(15.0);
+                let tw = g.measure(&t, &tf);
+                g.text_at(&t, &tf, x + CAL_W - 52.0 - tw, cy, fg);
+                g.text_at(&super::fit_text(g, &name, &f, CAL_W - 52.0 - tw - 10.0), &f, x, cy, dim);
+                yy += CITY_ROW;
+            }
+        }
+        if let Some(st) = self.screen.as_ref().filter(|_| self.show_screen) {
+            g.fill_rect(rect(x, yy + TIMER_TOP, CAL_W, 1.0), white(0.08 * alpha));
+            yy += SECTION_TOP;
+            let lh = g.text("Ag", &small).map_or(14.0, |t| t.height);
+            let mut hx = x;
+            for ch in "SCREEN TIME TODAY".chars() {
+                hx += g.text_at(&ch.to_string(), &small, hx, yy + lh / 2.0, dim) + 0.5;
+            }
+            let total = spent(st.get("total").and_then(|t| t.as_f64()).unwrap_or(0.0));
+            g.text_at(&total, &small, x + CAL_W - g.measure(&total, &small), yy + lh / 2.0, fg);
+            yy += lh + 6.0;
+            let apps = self.screen_apps();
+            let most = apps.first().map_or(1.0, |a| a.1.max(1.0));
+            let fill = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { fg };
+            for (name, secs) in apps {
+                let cy = yy + APP_ROW / 2.0;
+                let t = spent(secs);
+                let tw = g.measure(&t, &small);
+                g.text_at(&t, &small, x + CAL_W - tw, cy, dim);
+                g.text_at(&super::fit_text(g, &name, &f, 78.0), &f, x, cy, fg);
+                let (bx, bw) = (x + 84.0, CAL_W - 84.0 - 62.0);
+                g.fill_round(rect(bx, cy - 2.0, bw, 4.0), 2.0, white(0.15 * alpha));
+                g.fill_round(rect(bx, cy - 2.0, (bw * (secs / most) as f32).max(2.0), 4.0), 2.0, fill);
+                yy += APP_ROW;
+            }
+        }
     }
 
     /// The month shown (this one, or the arrows' pick).
@@ -650,6 +771,16 @@ impl Calendar {
 }
 
 impl Panel for Calendar {
+    fn keys(&self) -> &'static [&'static str] {
+        &["worldclocks", "screentime"]
+    }
+    fn data(&mut self, key: &str, v: &serde_json::Value) -> bool {
+        match key {
+            "worldclocks" => self.world = Some(v.clone()),
+            _ => self.screen = Some(v.clone()),
+        }
+        true
+    }
     fn wake(&self) -> Option<Instant> {
         // A running timer: its time; else today moves at midnight: every minute.
         Some(self.beat)
@@ -672,7 +803,7 @@ impl Panel for Calendar {
                 big + PART_GAP + strip + progress + if self.full { PART_GAP + self.month_h(false) } else { 0.0 }
             }
         };
-        (CAL_W, self.body_h + if self.timers { TIMER_TOP + 1.0 + 10.0 + TIMER_H } else { 0.0 })
+        (CAL_W, self.body_h + if self.timers { TIMER_TOP + 1.0 + 10.0 + TIMER_H } else { 0.0 } + self.extras_h(cx))
     }
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
         if self.style != CalStyle::Month {
@@ -722,6 +853,8 @@ impl Panel for Calendar {
                 boxes.push((hit, [bx, top - y, bw, TIMER_H]));
             }
         }
+        let below = y + self.body_h + if self.timers { TIMER_TOP + 1.0 + 10.0 + TIMER_H } else { 0.0 };
+        self.draw_extras(cx, x, below, alpha);
         *self.boxes.borrow_mut() = boxes;
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {

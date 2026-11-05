@@ -144,7 +144,7 @@ impl ScrollBar {
         let k = depth / self.geometry.notch_height.max(1.0);
         let left = (h - width) as f64 / 2.0;
         let bump = Bump { x: left, width: width as f64, height: depth, in_hull: true, scale: k, ..Default::default() };
-        let frame = geometry::compute(&self.geometry, h as f64, 0.0, false, 0.0, 0.0, &[bump]);
+        let frame = geometry::compute(&self.geometry, h as f64, 0.0, false, 0.0, 0.0, 0.0, &[bump]);
         let turn = |p: Pt| Pt(w as f64 - p.1, p.0);
         let cmds: Vec<Cmd> = frame
             .path

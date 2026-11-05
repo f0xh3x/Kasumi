@@ -873,3 +873,8 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .placer .chip { cursor: grab; }
 .placer .chip:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .sub-title { font-size: 11.5px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; padding: 14px 0 2px; }
+
+/* World clocks: a name, its time zone, remove. */
+.row.world-clock { flex-wrap: nowrap; gap: 8px; }
+.row.world-clock .input { width: 140px; flex: none; }
+.row.world-clock .select { flex: 1; min-width: 0; }

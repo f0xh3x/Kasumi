@@ -1,4 +1,6 @@
-//! Hardware readings from LibreHardwareMonitor's remote web server.
+//! Hardware readings for the PC temps (performance) widget: load and memory from
+//! Windows itself (perf.rs), temperatures, power and clocks from LibreHardwareMonitor's
+//! remote web server when `lhm` is on (the default), its readings taking precedence.
 //!
 //! Config (`[widgets.temps]`): `url` (or `port`), `interval_ms`, and LHM
 //! SensorIds for each reading: `cpu_sensor`, `gpu_sensor` (temperatures),
@@ -49,6 +51,7 @@ fn parse_value(sensor: &Value) -> Option<f64> {
 pub fn run(app: AppHandle) {
     let agent = http_agent();
     let mut last_error = String::new();
+    let mut perf = super::perf::Perf::default();
     loop {
         if !widget_enabled(&app, "temps") {
             publish(&app, "temps", Value::Null);
@@ -60,11 +63,14 @@ pub fn run(app: AppHandle) {
         let url = opt_str(&opts, "url", &format!("http://localhost:{port}/data.json"));
         let interval = opt_f64(&opts, "interval_ms").unwrap_or(1000.0).clamp(250.0, 60_000.0);
 
-        let value = match get_json(&agent, &url) {
-            Ok(root) => {
+        let use_lhm = opts.get("lhm").and_then(|v| v.as_bool()) != Some(false);
+        let mut out = Map::new();
+        let reply = if use_lhm { Some(get_json(&agent, &url)) } else { None };
+        out.insert("lhm".into(), json!(use_lhm));
+        out.insert("lhmOk".into(), json!(matches!(reply, Some(Ok(_)))));
+        match reply {
+            Some(Ok(root)) => {
                 last_error.clear();
-                let mut out = Map::new();
-                out.insert("ok".into(), json!(true));
                 for &(key, field, default) in SENSORS {
                     let found = find_sensor(&root, &opt_str(&opts, key, default), &mut Vec::new());
                     out.insert(field.into(), json!(found.as_ref().and_then(|(s, _)| parse_value(s))));
@@ -73,17 +79,19 @@ pub fn run(app: AppHandle) {
                         out.insert(format!("{field}Name"), json!(hw));
                     }
                 }
-                Value::Object(out)
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 if e != last_error {
                     eprintln!("[kasumi] temps: {url}: {e}");
                     last_error = e;
                 }
-                json!({ "cpu": null, "gpu": null, "ok": false })
             }
-        };
-        publish(&app, "temps", value);
+            None => {}
+        }
+        // Windows' own readings for what LibreHardwareMonitor didn't give.
+        perf.fill(&mut out, opts.get("top_apps").and_then(|v| v.as_bool()) != Some(false));
+        out.insert("ok".into(), json!(true));
+        publish(&app, "temps", Value::Object(out));
         std::thread::sleep(Duration::from_millis(interval as u64));
     }
 }

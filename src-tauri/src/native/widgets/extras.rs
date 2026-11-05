@@ -143,15 +143,26 @@ impl Widget for Netspeed {
 /// Microphone / camera / location in use: a warning-coloured icon each, only while some app uses it.
 pub const DEVICES: [(&str, &str, &str); 3] = [("mic", "\u{E720}", "Microphone"), ("camera", "\u{E714}", "Camera"), ("location", "\u{E81D}", "Location")];
 
+/// The Security widget: the microphone, camera or location while an app uses them (in
+/// the warning colour), the microphone crossed out in red while muted; with `switches`
+/// a shield at rest, and switches for all three in its panel.
 pub struct Privacy {
     opts: Opts,
     on: [bool; 3],
+    /// Switched off: the microphones muted, the camera, location denied.
+    blocked: [bool; 3],
 }
 
 impl Privacy {
     pub fn new(opts: Opts) -> Privacy {
-        Privacy { opts, on: [false; 3] }
+        Privacy { opts, on: [false; 3], blocked: [false; 3] }
     }
+}
+
+/// Whether one of the three is switched off in the data ("blocked").
+pub fn blocked(v: &Value) -> [bool; 3] {
+    let b = |k: &str| v.get("blocked").and_then(|b| b.get(k)).and_then(|x| x.as_bool()).unwrap_or(false);
+    [b("mic"), b("camera"), b("location")]
 }
 
 impl Widget for Privacy {
@@ -160,15 +171,22 @@ impl Widget for Privacy {
     }
     fn tooltip(&self) -> Option<String> {
         let used: Vec<&str> = DEVICES.iter().enumerate().filter(|(i, _)| self.on[*i]).map(|(_, d)| d.2).collect();
-        Some(if used.is_empty() { "Nothing is using the microphone, camera or location".into() } else { format!("In use: {}", used.join(", ")) })
+        let off: Vec<&str> = DEVICES.iter().enumerate().filter(|(i, _)| self.blocked[*i]).map(|(_, d)| d.2).collect();
+        let mut t = if used.is_empty() { "Nothing is using the microphone, camera or location".to_string() } else { format!("In use: {}", used.join(", ")) };
+        if !off.is_empty() {
+            t += &format!("\nOff: {}", off.join(", "));
+        }
+        Some(t)
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let mut on = [false; 3];
         for (i, (key, _, _)) in DEVICES.iter().enumerate() {
             on[i] = self.opts.flag(key) != Some(false) && v.get(*key).and_then(|a| a.as_array()).is_some_and(|a| !a.is_empty());
         }
-        let changed = on != self.on;
+        let blocked = blocked(v);
+        let changed = on != self.on || blocked != self.blocked;
         self.on = on;
+        self.blocked = blocked;
         changed
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
@@ -188,6 +206,17 @@ impl Privacy {
                 out.push(Piece::Gap(6.0));
             }
             out.push(Piece::glyph(*glyph, 14.0, cx.look.warn));
+        }
+        // Muted: the microphone crossed out, in red.
+        if self.blocked[0] && !self.on[0] {
+            if !out.is_empty() {
+                out.push(Piece::Gap(6.0));
+            }
+            out.push(Piece::glyph("\u{EC54}", 14.0, rgba(1.0, 90.0 / 255.0, 90.0 / 255.0, 1.0)));
+        }
+        // With the switches: a shield while nothing else shows (somewhere to click).
+        if out.is_empty() && self.opts.flag("switches") == Some(true) {
+            out.push(Piece::glyph("\u{EA18}", 14.0, cx.look.fg));
         }
         out
     }

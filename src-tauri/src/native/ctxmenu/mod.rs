@@ -1262,7 +1262,7 @@ pub fn bar_menu(app: tauri::AppHandle, widget: Option<String>) {
 fn widget_label(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "clock" => "Clock",
-        "temps" => "PC temps",
+        "temps" => "Performance",
         "weather" => "Weather",
         "media" => "Media",
         "tray" => "Tray",
@@ -1275,7 +1275,7 @@ fn widget_label(kind: &str) -> Option<&'static str> {
         "focus" => "Focused app",
         "netspeed" => "Network speed",
         "disk" => "Disk usage",
-        "privacy" => "Privacy",
+        "privacy" => "Security",
         "claude" => "Claude Code",
         "clipboard" => "Clipboard",
         "notifications" => "Notifications",

@@ -505,6 +505,9 @@ pub struct Theme {
     /// line, sliders, bars, the weather panel's temperature... (each widget can
     /// differ: `[widgets.<w>] accent_details`).
     pub accent_details: bool,
+    /// The bars' skin: "" (attached to the edge), "floating" (held off the edge and the
+    /// sides, rounded all round) or "islands" (each group of widgets its own pill).
+    pub skin: String,
     pub font_size: f64,
     /// Opacity of the bars, notches and panels (percent); text stays solid.
     pub opacity: f64,
@@ -527,6 +530,7 @@ impl Default for Theme {
             font_secondary: String::new(),
             warn: "#ff9f43".into(),
             accent_details: false,
+            skin: String::new(),
             font_size: 13.0,
             opacity: 100.0,
             backdrop: "solid".into(),
@@ -600,6 +604,8 @@ pub struct Osd {
     pub caps_lock: bool,
     /// Explorer's file copies and moves: their progress as a level pop-up (osd/fileops.rs).
     pub file_progress: bool,
+    /// A pop-up when a download finishes (a new file in Downloads, providers/files.rs).
+    pub downloads: bool,
     /// A scroll bar at the right edge of the screen while a window under the cursor
     /// scrolls (osd/scroll.rs): native windows only, not browsers.
     pub scroll: bool,
@@ -652,6 +658,7 @@ impl Default for Osd {
             keyboard_width: 120.0,
             caps_lock: false,
             file_progress: false,
+            downloads: false,
             scroll: false,
             scroll_length: 800.0,
             scroll_width: 10.0,

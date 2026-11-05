@@ -964,22 +964,36 @@ pub fn toggle_desktop() {
 
 /// Puts text on the clipboard.
 pub fn set_clipboard_text(text: &str) {
+    const CF_UNICODETEXT: u32 = 13;
+    let bytes: Vec<u8> = text.encode_utf16().chain(std::iter::once(0)).flat_map(|c| c.to_le_bytes()).collect();
+    set_clipboard_bytes(CF_UNICODETEXT, &bytes);
+}
+
+/// Puts `bytes` on the clipboard in one format (CF_UNICODETEXT, CF_DIB...), replacing what's there.
+pub fn set_clipboard_bytes(format: u32, bytes: &[u8]) {
     use windows::Win32::Foundation::{GlobalFree, HANDLE};
     use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-    const CF_UNICODETEXT: u32 = 13;
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        if OpenClipboard(None).is_err() {
+        // Another app may hold it for a moment.
+        let mut opened = false;
+        for _ in 0..10 {
+            if OpenClipboard(None).is_ok() {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if !opened {
             return;
         }
         let _ = EmptyClipboard();
-        if let Ok(g) = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) {
-            let p = GlobalLock(g) as *mut u16;
+        if let Ok(g) = GlobalAlloc(GMEM_MOVEABLE, bytes.len()) {
+            let p = GlobalLock(g) as *mut u8;
             if !p.is_null() {
-                std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
                 let _ = GlobalUnlock(g);
-                if SetClipboardData(CF_UNICODETEXT, Some(HANDLE(g.0))).is_err() {
+                if SetClipboardData(format, Some(HANDLE(g.0))).is_err() {
                     let _ = GlobalFree(Some(g));
                 }
             }

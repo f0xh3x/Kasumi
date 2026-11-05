@@ -44,7 +44,7 @@ const sw = (on: boolean, onChange: (on: boolean) => void) => toggleSwitch(on, on
 
 export const WIDGETS: { id: string; label: string; icon: number }[] = [
   { id: "clock", label: "Clock", icon: 0xe823 },
-  { id: "temps", label: "PC temps", icon: 0xe9ca },
+  { id: "temps", label: "Performance", icon: 0xe9ca },
   { id: "weather", label: "Weather", icon: 0xe706 },
   { id: "media", label: "Media", icon: 0xe8d6 },
   { id: "tray", label: "Tray", icon: 0xe70d },
@@ -299,7 +299,7 @@ export const isPlaced = (cfg: Cfg, type: string): boolean => placements(cfg, typ
 const NEEDS: Record<string, { app: string; note: string; url: string }> = {
   temps: {
     app: "LibreHardwareMonitor",
-    note: "Windows doesn't share temperatures with apps, so this reads them from LibreHardwareMonitor (free). Install it, run it, and turn on Options > Remote Web Server; leave it running (it can start with Windows and stay in the tray).",
+    note: "Load and memory come from Windows itself. Temperatures, power and clocks don't: they're read from LibreHardwareMonitor (free). Install it, run it, and turn on Options > Remote Web Server; leave it running (it can start with Windows and stay in the tray). Or turn off \"Temperatures from LibreHardwareMonitor\" below.",
     url: "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases",
   },
   workspaces: {
@@ -314,9 +314,13 @@ const NEEDS: Record<string, { app: string; note: string; url: string }> = {
   },
 };
 
+/** What a widget needs from another app with these settings (Performance needs
+ *  LibreHardwareMonitor only for temperatures). */
+const needsOf = (type: string, cfg: any) => (type === "temps" && cfg?.widgets?.temps?.lhm === false ? undefined : NEEDS[type]);
+
 /** The mark of a widget that needs another app. */
-const needsTag = (type: string): HTMLElement | null => {
-  const n = NEEDS[type];
+const needsTag = (type: string, cfg: any): HTMLElement | null => {
+  const n = needsOf(type, cfg);
   if (!n) return null;
   const tag = $("span", "row-tag needs-tag", glyph(0xe71b), `Needs ${n.app}`);
   tag.title = `Needs ${n.app}, a separate app`;
@@ -332,7 +336,7 @@ const widgetHeader: Editor = (ctx) => {
   const toLayout = $("button", "button", "Edit the layout");
   toLayout.addEventListener("click", () => ctx.goto("layout", ""));
   // Needs another app: what for, and where to get it, above the rest.
-  const needs = NEEDS[type];
+  const needs = needsOf(type, ctx.cfg);
   const top = needs ? $("div", "widget-top") : head;
   if (needs) {
     const get = $("button", "button", `Get ${needs.app}`);
@@ -406,7 +410,7 @@ const widgetCards: Editor = (ctx) => {
   const cards = WIDGETS.map((w) => ({ ...w, where: placements(ctx.cfg, w.id) }));
   cards.sort((a, b) => Number(!a.where.length) - Number(!b.where.length));
   for (const w of cards) {
-    const tag = needsTag(w.id);
+    const tag = needsTag(w.id, ctx.cfg);
     const card = $("button", `widget-card${w.where.length ? "" : " off"}`, glyph(w.icon), $("span", "widget-card-text", $("b", "", w.label), $("small", "", w.where[0] ?? "Not on a bar"), ...(tag ? [tag] : [])));
     card.addEventListener("click", () => ctx.goto(`w-${w.id}`, ""));
     grid.append(card);
@@ -719,7 +723,7 @@ const placement: Editor = (ctx) => {
   const chip = (id: string, s: string | null) => {
     const w = cat.find((x) => x.id === id)!;
     const el = $("div", "chip", glyph(w.icon), $("span", "chip-name", w.label));
-    const needs = NEEDS[typeOf(id)];
+    const needs = needsOf(typeOf(id), ctx.cfg);
     if (needs) el.append($("span", "chip-needs", glyph(0xe71b)));
     const buttons = s ? chipButtons(id, s) : null;
     if (buttons) el.append(buttons);
@@ -1055,7 +1059,7 @@ const weatherLocation: Editor = (ctx) => {
   return box;
 };
 
-// --- PC temps sensor pickers -------------------------------------------------------
+// --- Performance (LibreHardwareMonitor) sensor pickers -------------------------------------------------------
 
 const SENSOR_KEYS: [string, string, string[]][] = [
   ["cpu_sensor", "CPU temperature", ["Temperature"]],
@@ -1072,6 +1076,7 @@ const SENSOR_KEYS: [string, string, string[]][] = [
 ];
 
 const tempsSensors: Editor = (ctx) => {
+  if (ctx.cfg.widgets?.temps?.lhm === false) return $("div");
   const box = $("div", "stack-tight", $("div", "row-help", "Loading sensors from LibreHardwareMonitor…"));
   const t = ctx.cfg.widgets?.temps ?? {};
   const url: string = t.url ?? "http://localhost:8085/data.json";
@@ -1393,6 +1398,49 @@ const batteryPicks: Editor = (ctx) => {
       );
     })
     .catch((e) => box.replaceChildren($("p", "card-help", `Couldn't list the batteries: ${e}`)));
+  return box;
+};
+
+/** Other places' times under the calendar ([widgets.clock] world_clocks: `[{ name,
+ *  zone }]`, zone a Windows time zone): a name and a zone each, added and removed here. */
+const worldClocks: Editor = (ctx) => {
+  const list: { name: string; zone: string }[] = [...((ctx.cfg as any).widgets?.clock?.world_clocks ?? [])];
+  const box = $("div", "stack-tight");
+  const save = () => ctx.save(["widgets", "clock", "world_clocks"], list.map((c) => ({ ...c })));
+  const render = (zones: { id: string; name: string }[]) => {
+    const rows = list.map((c, i) => {
+      const name = input(c.name, "City");
+      name.setAttribute("aria-label", "Name");
+      name.addEventListener("change", () => {
+        c.name = name.value.trim() || c.name;
+        save();
+      });
+      const zone = select(zones.map((z) => [z.id, z.name] as [string, string]), c.zone);
+      zone.setAttribute("aria-label", `Time zone for ${c.name}`);
+      zone.addEventListener("change", () => {
+        c.zone = zone.value;
+        save();
+      });
+      const remove = iconButton(0xe74d, `Remove ${c.name}`, () => {
+        list.splice(i, 1);
+        save();
+        render(zones);
+      });
+      return $("div", "row world-clock", name, zone, remove);
+    });
+    const add = $("button", "button", "Add a place");
+    add.addEventListener("click", () => {
+      const here = Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replace(/_/g, " ") ?? "City";
+      list.push({ name: list.length ? "City" : here, zone: zones[0]?.id ?? "UTC" });
+      save();
+      render(zones);
+    });
+    box.replaceChildren(row("World clocks", "Other places' times under the calendar, with how far ahead or behind they are.", add), ...rows);
+  };
+  box.append($("p", "card-help", "Loading time zones…"));
+  invoke<{ id: string; name: string }[]>("time_zones")
+    .then(render)
+    .catch((e) => box.replaceChildren($("p", "card-help", `Couldn't list the time zones: ${e}`)));
   return box;
 };
 
@@ -2166,6 +2214,7 @@ export const editors: Record<string, Editor> = {
   launcherButtons,
   batteryPicks,
   batteryNames,
+  worldClocks,
   explorerOptions,
   explorerParts,
 };

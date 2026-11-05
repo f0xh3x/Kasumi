@@ -78,7 +78,8 @@ impl Temps {
     }
     fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
         let body = cx.body();
-        if self.load_shown() {
+        // Load: chosen, or no temperatures to show (LibreHardwareMonitor off or not running).
+        if self.load_shown() || (self.temp.0.is_none() && self.temp.1.is_none()) {
             let small = cx.secondary(cx.look.font_size - 2.0);
             let mut out = Vec::new();
             for (i, (name, l)) in [("CPU", self.load.0), ("GPU", self.load.1)].into_iter().enumerate() {
@@ -116,7 +117,9 @@ impl Widget for Temps {
     fn tooltip(&self) -> Option<String> {
         let pct = |l: Option<f64>| l.map_or("–".into(), |l| format!("{}%", l.round()));
         Some(if !self.ok {
-            "Temperatures (LibreHardwareMonitor not reachable)".into()
+            "Performance (waiting for readings)".into()
+        } else if self.temp.0.is_none() && self.temp.1.is_none() {
+            format!("CPU {}  ·  GPU {}", pct(self.load.0), pct(self.load.1))
         } else if self.load_shown() {
             format!("CPU {} ({})  ·  GPU {} ({})", pct(self.load.0), self.cpu.text, pct(self.load.1), self.gpu.text)
         } else {

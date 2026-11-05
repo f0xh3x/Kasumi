@@ -5,11 +5,15 @@
 pub mod audio;
 pub mod batteries;
 pub mod claude;
+pub mod clockextras;
 pub mod clipboard;
 pub mod extras;
+pub mod files;
 pub mod komorebi;
 pub mod media;
 pub mod notifications;
+pub mod perf;
+pub mod security;
 pub mod switches;
 pub mod systray;
 pub mod system;
@@ -134,6 +138,8 @@ pub fn start(app: &AppHandle, cfg: SharedConfig) {
     };
     spawn("temps", temps::run);
     spawn("weather", weather::run);
+    spawn("files", files::run);
+    spawn("clock", clockextras::run);
     media::start(app);
     systray::start(app);
     tasks::start(app);

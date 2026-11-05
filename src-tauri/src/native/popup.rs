@@ -83,6 +83,7 @@ impl Popups {
             // Batteries: one getting low, the laptop charged.
             "battery" => "\u{E851}",
             "charged" => "\u{E83E}",
+            "download" => "\u{E896}",
             "volume" => volume_glyph(pct, muted),
             _ => "\u{E706}",
         };

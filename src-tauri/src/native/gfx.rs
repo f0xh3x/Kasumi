@@ -680,6 +680,18 @@ impl Gfx {
     /// Fills two shapes as one (their union): where they meet, no seam of two
     /// anti-aliased edges, and no doubled alpha where they overlap.
     /// Two shapes as one.
+    /// Where two shapes overlap (a shape cut to a mask).
+    pub fn intersect(&self, a: &ID2D1PathGeometry, b: &ID2D1PathGeometry) -> Result<ID2D1PathGeometry> {
+        use windows::Win32::Graphics::Direct2D::*;
+        unsafe {
+            let path = self.d2d.CreatePathGeometry()?;
+            let sink = path.Open()?;
+            a.CombineWithGeometry(b, D2D1_COMBINE_MODE_INTERSECT, None, 0.25, &sink)?;
+            sink.Close()?;
+            Ok(path)
+        }
+    }
+
     pub fn union(&self, a: &ID2D1PathGeometry, b: &ID2D1PathGeometry) -> Result<ID2D1PathGeometry> {
         use windows::Win32::Graphics::Direct2D::*;
         unsafe {
@@ -692,6 +704,12 @@ impl Gfx {
     }
 
     /// A shape in logical px, in physical ones.
+    /// A geometry moved down `dy` (logical px), then scaled to device px.
+    pub fn moved_scaled(&self, g: &windows::Win32::Graphics::Direct2D::ID2D1Geometry, dy: f32, scale: f32) -> Result<windows::Win32::Graphics::Direct2D::ID2D1Geometry> {
+        let m = Matrix3x2 { M11: scale, M12: 0.0, M21: 0.0, M22: scale, M31: 0.0, M32: dy * scale };
+        unsafe { Ok(self.d2d.CreateTransformedGeometry(g, &m)?.into()) }
+    }
+
     pub fn scaled(&self, g: &windows::Win32::Graphics::Direct2D::ID2D1Geometry, scale: f32) -> Result<windows::Win32::Graphics::Direct2D::ID2D1Geometry> {
         let m = Matrix3x2 { M11: scale, M12: 0.0, M21: 0.0, M22: scale, M31: 0.0, M32: 0.0 };
         unsafe { Ok(self.d2d.CreateTransformedGeometry(g, &m)?.into()) }
