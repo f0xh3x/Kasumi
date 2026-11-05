@@ -447,6 +447,7 @@ impl Surface {
             cascade: anim("cascade", a.cascade),
             nudge: anim("nudge", a.notification_nudge),
             accent: own.and_then(|t| t.get("accent_details")).and_then(|v| v.as_bool()).unwrap_or(l.theme.accent_details),
+            hover: own.and_then(|t| t.get("hover_highlight")).and_then(|v| v.as_bool()).unwrap_or(l.theme.hover_highlights),
             font: own.and_then(|t| t.get("font")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
             font2: own.and_then(|t| t.get("font_secondary")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
             device: l.device.clone(),

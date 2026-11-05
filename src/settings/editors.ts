@@ -1907,6 +1907,24 @@ const accentWidget: Editor = (ctx) => {
   return row("Accent on details", undefined, seg);
 };
 
+/** One widget's hover highlights ("hoverWidget:tray"): like the global setting, or on / off. */
+const hoverWidget: Editor = (ctx) => {
+  const w = ctx.arg ?? "";
+  const v = ctx.cfg.widgets?.[w]?.hover_highlight;
+  const on = ctx.cfg.theme?.hover_highlights === true;
+  const seg = segmented(
+    [
+      ["", "Like global", `The global setting: ${on ? "on" : "off"}`],
+      ["on", "On"],
+      ["off", "Off"],
+    ],
+    v === true ? "on" : v === false ? "off" : "",
+    "Hover highlights",
+    (x) => ctx.save(["widgets", w, "hover_highlight"], x === "" ? null : x === "on"),
+  );
+  return row("Hover highlights", "A soft box behind what's under the cursor in the bar.", seg);
+};
+
 // --- Windows setup for notifications --------------------------------------------------
 
 /**
@@ -2217,6 +2235,7 @@ export const editors: Record<string, Editor> = {
   contextMenuEditor,
   animWidget,
   accentWidget,
+  hoverWidget,
   fontPicker,
   updates,
   presets,

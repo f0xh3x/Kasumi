@@ -65,8 +65,9 @@ pub struct Media {
     due: std::cell::Cell<Option<Instant>>,
 }
 
-// .media-btn: 24 wide, 2 px apart, 12 px icons; the title 2 px from the keys, 6 px gap.
+// .media-btn: 24 × 22, 2 px apart, 12 px icons; the title 2 px from the keys, 6 px gap.
 const KEY_W: f32 = 24.0;
+const KEY_H: f32 = 22.0;
 const KEYS_W: f32 = 3.0 * KEY_W + 2.0 * 2.0;
 /// The look's mark before the title, and the gap after it.
 const MARK_W: f32 = 16.0;
@@ -262,8 +263,10 @@ impl Widget for Media {
             let glyphs = [PREV, if self.playing { PAUSE } else { PLAY }, NEXT];
             for (i, glyph) in glyphs.iter().enumerate() {
                 let bx = kx + i as f32 * (KEY_W + 2.0);
-                // No hover box (nothing in the bar highlights on hover).
                 let on = if self.can[i] { 1.0 } else { 0.35 };
+                if cx.opts.hover && self.hovered == Some(i) && self.can[i] {
+                    g.fill_round(rect(bx, cy - KEY_H / 2.0, KEY_W, KEY_H), 6.0, with_alpha(cx.hover_bg(0.12), alpha * shown));
+                }
                 let f = crate::native::gfx::Font::icons(12.0);
                 let w = g.measure(glyph, &f);
                 g.text_at(glyph, &f, bx + (KEY_W - w) / 2.0, cy, with_alpha(cx.look.fg, alpha * shown * on));
@@ -720,9 +723,13 @@ impl Widget for Tray {
         let (side, _) = self.cell();
         let img = self.h * 0.55;
         let (cells, _) = self.cells(Instant::now());
-        // No hover highlight in the bar (as every other widget there): the hint says what's under the cursor.
         for c in &cells {
             let a = alpha * c.alpha;
+            // With hover highlights on: a box behind the icon (or the arrow's button) under the cursor.
+            let boxed = matches!(c.hit, TrayHit::Icon(_)) || self.counted() || self.slides();
+            if cx.opts.hover && boxed && self.hovered == Some(c.hit) {
+                g.fill_round(rect(x + c.x, cy - side / 2.0, c.w, side), 8.0, with_alpha(cx.hover_bg(0.12), a));
+            }
             match c.hit {
                 TrayHit::Icon(i) => {
                     if let Some((_, b)) = self.icons.get(i).and_then(|icon| self.bitmaps.get(&icon.id)) {

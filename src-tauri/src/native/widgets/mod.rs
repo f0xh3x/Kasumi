@@ -90,6 +90,8 @@ pub struct Opts {
     pub nudge: bool,
     /// Details in the accent colour.
     pub accent: bool,
+    /// Hover highlights in the bar ([theme] hover_highlights, or the widget's own).
+    pub hover: bool,
     /// Its own fonts ("" = the theme's).
     pub font: String,
     pub font2: String,

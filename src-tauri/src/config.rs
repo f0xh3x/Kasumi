@@ -505,6 +505,10 @@ pub struct Theme {
     /// line, sliders, bars, the weather panel's temperature... (each widget can
     /// differ: `[widgets.<w>] accent_details`).
     pub accent_details: bool,
+    /// A soft box behind what's under the cursor in the bars (tray icons, buttons, media
+    /// keys, the dock's apps); off by default (each widget can differ:
+    /// `[widgets.<w>] hover_highlight`).
+    pub hover_highlights: bool,
     /// The bar's skin, filled in from its own `[surfaces.<id>] skin` (layout_for). Kept in
     /// the layout's JSON: the engine sends a layout again only when that changes.
     pub skin: String,
@@ -530,6 +534,7 @@ impl Default for Theme {
             font_secondary: String::new(),
             warn: "#ff9f43".into(),
             accent_details: false,
+            hover_highlights: false,
             skin: String::new(),
             font_size: 13.0,
             opacity: 100.0,

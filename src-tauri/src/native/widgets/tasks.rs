@@ -737,9 +737,11 @@ impl Tasks {
             let a_alpha = alpha * grow;
             bx = g.snap(bx);
             let front = a.wins.iter().any(|w| w.active);
-            // No hover box (nothing in the bars highlights on hover); the Labels look's pill
-            // marks the app in front.
-            if self.pills() && front {
+            // With hover highlights: a box behind the app under the cursor; the Labels look's
+            // pill marks the app in front.
+            if cx.opts.hover && self.hovered == Some(i) {
+                g.fill_round(rect(bx, top, bw, box_h), h * 0.2, with_alpha(cx.hover_bg(0.1), a_alpha));
+            } else if self.pills() && front {
                 g.fill_round(rect(bx, top, bw, box_h), h * 0.2, white(0.12 * a_alpha));
             }
             let size = h * 0.6;

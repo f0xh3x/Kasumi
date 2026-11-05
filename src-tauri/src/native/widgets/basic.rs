@@ -452,9 +452,15 @@ impl Widget for Buttons {
         let (slots, _) = self.slots(h, Instant::now());
         for s in &slots {
             let Some(it) = self.item(s.at) else { continue };
-            // Only an armed button (a second click confirms) has a box: nothing in the bar
-            // highlights on hover.
-            let bg = self.armed.is_some_and(|(a, _)| a == s.at).then(|| rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.35));
+            // An armed button (a second click confirms) in red; with hover highlights, the
+            // one under the cursor and a group that's out.
+            let bg = if self.armed.is_some_and(|(a, _)| a == s.at) {
+                Some(rgba(1.0, 80.0 / 255.0, 80.0 / 255.0, 0.35))
+            } else if cx.opts.hover && (self.hovered == Some(s.at) || (s.at.1.is_none() && self.open() == Some(s.at.0))) {
+                Some(cx.hover_bg(0.12))
+            } else {
+                None
+            };
             let piece = Piece::Button { side: h * 0.8, glyph: it.icon.clone(), size: h * 0.45, color: cx.look.fg, bg };
             row_draw(cx.gfx, &[piece], x + s.x, cy, alpha * s.alpha);
         }

@@ -46,6 +46,9 @@ const ANIM_WIDGETS: [string, string, number, string][] = [
  * Settings > Appearance > Per widget: each widget's font, and its accent on
  * details where it has some (the last column).
  */
+/** Widgets that can highlight what's under the cursor in the bar ([widgets.<w>] hover_highlight). */
+const HOVER_WIDGETS = ["tray", "buttons", "media", "tasks"];
+
 const APPEARANCE_WIDGETS: [string, string, number, boolean][] = [
   ["clock", "Clock and calendar", 0xe823, true],
   ["tasks", "Tasks", 0xe737, true],
@@ -1502,6 +1505,13 @@ const sources: Page[] = [
             path: ["theme", "accent_details"],
             default: false,
           },
+          {
+            kind: "toggle",
+            label: "Hover highlights",
+            help: "A soft box behind what's under the cursor in the bars: tray icons, buttons, media keys, the dock's apps. Each widget can differ on its own page (Widgets › its Look tab).",
+            path: ["theme", "hover_highlights"],
+            default: false,
+          },
           { kind: "color", label: "Warning", help: "Hot temperatures.", path: ["theme", "warn"], default: "#ff9f43" },
           { kind: "custom", editor: "fontPicker" },
           { kind: "custom", editor: "fontPicker::secondary" },
@@ -1545,6 +1555,7 @@ const sources: Page[] = [
           { kind: "custom" as const, editor: `fontPicker:${w}` },
           { kind: "custom" as const, editor: `fontPicker:${w}:secondary` },
           ...(accent ? [{ kind: "custom" as const, editor: `accentWidget:${w}` }] : []),
+          ...(HOVER_WIDGETS.includes(w) ? [{ kind: "custom" as const, editor: `hoverWidget:${w}` }] : []),
         ],
       })),
     ],
