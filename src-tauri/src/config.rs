@@ -505,8 +505,8 @@ pub struct Theme {
     /// line, sliders, bars, the weather panel's temperature... (each widget can
     /// differ: `[widgets.<w>] accent_details`).
     pub accent_details: bool,
-    /// The bar's skin, filled in from its own `[surfaces.<id>] skin` (layout_for).
-    #[serde(skip)]
+    /// The bar's skin, filled in from its own `[surfaces.<id>] skin` (layout_for). Kept in
+    /// the layout's JSON: the engine sends a layout again only when that changes.
     pub skin: String,
     pub font_size: f64,
     /// Opacity of the bars, notches and panels (percent); text stays solid.

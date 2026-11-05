@@ -502,24 +502,28 @@ const surfaceStyle: Editor = (ctx) => {
       ctx.saveMany(ops);
     },
   );
-  // Its shape on the screen: attached to the edge, floating, or (status bars) islands.
-  const mode = s.mode ?? "bar";
-  const shapes: [string, string, string][] = [
-    ["", "Attached", "Grows out of the screen's edge"],
-    ["floating", "Floating", "Held off the edge and the sides, rounded all round"],
-  ];
-  if (mode === "bar") shapes.push(["islands", "Islands", "Each group of widgets its own pill"]);
-  const skin = mode !== "bar" && s.skin === "islands" ? "floating" : (s.skin ?? "");
-  const shape = segmented(shapes, skin, "Shape", (v) => ctx.save(["surfaces", cur, "skin"], v));
+  const style = row(
+    "Style",
+    "Status bar: notches that open into a full-width bar. Dock: notches that grow in place. Always on: the full bar, always shown (reserves its space).",
+    sel,
+  );
+  // A status bar's shape on the screen (docks keep their own).
+  if ((s.mode ?? "bar") !== "bar") return style;
+  const shape = segmented(
+    [
+      ["", "Attached", "Grows out of the screen's edge"],
+      ["floating", "Floating", "Held off the edge and the sides, rounded all round"],
+      ["islands", "Islands", "Each group of widgets its own pill"],
+    ],
+    s.skin ?? "",
+    "Shape",
+    (v) => ctx.save(["surfaces", cur, "skin"], v),
+  );
   return $(
     "div",
     "stack-tight",
-    row(
-      "Style",
-      "Status bar: notches that open into a full-width bar. Dock: notches that grow in place. Always on: the full bar, always shown (reserves its space).",
-      sel,
-    ),
-    row("Shape", "Attached: grows out of the screen's edge. Floating: held a little off it, rounded all round. Islands (status bars): each group of widgets its own pill. Rounded screen corners show with Attached only.", shape),
+    style,
+    row("Shape", "Attached: grows out of the screen's edge. Floating: held a little off it, rounded all round. Islands: each group of widgets its own pill. Rounded screen corners show with Attached only.", shape),
   );
 };
 
