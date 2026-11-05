@@ -1498,7 +1498,7 @@ const sources: Page[] = [
           {
             kind: "toggle",
             label: "Accent on widget details",
-            help: "Hover highlights, the line under the app in front, sliders, bars and key readings in the accent colour. Each widget can differ on its own page (Widgets › its Look tab).",
+            help: "Highlights in panels (the row under the cursor), the line under the app in front, sliders, bars and key readings in the accent colour. Each widget can differ on its own page (Widgets › its Look tab).",
             path: ["theme", "accent_details"],
             default: false,
           },
