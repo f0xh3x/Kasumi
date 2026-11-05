@@ -894,6 +894,35 @@ pub fn process_path(pid: u32) -> Option<String> {
     }
 }
 
+/// A program file's own name for itself (its version info's FileDescription:
+/// "Steam", "NVIDIA app"); None when it has none.
+pub fn file_description(path: &str) -> Option<String> {
+    use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+    let file = wide(path);
+    unsafe {
+        let size = GetFileVersionInfoSizeW(PCWSTR(file.as_ptr()), None);
+        if size == 0 {
+            return None;
+        }
+        let mut data = vec![0u8; size as usize];
+        GetFileVersionInfoW(PCWSTR(file.as_ptr()), None, size, data.as_mut_ptr() as *mut _).ok()?;
+        // The first language and code page it lists.
+        let (mut ptr, mut len) = (std::ptr::null_mut(), 0u32);
+        let langs = wide("\\VarFileInfo\\Translation");
+        if !VerQueryValueW(data.as_ptr() as *const _, PCWSTR(langs.as_ptr()), &mut ptr, &mut len).as_bool() || len < 4 {
+            return None;
+        }
+        let pair = *(ptr as *const [u16; 2]);
+        let key = wide(&format!("\\StringFileInfo\\{:04x}{:04x}\\FileDescription", pair[0], pair[1]));
+        if !VerQueryValueW(data.as_ptr() as *const _, PCWSTR(key.as_ptr()), &mut ptr, &mut len).as_bool() || len == 0 {
+            return None;
+        }
+        let text = std::slice::from_raw_parts(ptr as *const u16, len as usize);
+        let s = String::from_utf16_lossy(text).trim_end_matches('\0').trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+}
+
 /// A bitmap's pixels as 32-bit BGRA rows, top-down (as GetDIBits gives them);
 /// None for empty or implausibly large ones. Callers fix up alpha their own way
 /// (shell images are premultiplied, old icons have a separate mask).

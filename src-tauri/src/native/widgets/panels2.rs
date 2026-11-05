@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::extras::{day_start, duration, limits, now_secs, tokens, total_tokens};
+use super::extras::{day_start, duration, elapsed, limits, now_secs, span, tokens, total_tokens, used};
 use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply};
 use crate::native::gfx::{rect, rgba, white, with_alpha, Color, Font, Gfx};
 
@@ -28,11 +28,42 @@ fn local_parts(unix: f64) -> (i64, u32, u32) {
 
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-/// The 5-hour window, today (per model) and the last 7 days, plus the plan's limits.
+/// The Claude panel's look ([widgets.claude] style).
+#[derive(Clone, Copy, PartialEq)]
+enum ClaudeStyle {
+    /// Labelled lines: the plan's limits, the window, today, the last 7 days.
+    Report,
+    /// The two limits as rings, when each resets, today's totals.
+    Rings,
+    /// Each limit as a timeline with a mark for now, and when you'd run out.
+    Pace,
+    /// The sessions of the last hour: working, waiting on you, done or idle.
+    Sessions,
+}
+
+/// The 5-hour window, today (per model) and the last 7 days, plus the plan's limits;
+/// or one of its looks.
 pub struct ClaudePanel {
     opts: Opts,
+    style: ClaudeStyle,
     u: Value,
+    /// Sessions: the row under the cursor.
+    hovered: Option<usize>,
 }
+
+const RINGS_W: f32 = 340.0;
+const RING_BOX: f32 = 118.0;
+const PACE_W: f32 = 330.0;
+const SESS_W: f32 = 320.0;
+const SESS_ROW: f32 = 34.0;
+
+/// "14:02" for a unix time.
+fn hm(t: f64) -> String {
+    let (_, h, m) = local_parts(t);
+    format!("{h:02}:{m:02}")
+}
+
+const DAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 enum Line {
     Head(String),
@@ -42,7 +73,176 @@ enum Line {
 
 impl ClaudePanel {
     pub fn new(opts: &Opts) -> ClaudePanel {
-        ClaudePanel { opts: opts.clone(), u: Value::Null }
+        let style = match opts.str("style") {
+            Some("rings") => ClaudeStyle::Rings,
+            Some("pace") => ClaudeStyle::Pace,
+            Some("sessions") => ClaudeStyle::Sessions,
+            _ => ClaudeStyle::Report,
+        };
+        ClaudePanel { opts: opts.clone(), style, u: Value::Null, hovered: None }
+    }
+
+    /// Today: tokens and messages.
+    fn today(&self) -> (f64, f64) {
+        let from = day_start(0);
+        let sum = |k: &str| {
+            self.u.get("buckets").and_then(|b| b.as_array()).into_iter().flatten().filter(|b| b.get("h").and_then(|h| h.as_f64()).is_some_and(|h| h >= from)).filter_map(|b| b.get(k).and_then(|v| v.as_f64())).sum::<f64>()
+        };
+        (sum("tokens"), sum("messages"))
+    }
+    /// The sessions the provider lists.
+    fn sessions(&self) -> Vec<&Value> {
+        self.u.get("sessions").and_then(|s| s.as_array()).map(|a| a.iter().collect()).unwrap_or_default()
+    }
+    /// When a limit resets, in words: "resets 14:02, in 3 h 10 min" / "resets Saturday 22:52".
+    fn resets(&self, week: bool) -> Option<String> {
+        let (_, end) = span(&self.u, &self.opts, week)?;
+        Some(if week { format!("resets {} {}", DAYS[local_parts(end).0 as usize], hm(end)) } else { format!("resets {}, in {}", hm(end), duration(end - now_secs())) })
+    }
+
+    fn draw_rings(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let accent = with_alpha(cx.look.accent, alpha);
+        let warn = with_alpha(cx.look.warn, alpha);
+        let (s5, sw) = (used(&self.u, &self.opts, false), used(&self.u, &self.opts, true));
+        let has_week = span(&self.u, &self.opts, true).is_some() || self.opts.num("weekly_limit").unwrap_or(0.0) > 0.0;
+        let (rcx, rcy) = (x + RING_BOX / 2.0, y + RING_BOX / 2.0);
+        if has_week {
+            g.ring(rcx, rcy, 52.0, 9.0, sw as f32, white(0.15 * alpha), if sw >= 0.9 { warn } else { fg });
+        }
+        g.ring(rcx, rcy, if has_week { 38.0 } else { 48.0 }, 9.0, s5 as f32, white(0.15 * alpha), if s5 >= 0.9 { warn } else { accent });
+        let pct = format!("{}%", (s5 * 100.0).round());
+        let big = cx.main(18.0);
+        g.text_at(&pct, &big, rcx - g.measure(&pct, &big) / 2.0, rcy, fg);
+        // Beside them: each limit, when it resets; today.
+        let f = cx.secondary(12.0);
+        let small = cx.secondary(11.0);
+        let lx = x + RING_BOX + 16.0;
+        let lw = RINGS_W - RING_BOX - 16.0;
+        let mut ly = y + (RING_BOX - self.legend_h(g, cx)) / 2.0;
+        let mut entry = |name: &str, share: f64, color: crate::native::gfx::Color, sub: Option<String>| {
+            let cy = ly + line(g, &f) / 2.0;
+            g.fill_round(rect(lx, cy - 3.0, 6.0, 6.0), 3.0, color);
+            g.text_at(name, &f, lx + 14.0, cy, fg);
+            let p = format!("{}%", (share * 100.0).round());
+            g.text_at(&p, &f, lx + lw - g.measure(&p, &f), cy, fg);
+            ly += line(g, &f) + 2.0;
+            if let Some(sub) = sub {
+                g.text_at(&fit_text(g, &sub, &small, lw - 14.0), &small, lx + 14.0, ly + line(g, &small) / 2.0, dim);
+                ly += line(g, &small);
+            }
+            ly += 9.0;
+        };
+        entry("5 hours", s5, accent, self.resets(false));
+        if has_week {
+            entry("Week", sw, fg, self.resets(true));
+        }
+        let (t, m) = self.today();
+        g.text_at(&fit_text(g, &format!("Today {} tokens · {} messages", tokens(t), m), &small, lw), &small, lx, ly + line(g, &small) / 2.0, dim);
+    }
+    fn legend_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
+        let (f, small) = (line(g, &cx.secondary(12.0)), line(g, &cx.secondary(11.0)));
+        let has_week = span(&self.u, &self.opts, true).is_some() || self.opts.num("weekly_limit").unwrap_or(0.0) > 0.0;
+        (if has_week { 2.0 } else { 1.0 }) * (f + 2.0 + small + 9.0) + small
+    }
+
+    /// Pace: a limit's rows (its height).
+    fn pace_rows(&self, week: bool) -> Option<(f64, f64, f64, f64)> {
+        let (a, b) = span(&self.u, &self.opts, week)?;
+        Some((a, b, used(&self.u, &self.opts, week), elapsed(&self.u, &self.opts, week)?))
+    }
+    fn pace_h(&self, g: &Gfx, cx: &Ctx) -> f32 {
+        let (small, f) = (line(g, &cx.secondary(11.0)), line(g, &cx.secondary(12.0)));
+        let block = small + 7.0 + 14.0 + 7.0 + f + 7.0 + small;
+        let n = [false, true].iter().filter(|w| self.pace_rows(**w).is_some()).count() as f32;
+        if n == 0.0 { f } else { n * block + (n - 1.0) * 14.0 }
+    }
+    fn draw_pace(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim, warn) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha), with_alpha(cx.look.warn, alpha));
+        let accent = with_alpha(cx.look.accent, alpha);
+        let (f, small) = (cx.secondary(12.0), cx.secondary(11.0));
+        let mut yy = y;
+        let mut any = false;
+        for week in [false, true] {
+            let Some((a, b, u, t)) = self.pace_rows(week) else { continue };
+            any = true;
+            let head = if week { "WEEK" } else { "5 HOURS" };
+            let mut hx = x;
+            for ch in head.chars() {
+                hx += g.text_at(&ch.to_string(), &small, hx, yy + line(g, &small) / 2.0, dim) + 0.5;
+            }
+            let when = if week { format!("until {} {}", DAYS[local_parts(b).0 as usize], hm(b)) } else { format!("{} – {}", hm(a), hm(b)) };
+            g.text_at(&when, &small, x + PACE_W - g.measure(&when, &small), yy + line(g, &small) / 2.0, dim);
+            yy += line(g, &small) + 7.0;
+            // The timeline: used so far, and a mark for now.
+            let cy = yy + 7.0;
+            g.fill_round(rect(x, cy - 3.0, PACE_W, 6.0), 3.0, white(0.15 * alpha));
+            let fill = if u >= 0.9 { warn } else if week { white(0.85 * alpha) } else { accent };
+            if u > 0.0 {
+                g.fill_round(rect(x, cy - 3.0, PACE_W * u.min(1.0) as f32, 6.0), 3.0, fill);
+            }
+            let mx = g.snap(x + PACE_W * t as f32 - 1.0);
+            g.fill_round(rect(mx, cy - 7.0, 2.0, 14.0), 1.0, if week { accent } else { fg });
+            yy += 14.0 + 7.0;
+            let used_w = g.text_at(&format!("{}% used", (u * 100.0).round()), &f, x, yy + line(g, &f) / 2.0, fg);
+            let gone = format!(" · {}% of the {} gone", (t * 100.0).round(), if week { "week" } else { "time" });
+            g.text_at(&gone, &f, x + used_w, yy + line(g, &f) / 2.0, dim);
+            yy += line(g, &f) + 7.0;
+            // Where this pace ends up: the limit reached before the reset, or how full by then.
+            let (text, color) = if t > 0.03 && u / t >= 1.0 && u < 1.0 {
+                let out = a + (now_secs() - a) / u;
+                let early = b - out;
+                let when = if week { format!("{} {}", DAYS[local_parts(out).0 as usize], hm(out)) } else { hm(out) };
+                (format!("At this pace you reach the limit around {when}, {} early", duration(early).replace('h', " h").replace('m', " min")), warn)
+            } else if u >= 1.0 {
+                ("Limit reached".to_string(), warn)
+            } else if t > 0.03 {
+                (format!("On pace for {}% by the reset", ((u / t) * 100.0).round().min(100.0)), dim)
+            } else {
+                ("Just started".to_string(), dim)
+            };
+            g.text_at(&fit_text(g, &text, &small, PACE_W), &small, x, yy + line(g, &small) / 2.0, color);
+            yy += line(g, &small) + 14.0;
+        }
+        if !any {
+            g.text_at("No limits to pace yet", &f, x, y + line(g, &f) / 2.0, dim);
+        }
+    }
+
+    fn draw_sessions(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let (f, small) = (cx.secondary(12.5), cx.secondary(11.5));
+        let list = self.sessions();
+        if list.is_empty() {
+            g.text_at("No Claude Code sessions in the last hour", &f, x, y + line(g, &f) / 2.0, dim);
+            return;
+        }
+        for (i, s) in list.iter().enumerate() {
+            let top = y + i as f32 * (SESS_ROW + 2.0);
+            let cy = top + SESS_ROW / 2.0;
+            if self.hovered == Some(i) {
+                g.fill_round(rect(x, top, SESS_W, SESS_ROW), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+            }
+            let st = s.get("state").and_then(|v| v.as_str()).unwrap_or("idle");
+            let quiet = s.get("quiet").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let (dot, text, tc) = match st {
+                "working" => (with_alpha(rgba(0xd9 as f32 / 255.0, 0x77 as f32 / 255.0, 0x57 as f32 / 255.0, 1.0), alpha), "working".to_string(), dim),
+                "asks" => (with_alpha(cx.look.accent, alpha), "asks you".to_string(), with_alpha(cx.look.accent, alpha)),
+                "tool" => (with_alpha(cx.look.accent, alpha), format!("may need you · {}", duration(quiet).replace('h', " h").replace('m', " min")), with_alpha(cx.look.accent, alpha)),
+                "done" => (white(0.6 * alpha), format!("your turn · {}", duration(quiet).replace('h', " h").replace('m', " min")), dim),
+                _ => (white(0.25 * alpha), format!("idle {}", duration(quiet).replace('h', " h").replace('m', " min")), dim),
+            };
+            g.fill_round(rect(x + 8.0, cy - 3.0, 6.0, 6.0), 3.0, dot);
+            let tw = g.measure(&text, &small);
+            g.text_at(&text, &small, x + SESS_W - 8.0 - tw, cy, tc);
+            let name = s.get("project").and_then(|v| v.as_str()).unwrap_or("");
+            g.text_at(&fit_text(g, name, &f, SESS_W - 8.0 - 14.0 - tw - 16.0), &f, x + 8.0 + 14.0, cy, fg);
+        }
+        let fy = y + list.len() as f32 * (SESS_ROW + 2.0) + 4.0 + line(g, &small) / 2.0;
+        g.text_at("Click one to go to its window", &small, x + 8.0, fy, dim);
     }
 
     fn lines(&self) -> Vec<Line> {
@@ -152,8 +352,41 @@ impl Panel for ClaudePanel {
         self.u = v.clone();
         true
     }
+    fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
+        let n = if self.style == ClaudeStyle::Sessions { self.sessions().len() } else { 0 };
+        let h = at.and_then(|(x, y)| {
+            let i = (y / (SESS_ROW + 2.0)).floor();
+            (x >= 0.0 && x < SESS_W && i >= 0.0 && (i as usize) < n && y - i * (SESS_ROW + 2.0) < SESS_ROW).then_some(i as usize)
+        });
+        let changed = h != self.hovered;
+        self.hovered = h;
+        changed
+    }
+    fn tooltip(&self) -> Option<String> {
+        let s = self.sessions().into_iter().nth(self.hovered?)?;
+        s.get("title").and_then(|t| t.as_str()).filter(|t| !t.is_empty()).map(String::from)
+    }
+    fn click(&mut self, button: Button, _at: (f32, f32)) -> Reply {
+        let Some(s) = self.hovered.and_then(|i| self.sessions().into_iter().nth(i)).filter(|_| button == Button::Left) else { return Reply::None };
+        let title = s.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let project = s.get("project").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        Reply::CloseAnd(Act::call(move |_| crate::providers::claude::focus_session(&title, &project)))
+    }
+    fn closed(&mut self) {
+        self.hovered = None;
+    }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         let g = cx.gfx;
+        match self.style {
+            ClaudeStyle::Rings => return (RINGS_W, RING_BOX.max(self.legend_h(g, cx))),
+            ClaudeStyle::Pace => return (PACE_W, self.pace_h(g, cx)),
+            ClaudeStyle::Sessions => {
+                let n = self.sessions().len() as f32;
+                let small = line(g, &cx.secondary(11.5));
+                return (SESS_W, if n == 0.0 { line(g, &cx.secondary(12.5)) } else { n * (SESS_ROW + 2.0) + 4.0 + small });
+            }
+            ClaudeStyle::Report => {}
+        }
         let mut h = 0.0;
         for (i, l) in self.lines().iter().enumerate() {
             if i > 0 {
@@ -168,6 +401,12 @@ impl Panel for ClaudePanel {
         (260.0, h)
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        match self.style {
+            ClaudeStyle::Rings => return self.draw_rings(cx, x, y, alpha),
+            ClaudeStyle::Pace => return self.draw_pace(cx, x, y, alpha),
+            ClaudeStyle::Sessions => return self.draw_sessions(cx, x, y, alpha),
+            ClaudeStyle::Report => {}
+        }
         let g = cx.gfx;
         let fg = with_alpha(cx.look.fg, alpha);
         let dim = with_alpha(cx.look.dimmed(), alpha);

@@ -51,6 +51,18 @@ pub fn with_alpha(c: Color, a: f32) -> Color {
     Color { a: c.a * a, ..c }
 }
 
+/// `a` turning into `b` (t from 0 to 1).
+pub fn mix(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t, a: a.a + (b.a - a.a) * t }
+}
+
+/// Points along a circle's arc (angles as on paper: 0 = right, π/2 = up), for `polyline`.
+pub fn arc_points(cx: f32, cy: f32, r: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
+    let n = (((to - from).abs() * r / 3.0).ceil() as usize).max(2);
+    (0..=n).map(|i| from + (to - from) * i as f32 / n as f32).map(|a| (cx + r * a.cos(), cy - r * a.sin())).collect()
+}
+
 pub fn rect(x: f32, y: f32, w: f32, h: f32) -> D2D_RECT_F {
     D2D_RECT_F { left: x, top: y, right: x + w, bottom: y + h }
 }

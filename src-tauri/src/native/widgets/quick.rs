@@ -378,7 +378,8 @@ impl Panel for QuickPanel {
                 self.devices = v
                     .get("devices")
                     .and_then(|d| d.as_array())
-                    .map(|a| a.iter().filter_map(|d| Some((d.get("name")?.as_str()?.to_string(), d.get("percent")?.as_f64()?))).collect())
+                    // Connected ones only (the batteries widget may keep disconnected ones).
+                    .map(|a| a.iter().filter(|d| d.get("connected").and_then(|c| c.as_bool()) != Some(false)).filter_map(|d| Some((d.get("name")?.as_str()?.to_string(), d.get("percent")?.as_f64()?))).collect())
                     .unwrap_or_default();
             }
             "quick:outputs" => {

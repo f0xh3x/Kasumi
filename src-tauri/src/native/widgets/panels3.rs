@@ -69,38 +69,270 @@ struct Clip {
     id: u64,
     text: Option<String>,
     thumb: Option<Pixels>,
+    /// When it was copied (unix seconds) and, for a picture, its size.
+    time: f64,
+    size: Option<(u64, u64)>,
 }
 
-/// Recent copies to paste again; × removes one, "Clear" all of them.
+/// What a copy is, for the tiles: a colour, a link (its site and the rest), a path,
+/// a picture or plain text.
+enum ClipKind {
+    Text,
+    Colour(crate::native::gfx::Color),
+    Link(String, String),
+    Path,
+    Picture,
+}
+
+impl Clip {
+    fn kind(&self) -> ClipKind {
+        let Some(t) = self.text.as_deref().map(str::trim) else { return ClipKind::Picture };
+        if t.starts_with('#') && t.len() == 7 {
+            if let Some(c) = crate::native::gfx::hex(t) {
+                return ClipKind::Colour(c);
+            }
+        }
+        if let Some(rest) = t.strip_prefix("https://").or_else(|| t.strip_prefix("http://")).filter(|r| !r.contains(char::is_whitespace)) {
+            let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+            return ClipKind::Link(host.trim_start_matches("www.").to_string(), path.to_string());
+        }
+        let b = t.as_bytes();
+        let drive = b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+        if !t.contains('\n') && (drive || t.starts_with("\\\\") || t.starts_with("shell:") || t.starts_with("~/") || t.starts_with('%')) {
+            return ClipKind::Path;
+        }
+        ClipKind::Text
+    }
+    /// "Picture · 1280 × 720".
+    fn picture_label(&self) -> String {
+        match self.size {
+            Some((w, h)) => format!("Picture · {w} × {h}"),
+            None => "Picture".into(),
+        }
+    }
+}
+
+/// The clipboard panel's look ([widgets.clipboard] style).
+#[derive(Clone, Copy, PartialEq)]
+enum ClipStyle {
+    /// A row per copy: two lines of text, or the picture.
+    List,
+    /// Tiles that know what they hold (a colour's swatch, a link's site, a path, a picture).
+    Tiles,
+    /// One line per copy with its age; a search box (the launcher's clipboard search).
+    Compact,
+}
+
+/// Recent copies to paste again, in its look; × removes one, "Clear" all of them.
 pub struct ClipboardPanel {
+    style: ClipStyle,
     items: Vec<Clip>,
     thumbs: HashMap<u64, windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
-    rows: Vec<(f32, f32)>,
+    /// Each copy's box in the scrolled area (x, y, w, h), as last laid out.
+    boxes: Vec<(f32, f32, f32, f32)>,
     scroll: Scroll,
     hovered: Option<usize>,
     hover_x: bool,
     hover_clear: bool,
+    hover_search: bool,
 }
 
 const CLIP_W: f32 = 300.0;
+/// Compact: the search box (and the gap under it), a row.
+const CLIP_SEARCH: f32 = 30.0 + 6.0;
+const CLIP_ROW: f32 = 28.0;
 
 impl ClipboardPanel {
-    pub fn new() -> ClipboardPanel {
-        ClipboardPanel { items: Vec::new(), thumbs: HashMap::new(), rows: Vec::new(), scroll: Scroll::default(), hovered: None, hover_x: false, hover_clear: false }
+    pub fn new(opts: &Opts) -> ClipboardPanel {
+        let style = match opts.str("style") {
+            Some("tiles") => ClipStyle::Tiles,
+            Some("compact") => ClipStyle::Compact,
+            _ => ClipStyle::List,
+        };
+        ClipboardPanel { style, items: Vec::new(), thumbs: HashMap::new(), boxes: Vec::new(), scroll: Scroll::default(), hovered: None, hover_x: false, hover_clear: false, hover_search: false }
     }
     fn text_w() -> f32 {
         CLIP_W - 16.0 - 8.0 - 14.0
     }
-    /// The row and whether the × under a point, the "Clear" link.
-    fn hit(&self, p: (f32, f32)) -> (Option<usize>, bool, bool) {
-        let list_h = self.scroll.shown();
-        if p.1 > list_h {
-            let clear = !self.items.is_empty() && p.1 >= list_h + 8.0 && p.0 >= CLIP_W - 50.0;
-            return (None, false, clear);
+    /// Where the scrolled area starts (under the search box).
+    fn top(&self) -> f32 {
+        if self.style == ClipStyle::Compact && !self.items.is_empty() { CLIP_SEARCH } else { 0.0 }
+    }
+    /// A picture scaled into `w` × `h` at most.
+    fn fit(px: &Pixels, w: f32, h: f32) -> (f32, f32) {
+        let k = (w / px.0 as f32).min(h / px.1 as f32).min(1.0);
+        (px.0 as f32 * k, px.1 as f32 * k)
+    }
+    /// The × of a hovered copy: its box (scrolled-area px).
+    fn x_box(&self, i: usize) -> (f32, f32, f32, f32) {
+        let (bx, by, bw, bh) = self.boxes[i];
+        match self.style {
+            ClipStyle::Tiles => (bx + bw - 6.0 - 14.0, by + 6.0, 14.0, 14.0),
+            _ => (bx + bw - 8.0 - 14.0, by + bh / 2.0 - 7.0, 14.0, 14.0),
         }
-        let y = p.1 + self.scroll.offset;
-        let row = self.rows.iter().position(|(top, h)| y >= *top && y < top + h);
-        (row, row.is_some() && p.0 >= CLIP_W - 8.0 - 14.0 - 4.0, false)
+    }
+    /// What's under a point: a copy and whether its ×, "Clear", the search box.
+    fn hit(&self, p: (f32, f32)) -> (Option<usize>, bool, bool, bool) {
+        let top = self.top();
+        if p.1 < top {
+            return (None, false, false, p.1 < CLIP_SEARCH - 6.0);
+        }
+        let list_h = self.scroll.shown();
+        if p.1 > top + list_h {
+            let clear = !self.items.is_empty() && p.1 >= top + list_h + 8.0 && p.0 >= CLIP_W - 50.0;
+            return (None, false, clear, false);
+        }
+        let (x, y) = (p.0, p.1 - top + self.scroll.offset);
+        let row = self.boxes.iter().position(|(bx, by, bw, bh)| x >= *bx && x < bx + bw && y >= *by && y < by + bh);
+        let on_x = row.is_some_and(|i| {
+            let (xx, xy, xw, xh) = self.x_box(i);
+            x >= xx - 4.0 && x < xx + xw + 4.0 && y >= xy - 4.0 && y < xy + xh + 4.0
+        });
+        (row, on_x, false, false)
+    }
+    /// A tile's height for a copy `w` wide.
+    fn tile_h(&self, g: &Gfx, c: &Clip, w: f32, f: &Font, small: &Font) -> f32 {
+        let inner = w - 16.0;
+        let para = |t: &str, lines: u32| g.paragraph(t, f, inner, lines).map_or(line(g, f), |p| p.height);
+        16.0 + match c.kind() {
+            ClipKind::Text => para(c.text.as_deref().unwrap_or(""), 3),
+            ClipKind::Colour(_) => 34.0 + 5.0 + line(g, small),
+            ClipKind::Link(_, rest) => line(g, small) + 5.0 + para(if rest.is_empty() { "/" } else { &rest }, 2),
+            ClipKind::Path => line(g, small) + 5.0 + para(c.text.as_deref().unwrap_or(""), 2),
+            ClipKind::Picture => c.thumb.as_ref().map_or(40.0, |px| Self::fit(px, inner, 90.0).1) + 5.0 + line(g, small),
+        }
+    }
+    /// The boxes of every copy in this look, and the scrolled area's height.
+    fn layout(&self, g: &Gfx, f: &Font, small: &Font) -> (Vec<(f32, f32, f32, f32)>, f32) {
+        let mut out = Vec::new();
+        let mut y = 0.0;
+        match self.style {
+            ClipStyle::List => {
+                for c in &self.items {
+                    let body = match (&c.text, &c.thumb) {
+                        (Some(t), _) => g.paragraph(t, f, Self::text_w(), 2).map_or(line(g, f), |p| p.height),
+                        (None, Some(px)) => Self::fit(px, 160.0, 90.0).1,
+                        (None, None) => line(g, f),
+                    };
+                    out.push((0.0, y, CLIP_W, body + 14.0));
+                    y += body + 14.0 + 4.0;
+                }
+            }
+            ClipStyle::Compact => {
+                for _ in &self.items {
+                    out.push((0.0, y, CLIP_W, CLIP_ROW));
+                    y += CLIP_ROW + 2.0;
+                }
+                y += 2.0;
+            }
+            ClipStyle::Tiles => {
+                // Two columns, filled in order; a picture takes a whole row.
+                let half = (CLIP_W - 6.0) / 2.0;
+                let mut i = 0;
+                while i < self.items.len() {
+                    let wide = self.items[i].text.is_none();
+                    let pair = !wide && self.items.get(i + 1).is_some_and(|n| n.text.is_some());
+                    if wide {
+                        let h = self.tile_h(g, &self.items[i], CLIP_W, f, small);
+                        out.push((0.0, y, CLIP_W, h));
+                        y += h + 6.0;
+                        i += 1;
+                    } else if pair {
+                        let h = self.tile_h(g, &self.items[i], half, f, small).max(self.tile_h(g, &self.items[i + 1], half, f, small));
+                        out.push((0.0, y, half, h));
+                        out.push((half + 6.0, y, half, h));
+                        y += h + 6.0;
+                        i += 2;
+                    } else {
+                        let h = self.tile_h(g, &self.items[i], half, f, small);
+                        out.push((0.0, y, half, h));
+                        y += h + 6.0;
+                        i += 1;
+                    }
+                }
+            }
+        }
+        (out, (y - 4.0).max(0.0))
+    }
+
+    /// One tile: what it holds, its kind's label under it.
+    fn draw_tile(&self, cx: &Ctx, c: &Clip, (x, y, w, _h): (f32, f32, f32, f32), alpha: f32) {
+        let g = cx.gfx;
+        let f = cx.secondary(12.0);
+        let small = cx.secondary(10.5);
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let inner = w - 16.0;
+        let (tx, mut ty) = (x + 8.0, y + 8.0);
+        let label = |ty: f32, glyph: Option<&str>, text: &str| {
+            let cy = ty + line(g, &small) / 2.0;
+            let mut lx = tx;
+            if let Some(gl) = glyph {
+                lx += g.text_at(gl, &Font::icons(11.0), lx, cy + 1.0, dim) + 5.0;
+            }
+            g.text_at(&fit_text(g, text, &small, tx + inner - lx), &small, lx, cy, dim);
+        };
+        let para = |t: &str, ty: f32, lines: u32, c| {
+            if let Some(p) = g.paragraph(t, &f, inner, lines) {
+                g.draw_text(&p, g.snap(tx), g.snap(ty), c);
+            }
+        };
+        match c.kind() {
+            ClipKind::Text => para(c.text.as_deref().unwrap_or(""), ty, 3, fg),
+            ClipKind::Colour(col) => {
+                g.fill_round(rect(tx, ty, inner, 34.0), 5.0, with_alpha(col, alpha));
+                label(ty + 34.0 + 5.0, None, &format!("Colour · {}", c.text.as_deref().unwrap_or("").trim()));
+            }
+            ClipKind::Link(host, rest) => {
+                label(ty, Some("\u{E71B}"), &host);
+                ty += line(g, &small) + 5.0;
+                para(if rest.is_empty() { "/" } else { &rest }, ty, 2, dim);
+            }
+            ClipKind::Path => {
+                label(ty, Some("\u{E8B7}"), "Folder or file");
+                ty += line(g, &small) + 5.0;
+                para(c.text.as_deref().unwrap_or(""), ty, 2, fg);
+            }
+            ClipKind::Picture => {
+                let ph = match (self.thumbs.get(&c.id), &c.thumb) {
+                    (Some(b), Some(px)) => {
+                        let (pw, ph) = Self::fit(px, inner, 90.0);
+                        g.fill_picture(b, rect(tx + (inner - pw) / 2.0, ty, pw, ph), 5.0, alpha);
+                        ph
+                    }
+                    _ => 40.0,
+                };
+                label(ty + ph + 5.0, Some("\u{E91B}"), &c.picture_label());
+            }
+        }
+    }
+
+    /// One compact row: its number (1 to 9), the copy on one line, how long ago.
+    fn draw_row(&self, cx: &Ctx, i: usize, c: &Clip, (x, y, w, h): (f32, f32, f32, f32), alpha: f32, hovered: bool) {
+        let g = cx.gfx;
+        let f = cx.secondary(12.0);
+        let small = cx.secondary(11.0);
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let cy = y + h / 2.0;
+        if i < 9 {
+            g.text_at(&(i + 1).to_string(), &small, x + 8.0, cy, dim);
+        }
+        let mut tx = x + 8.0 + 16.0;
+        let age = ago(c.time);
+        let right = if hovered { 14.0 + 8.0 } else { g.measure(&age, &small) + 10.0 };
+        let text = match (&c.text, self.thumbs.get(&c.id), &c.thumb) {
+            (Some(t), _, _) => t.split_whitespace().collect::<Vec<_>>().join(" "),
+            (None, Some(b), Some(px)) => {
+                let (pw, ph) = Self::fit(px, 30.0, 17.0);
+                g.fill_picture(b, rect(tx, cy - ph / 2.0, pw, ph), 3.0, alpha);
+                tx += 30.0 + 8.0;
+                c.picture_label()
+            }
+            _ => c.picture_label(),
+        };
+        g.text_at(&fit_text(g, &text, &f, x + w - 8.0 - right - tx), &f, tx, cy, fg);
+        if !hovered {
+            g.text_at(&age, &small, x + w - 8.0 - g.measure(&age, &small), cy, dim);
+        }
     }
 }
 
@@ -117,6 +349,8 @@ impl Panel for ClipboardPanel {
                         id: it.get("id").and_then(|x| x.as_u64()).unwrap_or(0),
                         text: (it.get("kind").and_then(|k| k.as_str()) != Some("image")).then(|| it.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string()),
                         thumb: it.get("thumb").and_then(decode),
+                        time: it.get("time").and_then(|t| t.as_f64()).unwrap_or(0.0),
+                        size: it.get("width").and_then(|w| w.as_u64()).zip(it.get("height").and_then(|h| h.as_u64())),
                     })
                     .collect()
             })
@@ -136,30 +370,14 @@ impl Panel for ClipboardPanel {
         }
         let f = cx.secondary(12.0);
         if self.items.is_empty() {
-            self.rows.clear();
+            self.boxes.clear();
             self.scroll.fit(line(g, &f), 360.0);
             return (CLIP_W, line(g, &f));
         }
-        let mut y = 0.0;
-        self.rows = self
-            .items
-            .iter()
-            .map(|c| {
-                let body = match (&c.text, &c.thumb) {
-                    (Some(t), _) => g.paragraph(t, &f, Self::text_w(), 2).map_or(line(g, &f), |p| p.height),
-                    (None, Some(px)) => {
-                        let k = (160.0 / px.0 as f32).min(90.0 / px.1 as f32).min(1.0);
-                        px.1 as f32 * k
-                    }
-                    (None, None) => line(g, &f),
-                };
-                let r = (y, body + 14.0);
-                y += body + 14.0 + 4.0;
-                r
-            })
-            .collect();
-        self.scroll.fit(y - 4.0, 360.0);
-        (CLIP_W, self.scroll.shown() + 8.0 + line(g, &f) + 4.0)
+        let (boxes, h) = self.layout(g, &f, &cx.secondary(10.5));
+        self.boxes = boxes;
+        self.scroll.fit(h, if self.style == ClipStyle::Tiles { 420.0 } else { 360.0 });
+        (CLIP_W, self.top() + self.scroll.shown() + 8.0 + line(g, &f) + 4.0)
     }
     fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
@@ -169,41 +387,56 @@ impl Panel for ClipboardPanel {
             g.text_at("Copy something and it shows up here.", &f, x, y + line(g, &f) / 2.0, dim);
             return;
         }
-        g.clip(rect(x - 2.0, y, CLIP_W + 4.0, self.scroll.shown()));
-        for (i, (c, (top, h))) in self.items.iter().zip(&self.rows).enumerate() {
-            let ry = y + top - self.scroll.offset;
-            if ry + h < y || ry > y + self.scroll.shown() {
+        if self.style == ClipStyle::Compact {
+            // The search box: opens the launcher on the clipboard's search.
+            let bg = if self.hover_search { white(0.12 * alpha) } else { white(0.08 * alpha) };
+            g.fill_round(rect(x, y, CLIP_W, CLIP_SEARCH - 6.0), 8.0, bg);
+            let cy = y + (CLIP_SEARCH - 6.0) / 2.0;
+            let gw = g.text_at("\u{E721}", &Font::icons(12.0), x + 10.0, cy + 1.0, dim);
+            g.text_at("Type to find a copy", &f, x + 10.0 + gw + 8.0, cy, dim);
+        }
+        let top = y + self.top();
+        g.clip(rect(x - 2.0, top, CLIP_W + 4.0, self.scroll.shown()));
+        for (i, (c, b)) in self.items.iter().zip(&self.boxes).enumerate() {
+            let (bx, by, bw, bh) = (x + b.0, top + b.1 - self.scroll.offset, b.2, b.3);
+            if by + bh < top || by > top + self.scroll.shown() {
                 continue;
             }
             let hovered = self.hovered == Some(i);
-            g.fill_round(rect(x, ry, CLIP_W, *h), 8.0, if hovered { with_alpha(cx.hover_bg(0.12), alpha) } else { white(0.05 * alpha) });
-            match (&c.text, self.thumbs.get(&c.id), &c.thumb) {
-                (Some(t), _, _) => {
-                    if let Some(p) = g.paragraph(t, &f, Self::text_w(), 2) {
-                        g.draw_text(&p, g.snap(x + 8.0), g.snap(ry + 7.0), with_alpha(cx.look.fg, alpha));
+            let bg = if hovered { with_alpha(cx.hover_bg(0.12), alpha) } else if self.style == ClipStyle::Compact { white(0.0) } else { white(0.05 * alpha) };
+            g.fill_round(rect(bx, by, bw, bh), 8.0, bg);
+            match self.style {
+                ClipStyle::Tiles => self.draw_tile(cx, c, (bx, by, bw, bh), alpha),
+                ClipStyle::Compact => self.draw_row(cx, i, c, (bx, by, bw, bh), alpha, hovered),
+                ClipStyle::List => match (&c.text, self.thumbs.get(&c.id), &c.thumb) {
+                    (Some(t), _, _) => {
+                        if let Some(p) = g.paragraph(t, &f, Self::text_w(), 2) {
+                            g.draw_text(&p, g.snap(bx + 8.0), g.snap(by + 7.0), with_alpha(cx.look.fg, alpha));
+                        }
                     }
-                }
-                (None, Some(b), Some(px)) => {
-                    let k = (160.0 / px.0 as f32).min(90.0 / px.1 as f32).min(1.0);
-                    g.fill_picture(b, rect(x + 8.0, ry + 7.0, px.0 as f32 * k, px.1 as f32 * k), 5.0, alpha);
-                }
-                _ => {
-                    g.text_at("Image", &f, x + 8.0, ry + h / 2.0, dim);
-                }
+                    (None, Some(bmp), Some(px)) => {
+                        let (pw, ph) = Self::fit(px, 160.0, 90.0);
+                        g.fill_picture(bmp, rect(bx + 8.0, by + 7.0, pw, ph), 5.0, alpha);
+                    }
+                    _ => {
+                        g.text_at("Image", &f, bx + 8.0, by + bh / 2.0, dim);
+                    }
+                },
             }
             if hovered {
+                let (xx, xy, xw, _) = self.x_box(i);
+                let (xx, xy) = (x + xx, top + xy - self.scroll.offset);
                 let xf = Font::icons(10.0);
-                let (bx, by) = (x + CLIP_W - 8.0 - 14.0, ry + h / 2.0 - 7.0);
                 if self.hover_x {
-                    g.fill_round(rect(bx, by, 14.0, 14.0), 5.0, white(0.12 * alpha));
+                    g.fill_round(rect(xx, xy, xw, xw), 5.0, white(0.12 * alpha));
                 }
                 let w = g.measure("\u{E711}", &xf);
-                g.text_at("\u{E711}", &xf, bx + (14.0 - w) / 2.0, ry + h / 2.0, white(if self.hover_x { alpha } else { 0.7 * alpha }));
+                g.text_at("\u{E711}", &xf, xx + (xw - w) / 2.0, xy + xw / 2.0, white(if self.hover_x { alpha } else { 0.7 * alpha }));
             }
         }
         g.unclip();
         // "Clear", right-aligned under the list.
-        let cyy = y + self.scroll.shown() + 8.0 + line(g, &f) / 2.0;
+        let cyy = top + self.scroll.shown() + 8.0 + line(g, &f) / 2.0;
         let w = g.measure("Clear", &f);
         if self.hover_clear {
             g.fill_round(rect(x + CLIP_W - w - 12.0, cyy - line(g, &f) / 2.0 - 2.0, w + 12.0, line(g, &f) + 4.0), 6.0, white(0.1 * alpha));
@@ -211,10 +444,17 @@ impl Panel for ClipboardPanel {
         g.text_at("Clear", &f, x + CLIP_W - w - 6.0, cyy, if self.hover_clear { with_alpha(cx.look.fg, alpha) } else { dim });
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
-        let (row, x, clear) = at.map_or((None, false, false), |p| self.hit(p));
-        let changed = row != self.hovered || x != self.hover_x || clear != self.hover_clear;
-        (self.hovered, self.hover_x, self.hover_clear) = (row, x, clear);
+        let (row, x, clear, search) = at.map_or((None, false, false, false), |p| self.hit(p));
+        let changed = row != self.hovered || x != self.hover_x || clear != self.hover_clear || search != self.hover_search;
+        (self.hovered, self.hover_x, self.hover_clear, self.hover_search) = (row, x, clear, search);
         changed
+    }
+    fn tooltip(&self) -> Option<String> {
+        if self.hover_search {
+            return Some("Search your copies in the launcher (1 to 9 paste one)".into());
+        }
+        let c = self.items.get(self.hovered?)?;
+        (self.style != ClipStyle::List).then(|| c.text.clone().unwrap_or_else(|| c.picture_label())).map(|t| t.chars().take(300).collect())
     }
     fn wheel(&mut self, _at: (f32, f32), notches: f32) -> Reply {
         if self.scroll.wheel(notches) { Reply::Redraw } else { Reply::None }
@@ -224,30 +464,35 @@ impl Panel for ClipboardPanel {
             return Reply::None;
         }
         match self.hit(at) {
-            (Some(i), true, _) => {
+            (_, _, _, true) => {
+                super::launcher::prefill(",");
+                Reply::CloseAnd(Act::Launcher { open: true, refocus: false })
+            }
+            (Some(i), true, _, _) => {
                 let id = self.items[i].id;
                 Reply::Do(Act::call(move |_| {
                     let _ = tauri::async_runtime::block_on(crate::providers::clipboard::clipboard_remove(id));
                 }))
             }
-            (Some(i), false, _) => {
+            (Some(i), false, _, _) => {
                 let id = self.items[i].id;
                 Reply::CloseAnd(Act::call(move |_| {
                     let _ = tauri::async_runtime::block_on(crate::providers::clipboard::clipboard_paste(id));
                 }))
             }
-            (None, _, true) => Reply::Do(Act::call(|_| {
+            (None, _, true, _) => Reply::Do(Act::call(|_| {
                 let _ = tauri::async_runtime::block_on(crate::providers::clipboard::clipboard_clear());
             })),
             _ => Reply::None,
         }
     }
     fn closed(&mut self) {
-        (self.hovered, self.hover_x, self.hover_clear) = (None, false, false);
+        (self.hovered, self.hover_x, self.hover_clear, self.hover_search) = (None, false, false, false);
         self.scroll.offset = 0.0;
     }
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
-        self.rows.iter().map(|(top, h)| (0.0, top - self.scroll.offset, CLIP_W, *h)).filter(|r| r.1 + r.3 > 0.0 && r.1 < self.scroll.shown()).collect()
+        let top = self.top();
+        self.boxes.iter().map(|(x, y, w, h)| (*x, top + y - self.scroll.offset, *w, *h)).filter(|r| r.1 + r.3 > top && r.1 < top + self.scroll.shown()).collect()
     }
 }
 

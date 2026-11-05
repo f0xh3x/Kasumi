@@ -474,36 +474,187 @@ impl Widget for Quick {
 struct TrayIcon {
     id: String,
     tip: String,
+    /// Its app's name and program file ("steam.exe").
+    name: String,
+    exe: String,
     rgba: String,
     px: Option<Pixels>,
 }
 
+/// Whether a tray icon's program is one of `pinned` (names, ".exe" optional, any case).
+pub(super) fn tray_pinned(pinned: &[String], exe: &str) -> bool {
+    let exe = exe.trim_end_matches(".exe").to_lowercase();
+    pinned.iter().any(|p| p.trim().trim_end_matches(".exe").to_lowercase() == exe)
+}
+
+/// `[widgets.tray] pinned`: programs whose icons stay in the bar.
+pub(super) fn tray_pins(opts: &Opts) -> Vec<String> {
+    opts.table.get("pinned").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
+}
+
+/// What's under the cursor in the tray's row.
+#[derive(Clone, Copy, PartialEq)]
+enum TrayHit {
+    Icon(usize),
+    Chevron,
+}
+
+/// One thing in the tray's row: what, where (from its left), how wide, how faded in.
+struct TrayCell {
+    hit: TrayHit,
+    x: f32,
+    w: f32,
+    alpha: f32,
+}
+
+/// The icons coming out or going back in (style "slide").
+const TRAY_SLIDE: Duration = Duration::from_millis(220);
+/// The cursor gone this long: slid-out icons go back in.
+const TRAY_LINGER: Duration = Duration::from_millis(1200);
+
 /// The tray: a chevron dropping the tray panel (`mode` = "collapsed"), or every
-/// hosted icon right in the bar ("expanded"), clicks going to their apps.
+/// hosted icon right in the bar ("expanded"), clicks going to their apps. `pinned`
+/// programs' icons stay in the bar before the chevron (which then says how many are
+/// behind it); `activity_dot` marks it when one of those changed since you last
+/// looked. Style "slide": no panel, the icons slide out of the chevron along the bar.
 pub struct Tray {
     opts: Opts,
+    pins: Vec<String>,
     icons: Vec<TrayIcon>,
     bitmaps: HashMap<String, (String, AppIcon)>,
     style: Option<Style>,
-    hovered: Option<usize>,
+    hovered: Option<TrayHit>,
     h: f32,
+    /// The chevron's width (with its count), as last measured.
+    chev_w: f32,
+    /// What the icons behind the chevron looked like when last seen, by id (none
+    /// before the first data), and whether one changed since.
+    seen: Option<HashMap<String, u64>>,
+    fresh: bool,
+    /// Style "slide": how far out (from, to, since), its last frame drawn, the
+    /// cursor gone at, the next frame.
+    slide: (f32, f32, Instant),
+    settled: bool,
+    left: Option<Instant>,
+    beat: Instant,
 }
 
 impl Tray {
     pub fn new(opts: Opts) -> Tray {
-        Tray { opts, icons: Vec::new(), bitmaps: HashMap::new(), style: None, hovered: None, h: 30.0 }
+        let now = Instant::now();
+        let pins = tray_pins(&opts);
+        Tray {
+            opts,
+            pins,
+            icons: Vec::new(),
+            bitmaps: HashMap::new(),
+            style: None,
+            hovered: None,
+            h: 30.0,
+            chev_w: 14.0,
+            seen: None,
+            fresh: false,
+            slide: (0.0, 0.0, now),
+            settled: true,
+            left: None,
+            beat: now,
+        }
+    }
+    fn slides(&self) -> bool {
+        self.opts.str("style") == Some("slide")
     }
     fn inline(&self) -> bool {
-        self.opts.str("mode") == Some("expanded")
+        self.opts.str("mode") == Some("expanded") && !self.slides()
+    }
+    fn pinned(&self, i: &TrayIcon) -> bool {
+        tray_pinned(&self.pins, &i.exe)
+    }
+    /// The icons behind the chevron.
+    fn behind(&self) -> Vec<usize> {
+        (0..self.icons.len()).filter(|&i| !self.pinned(&self.icons[i])).collect()
+    }
+    /// The chevron says how many are behind it (with icons pinned before it).
+    fn counted(&self) -> bool {
+        !self.inline() && self.icons.iter().any(|i| self.pinned(i))
     }
     /// Inline cells (.tray-inline): 0.8 h square, 0.06 h apart.
     fn cell(&self) -> (f32, f32) {
         (self.h * 0.8, self.h * 0.06)
     }
-    fn at(&self, x: f32) -> Option<usize> {
+    fn out(&self, now: Instant) -> f32 {
+        let (from, to, since) = self.slide;
+        let k = (now.saturating_duration_since(since).as_secs_f32() / TRAY_SLIDE.as_secs_f32()).min(1.0);
+        from + (to - from) * (1.0 - (1.0 - k).powi(3))
+    }
+    fn open(&self) -> bool {
+        self.slide.1 > 0.5
+    }
+    fn slide_to(&mut self, open: bool) {
+        let now = Instant::now();
+        self.slide = (self.out(now), if open { 1.0 } else { 0.0 }, now);
+        self.settled = false;
+        self.beat = now;
+        self.left = None;
+    }
+    /// The row's cells now, and its width.
+    fn cells(&self, now: Instant) -> (Vec<TrayCell>, f32) {
         let (side, gap) = self.cell();
-        let i = (x / (side + gap)).floor();
-        (i >= 0.0 && (i as usize) < self.icons.len() && x - i * (side + gap) < side).then_some(i as usize)
+        let mut out = Vec::new();
+        let mut x = 0.0;
+        if self.inline() {
+            for i in 0..self.icons.len() {
+                out.push(TrayCell { hit: TrayHit::Icon(i), x, w: side, alpha: 1.0 });
+                x += side + gap;
+            }
+            return (out, (x - gap).max(0.0));
+        }
+        for (i, icon) in self.icons.iter().enumerate() {
+            if self.pinned(icon) {
+                out.push(TrayCell { hit: TrayHit::Icon(i), x, w: side, alpha: 1.0 });
+                x += side + gap;
+            }
+        }
+        out.push(TrayCell { hit: TrayHit::Chevron, x, w: self.chev_w, alpha: 1.0 });
+        x += self.chev_w;
+        if self.slides() {
+            let e = self.out(now);
+            let behind = self.behind();
+            if e > 0.001 {
+                for (k, &i) in behind.iter().enumerate() {
+                    out.push(TrayCell { hit: TrayHit::Icon(i), x: x + (gap + k as f32 * (side + gap)) * e, w: side, alpha: e });
+                }
+            }
+            x += behind.len() as f32 * (side + gap) * e;
+        }
+        (out, x)
+    }
+    fn at(&self, x: f32) -> Option<TrayHit> {
+        let (cells, _) = self.cells(Instant::now());
+        cells.iter().rev().find(|c| c.alpha > 0.5 && x >= c.x && x < c.x + c.w).map(|c| c.hit)
+    }
+    /// Each icon behind the chevron's look, by id (a hash of its picture and hint).
+    fn looks(&self) -> HashMap<String, u64> {
+        use std::hash::{Hash, Hasher};
+        self.behind()
+            .into_iter()
+            .map(|i| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                (&self.icons[i].rgba, &self.icons[i].tip).hash(&mut h);
+                (self.icons[i].id.clone(), h.finish())
+            })
+            .collect()
+    }
+    /// The icons behind the chevron were looked at: no dot until one changes.
+    fn seen_now(&mut self) {
+        self.seen = Some(self.looks());
+        self.fresh = false;
+    }
+    fn glyph(&self) -> &'static str {
+        match (self.slides(), self.open()) {
+            (true, false) => "\u{E76C}",
+            (true, true) => "\u{E76B}",
+            _ => "\u{E70D}",
+        }
     }
 }
 
@@ -512,11 +663,13 @@ impl Widget for Tray {
         &["tray"]
     }
     fn tooltip(&self) -> Option<String> {
-        if !self.inline() {
-            let n = self.icons.len();
-            return Some(if n == 0 { "No tray icons".into() } else { format!("{n} tray icon{}", if n == 1 { "" } else { "s" }) });
+        match self.hovered {
+            Some(TrayHit::Icon(i)) => self.icons.get(i).map(|i| if i.tip.is_empty() { i.name.clone() } else { i.tip.clone() }).filter(|t| !t.is_empty()),
+            _ => {
+                let n = if self.inline() { self.icons.len() } else { self.behind().len() };
+                Some(if n == 0 { "No tray icons".into() } else { format!("{n} tray icon{}", if n == 1 { "" } else { "s" }) })
+            }
         }
-        self.icons.get(self.hovered?).map(|i| i.tip.clone()).filter(|t| !t.is_empty())
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
         let list = v.as_array().cloned().unwrap_or_default();
@@ -528,15 +681,19 @@ impl Widget for Tray {
                 let fresh = !self.bitmaps.get(&id).is_some_and(|(r, _)| *r == rgba);
                 let s = |k: &str| i.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let tip = Some(s("tip")).filter(|t| !t.is_empty()).unwrap_or_else(|| s("exe"));
-                Some(TrayIcon { id, tip, px: if fresh { decode(i) } else { None }, rgba })
+                Some(TrayIcon { id, tip, name: s("name"), exe: s("exe"), px: if fresh { decode(i) } else { None }, rgba })
             })
             .collect();
+        match &self.seen {
+            None => self.seen_now(),
+            Some(seen) if self.opts.flag("activity_dot") == Some(true) && !self.fresh => {
+                self.fresh = self.looks().iter().any(|(id, h)| seen.get(id) != Some(h));
+            }
+            _ => {}
+        }
         true
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
-        if !self.inline() {
-            return cx.gfx.measure("\u{E70D}", &crate::native::gfx::Font::icons(14.0));
-        }
         self.h = cx.h;
         let style = Style::from(self.opts.str("icons"), cx.look.accent);
         if self.style != Some(style) {
@@ -550,44 +707,98 @@ impl Widget for Tray {
                 }
             }
         }
-        let (side, gap) = self.cell();
-        let n = self.icons.len() as f32;
-        if n == 0.0 { 0.0 } else { n * side + (n - 1.0) * gap }
+        // A bare chevron as before; with a count or sliding, a button around it.
+        let g = cx.gfx.measure(self.glyph(), &crate::native::gfx::Font::icons(14.0));
+        self.chev_w = if self.counted() {
+            8.0 + g + 5.0 + cx.gfx.measure(&self.behind().len().to_string(), &cx.secondary(11.0)) + 8.0
+        } else if self.slides() {
+            self.cell().0
+        } else {
+            g
+        };
+        self.cells(Instant::now()).1
     }
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
         let g = cx.gfx;
-        if !self.inline() {
-            g.text_at("\u{E70D}", &crate::native::gfx::Font::icons(14.0), x, cy + 1.0, with_alpha(cx.look.fg, alpha));
-            return;
-        }
-        let (side, gap) = self.cell();
+        let (side, _) = self.cell();
         let img = self.h * 0.55;
-        for (i, icon) in self.icons.iter().enumerate() {
-            let bx = x + i as f32 * (side + gap);
-            if self.hovered == Some(i) {
-                g.fill_round(rect(bx, cy - side / 2.0, side, side), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+        let (cells, _) = self.cells(Instant::now());
+        for c in &cells {
+            let a = alpha * c.alpha;
+            let boxed = matches!(c.hit, TrayHit::Icon(_)) || self.counted() || self.slides();
+            if self.hovered == Some(c.hit) && boxed {
+                g.fill_round(rect(x + c.x, cy - side / 2.0, c.w, side), 8.0, with_alpha(cx.hover_bg(0.12), a));
             }
-            if let Some((_, b)) = self.bitmaps.get(&icon.id) {
-                b.draw(g, g.snap(bx + (side - img) / 2.0), g.snap(cy - img / 2.0), img, alpha);
+            match c.hit {
+                TrayHit::Icon(i) => {
+                    if let Some((_, b)) = self.icons.get(i).and_then(|icon| self.bitmaps.get(&icon.id)) {
+                        b.draw(g, g.snap(x + c.x + (side - img) / 2.0), g.snap(cy - img / 2.0), img, a);
+                    }
+                }
+                TrayHit::Chevron => {
+                    let f = crate::native::gfx::Font::icons(14.0);
+                    let gw = g.measure(self.glyph(), &f);
+                    let gx = if self.counted() { x + c.x + 8.0 } else { x + c.x + (c.w - gw) / 2.0 };
+                    g.text_at(self.glyph(), &f, gx, cy + 1.0, with_alpha(cx.look.fg, a));
+                    if self.counted() {
+                        g.text_at(&self.behind().len().to_string(), &cx.secondary(11.0), gx + gw + 5.0, cy, with_alpha(cx.look.dimmed(), a));
+                    }
+                    if self.fresh {
+                        let (dx, dy) = (x + c.x + c.w - 3.0, cy - side / 2.0 + 3.0);
+                        g.fill_round(rect(dx - 3.0, dy - 3.0, 6.0, 6.0), 3.0, with_alpha(cx.look.accent, a));
+                    }
+                }
             }
         }
     }
     fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
-        if !self.inline() {
-            return false;
-        }
         let h = at.and_then(|(x, _)| self.at(x));
+        match at {
+            None if self.open() && self.left.is_none() => self.left = Some(Instant::now()),
+            Some(_) => self.left = None,
+            _ => {}
+        }
         let changed = h != self.hovered;
         self.hovered = h;
         changed
     }
-    fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
-        if !self.inline() {
-            return if button == Button::Left { Reply::TogglePanel } else { Reply::None };
+    fn wake(&self) -> Option<Instant> {
+        let slide = (!self.settled).then_some(self.beat);
+        let linger = self.left.filter(|_| self.open()).map(|t| t + TRAY_LINGER);
+        [slide, linger].into_iter().flatten().min()
+    }
+    fn tick(&mut self, now: Instant) -> bool {
+        if self.left.is_some_and(|t| self.open() && now >= t + TRAY_LINGER) {
+            self.slide_to(false);
         }
-        let Some(i) = self.at(at.0) else { return Reply::None };
-        let (side, gap) = self.cell();
-        let centre = (i as f32 * (side + gap) + side / 2.0, 0.0);
+        if self.settled {
+            return false;
+        }
+        if now < self.slide.2 + TRAY_SLIDE {
+            self.beat = now + Duration::from_millis(15);
+        } else {
+            self.settled = true;
+        }
+        true
+    }
+    fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
+        let Some(hit) = self.at(at.0) else { return Reply::None };
+        let i = match hit {
+            TrayHit::Chevron if button == Button::Left => {
+                self.seen_now();
+                if self.slides() {
+                    let open = !self.open();
+                    self.slide_to(open);
+                    return Reply::Redraw;
+                }
+                return Reply::TogglePanel;
+            }
+            TrayHit::Chevron => return Reply::None,
+            TrayHit::Icon(i) => i,
+        };
+        let (cells, _) = self.cells(Instant::now());
+        let Some(c) = cells.iter().find(|c| c.hit == hit) else { return Reply::None };
+        let centre = (c.x + c.w / 2.0, 0.0);
         let button = match button {
             Button::Left => "left",
             Button::Right => "right",

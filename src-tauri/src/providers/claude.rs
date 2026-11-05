@@ -182,6 +182,90 @@ impl State {
     }
 }
 
+/// Sessions written in the last hour (newest first, six at most): each one's folder,
+/// title, what it's doing and how long it's been quiet. From the end of its file:
+/// written in the last few seconds: "working"; a tool asked for and nothing since:
+/// "asks" (a question to you) or "tool" (a tool running, or waiting for your
+/// permission: the file can't tell which); Claude's turn over: "done"; else "idle".
+fn sessions(files: &[(PathBuf, SystemTime)]) -> Vec<Value> {
+    let now = SystemTime::now();
+    let mut recent: Vec<&(PathBuf, SystemTime)> = files.iter().filter(|(_, m)| now.duration_since(*m).is_ok_and(|d| d < Duration::from_secs(3600))).collect();
+    recent.sort_by_key(|(_, m)| std::cmp::Reverse(*m));
+    recent
+        .into_iter()
+        .take(6)
+        .filter_map(|(path, modified)| {
+            let quiet = now.duration_since(*modified).map_or(0, |d| d.as_secs());
+            let mut f = std::fs::File::open(path).ok()?;
+            let len = f.metadata().ok()?.len();
+            f.seek(SeekFrom::Start(len.saturating_sub(256 * 1024))).ok()?;
+            let mut tail = Vec::new();
+            f.read_to_end(&mut tail).ok()?;
+            let (mut cwd, mut title, mut last): (Option<String>, Option<String>, Option<Value>) = (None, None, None);
+            for line in tail.split(|b| *b == b'\n').rev() {
+                let Ok(v) = serde_json::from_slice::<Value>(line) else { continue };
+                if title.is_none() && v["type"] == "ai-title" {
+                    title = v["aiTitle"].as_str().map(String::from);
+                }
+                if cwd.is_none() {
+                    cwd = v["cwd"].as_str().map(String::from);
+                }
+                if last.is_none() && matches!(v["type"].as_str(), Some("assistant" | "user")) && v["isSidechain"] != true {
+                    last = Some(v);
+                }
+                if cwd.is_some() && title.is_some() && last.is_some() {
+                    break;
+                }
+            }
+            let last = last?;
+            let tools: Vec<&str> = last["message"]["content"].as_array().into_iter().flatten().filter(|c| c["type"] == "tool_use").filter_map(|c| c["name"].as_str()).collect();
+            let state = if quiet < BUSY.as_secs() {
+                "working"
+            } else if last["type"] == "assistant" && tools.iter().any(|t| matches!(*t, "AskUserQuestion" | "ExitPlanMode")) {
+                "asks"
+            } else if last["type"] == "assistant" && !tools.is_empty() {
+                "tool"
+            } else if last["type"] == "assistant" {
+                "done"
+            } else {
+                "idle"
+            };
+            let project = cwd.as_deref().and_then(|c| c.rsplit(['\\', '/']).find(|p| !p.is_empty())).unwrap_or("Claude Code").to_string();
+            Some(json!({
+                "id": path.file_stem().map(|s| s.to_string_lossy().into_owned()),
+                "project": project,
+                "title": title.unwrap_or_default(),
+                "state": state,
+                "quiet": quiet,
+            }))
+        })
+        .collect()
+}
+
+/// Brings a session's window to the front: the one titled after it (Claude Code
+/// names its terminal after the session), else after its folder.
+pub fn focus_session(title: &str, project: &str) {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, IsWindowVisible};
+    unsafe extern "system" fn each(h: HWND, data: LPARAM) -> windows::core::BOOL {
+        (*(data.0 as *mut Vec<isize>)).push(h.0 as isize);
+        windows::core::BOOL(1)
+    }
+    let mut all: Vec<isize> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(&mut all as *mut _ as isize));
+    }
+    let find = |needle: &str| {
+        all.iter().copied().find(|&h| {
+            let w = HWND(h as *mut _);
+            !needle.is_empty() && unsafe { IsWindowVisible(w).as_bool() } && crate::win::window_title(w).contains(needle)
+        })
+    };
+    if let Some(h) = find(title).or_else(|| find(project)) {
+        let _ = tauri::async_runtime::block_on(super::tasks::task_activate(h, false));
+    }
+}
+
 /// The plan's usage from the Claude account, as /usage shows it: the 5-hour
 /// session and the week (and per-model weeks where the plan has them), each a
 /// percentage and when it resets. Read with the sign-in Claude Code keeps on this
@@ -311,6 +395,7 @@ pub fn start(app: &AppHandle) {
                 if changed {
                     let mut v = st.summary(busy);
                     v["account"] = account.clone();
+                    v["sessions"] = Value::Array(sessions(&files));
                     super::publish(&app, "claude", v);
                 }
                 last_busy = busy;

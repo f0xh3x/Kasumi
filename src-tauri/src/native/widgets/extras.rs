@@ -395,7 +395,58 @@ pub fn limits(u: &Value, opts: &Opts) -> (Option<(f64, Option<f64>)>, Option<(f6
     (limit(a.and_then(|a| a.get("session"))), limit(a.and_then(|a| a.get("week"))))
 }
 
-/// Claude Code usage: a working dot, a meter and text, each optional.
+/// How much of a limit is used (0..1): the account's 5-hour or weekly limit, else of
+/// the limit set in settings, else (5 hours) how much of the window's time has gone.
+pub fn used(u: &Value, opts: &Opts, week: bool) -> f64 {
+    let (session, wk) = limits(u, opts);
+    if week {
+        if let Some((p, _)) = wk {
+            return p / 100.0;
+        }
+        let l = opts.num("weekly_limit").unwrap_or(0.0);
+        return if l > 0.0 { total_tokens(u, day_start(6), f64::INFINITY) / l } else { 0.0 };
+    }
+    if let Some((p, _)) = session {
+        return p / 100.0;
+    }
+    let Some(w) = u.get("window").filter(|w| !w.is_null()) else { return 0.0 };
+    let g = |k: &str| w.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let l = opts.num("window_limit").unwrap_or(0.0);
+    if l > 0.0 { g("tokens") / l } else { (now_secs() - g("start")) / (g("end") - g("start")).max(1.0) }
+}
+
+/// A limit's span, start and end (unix seconds): up to the account's reset (5 hours
+/// or 7 days before it), else the 5-hour window Claude Code's files show.
+pub fn span(u: &Value, opts: &Opts, week: bool) -> Option<(f64, f64)> {
+    let (session, wk) = limits(u, opts);
+    let len = if week { 7.0 * 86400.0 } else { 5.0 * 3600.0 };
+    if let Some((_, Some(r))) = if week { wk } else { session } {
+        return Some((r - len, r));
+    }
+    if week {
+        return None;
+    }
+    let w = u.get("window").filter(|w| !w.is_null())?;
+    Some((w.get("start")?.as_f64()?, w.get("end")?.as_f64()?))
+}
+
+/// How far through its span a limit is now (0..1).
+pub fn elapsed(u: &Value, opts: &Opts, week: bool) -> Option<f64> {
+    let (a, b) = span(u, opts, week)?;
+    Some(((now_secs() - a) / (b - a).max(1.0)).clamp(0.0, 1.0))
+}
+
+/// A Claude Code session waiting on you (a question, or a tool it may need your
+/// permission for) in the last half hour.
+pub fn session_waits(u: &Value) -> bool {
+    u.get("sessions").and_then(|s| s.as_array()).into_iter().flatten().any(|s| {
+        matches!(s.get("state").and_then(|v| v.as_str()), Some("asks" | "tool")) && s.get("quiet").and_then(|q| q.as_f64()).is_some_and(|q| q < 1800.0)
+    })
+}
+
+/// Claude Code usage: a working dot, a meter and text, each optional. With
+/// `pace_mark` the meter marks how far through its span the limit is; with the
+/// sessions look the dot turns the accent colour while a session waits on you.
 pub struct Claude {
     opts: Opts,
     latest: Value,
@@ -411,25 +462,17 @@ impl Claude {
     fn busy(&self) -> bool {
         self.latest.get("busy").and_then(|b| b.as_bool()).unwrap_or(false)
     }
-    /// The share the indicator shows (0..1): the account's limit, else of the set limit, else of the 5-hour window's time.
+    /// The share the indicator shows (0..1).
     fn share(&self) -> f64 {
-        let u = &self.latest;
-        let (session, week) = limits(u, &self.opts);
-        let for_week = self.opts.str("indicator_for") == Some("week");
-        if for_week {
-            if let Some((p, _)) = week {
-                return p / 100.0;
-            }
-            let l = self.opts.num("weekly_limit").unwrap_or(0.0);
-            return if l > 0.0 { total_tokens(u, day_start(6), f64::INFINITY) / l } else { 0.0 };
-        }
-        if let Some((p, _)) = session {
-            return p / 100.0;
-        }
-        let Some(w) = u.get("window").filter(|w| !w.is_null()) else { return 0.0 };
-        let g = |k: &str| w.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let l = self.opts.num("window_limit").unwrap_or(0.0);
-        if l > 0.0 { g("tokens") / l } else { (now_secs() - g("start")) / (g("end") - g("start")).max(1.0) }
+        used(&self.latest, &self.opts, self.opts.str("indicator_for") == Some("week"))
+    }
+    /// The pace mark on the meter: how far through its span (with `pace_mark`).
+    fn mark(&self) -> Option<f32> {
+        (self.opts.flag("pace_mark") == Some(true)).then(|| elapsed(&self.latest, &self.opts, self.opts.str("indicator_for") == Some("week"))).flatten().map(|m| m as f32)
+    }
+    /// A session waits on you (shown by the dot with the sessions look).
+    fn waits(&self) -> bool {
+        self.opts.str("style") == Some("sessions") && session_waits(&self.latest)
     }
     fn text(&self) -> String {
         let u = &self.latest;
@@ -482,7 +525,13 @@ impl Claude {
         let meter = match kind {
             "none" => None,
             "circle" => Some(Piece::Ring { v: v as f32, fill }),
-            _ => Some(Piece::Bar { len: self.opts.num("bar_length").unwrap_or(40.0) as f32, v: v as f32, fill }),
+            _ => {
+                let len = self.opts.num("bar_length").unwrap_or(40.0) as f32;
+                Some(match self.mark() {
+                    Some(mark) => Piece::Marked { len, v: v as f32, mark, fill },
+                    None => Piece::Bar { len, v: v as f32, fill },
+                })
+            }
         };
         let right = self.opts.str("indicator_side") == Some("right");
         let text = self.text();
@@ -490,7 +539,13 @@ impl Claude {
         if self.opts.flag("working") != Some(false) {
             // The dot pulses in six opacity steps while Claude works.
             const STEPS: [f32; 6] = [1.0, 0.8, 0.55, 0.35, 0.55, 0.8];
-            let color = if self.busy() { with_alpha(rgba(0xd9 as f32 / 255.0, 0x77 as f32 / 255.0, 0x57 as f32 / 255.0, 1.0), STEPS[self.pulse % 6]) } else { white(0.25) };
+            let color = if self.waits() {
+                cx.look.accent
+            } else if self.busy() {
+                with_alpha(rgba(0xd9 as f32 / 255.0, 0x77 as f32 / 255.0, 0x57 as f32 / 255.0, 1.0), STEPS[self.pulse % 6])
+            } else {
+                white(0.25)
+            };
             parts.push(Piece::Dot { d: 6.0, color });
         }
         let mut meter = meter;
@@ -514,7 +569,13 @@ impl Claude {
 
 impl Widget for Claude {
     fn tooltip(&self) -> Option<String> {
-        Some(if self.busy() { "Claude Code is working".into() } else { "Claude Code".into() })
+        Some(if self.waits() {
+            "Claude Code is waiting for you".into()
+        } else if self.busy() {
+            "Claude Code is working".into()
+        } else {
+            "Claude Code".into()
+        })
     }
     fn keys(&self) -> &'static [&'static str] {
         &["claude"]

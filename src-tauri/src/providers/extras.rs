@@ -45,6 +45,7 @@ fn run(app: AppHandle) {
         if super::placed(&app, "disk") && now - last_disks >= Duration::from_secs(10) {
             last_disks = now;
             super::publish(&app, "disks", disks());
+            super::publish(&app, "recycle", recycle_bin());
         }
         if super::placed(&app, "privacy") && now - last_privacy >= Duration::from_secs(1) {
             last_privacy = now;
@@ -137,6 +138,23 @@ fn disks() -> serde_json::Value {
         }
     }
     json!(out)
+}
+
+/// What's in the Recycle Bin (all drives): bytes and items.
+fn recycle_bin() -> serde_json::Value {
+    use windows::Win32::UI::Shell::{SHQueryRecycleBinW, SHQUERYRBINFO};
+    let mut info = SHQUERYRBINFO { cbSize: std::mem::size_of::<SHQUERYRBINFO>() as u32, ..Default::default() };
+    match unsafe { SHQueryRecycleBinW(PCWSTR::null(), &mut info) } {
+        Ok(()) => json!({ "bytes": info.i64Size, "items": info.i64NumItems }),
+        Err(_) => json!(null),
+    }
+}
+
+/// Empties the Recycle Bin (Windows asks first), then says how full it is now.
+pub fn empty_recycle_bin(app: &AppHandle) {
+    use windows::Win32::UI::Shell::SHEmptyRecycleBinW;
+    let _ = unsafe { SHEmptyRecycleBinW(None, PCWSTR::null(), 0) };
+    super::publish(app, "recycle", recycle_bin());
 }
 
 /// The fixed drives, for the disk widget's settings (whether or not it's placed).

@@ -235,6 +235,10 @@ pub enum Piece {
     Button { side: f32, glyph: String, size: f32, color: Color, bg: Option<Color> },
     /// Text in a padded box (workspace numbers): padding x / y, radius, background.
     Label { s: String, font: Font, color: Color, pad: (f32, f32), bg: Option<Color> },
+    /// A meter as `Bar`, with a mark across it at `mark` (0..1): the Claude widget's pace.
+    Marked { len: f32, v: f32, mark: f32, fill: Color },
+    /// A sparkline `w` wide: values 0..1, the newest at the right.
+    Spark { pts: Vec<f32>, w: f32, color: Color },
 }
 
 impl Piece {
@@ -257,6 +261,8 @@ impl Piece {
             Piece::Pill { w, .. } => *w,
             Piece::Button { side, .. } => *side,
             Piece::Label { s, font, pad, .. } => g.measure(s, font) + 2.0 * pad.0,
+            Piece::Spark { w, .. } => *w,
+            Piece::Marked { len, .. } => *len,
         }
     }
 
@@ -297,6 +303,17 @@ impl Piece {
                     g.fill_round(rect(x, cy - h / 2.0, w + 2.0 * pad.0, h), 6.0, a(bg));
                 }
                 g.text_at(s, font, x + pad.0, cy, a(color));
+            }
+            Piece::Marked { len, v, mark, fill } => {
+                Piece::Bar { len: *len, v: *v, fill: *fill }.draw(g, x, cy, alpha);
+                let mx = g.snap(x + len * mark.clamp(0.0, 1.0) - 1.0);
+                g.fill_round(rect(mx, cy - 4.5, 2.0, 9.0), 1.0, white(alpha));
+            }
+            Piece::Spark { pts, w, color } => {
+                // 12 px tall, centred on the row.
+                let step = w / (pts.len().max(2) - 1) as f32;
+                let line: Vec<(f32, f32)> = pts.iter().enumerate().map(|(i, v)| (x + i as f32 * step, cy + 6.0 - v.clamp(0.0, 1.0) * 12.0)).collect();
+                g.polyline(&line, 1.5, a(color));
             }
         }
     }
@@ -614,7 +631,7 @@ pub fn widget_type(name: &str) -> &str {
 pub fn panel_for(name: &str) -> Option<String> {
     match widget_type(name) {
         "clock" => Some(name.replacen("clock", "calendar", 1)),
-        "menu" | "tray" | "media" | "weather" | "temps" | "tasks" | "quick" | "launcher" | "privacy" | "claude" | "clipboard" | "notifications" | "batteries" => Some(name.to_string()),
+        "menu" | "tray" | "media" | "weather" | "temps" | "tasks" | "quick" | "launcher" | "privacy" | "claude" | "clipboard" | "notifications" | "batteries" | "disk" => Some(name.to_string()),
         _ => None,
     }
 }
@@ -656,11 +673,12 @@ pub fn create_panel(name: &str, opts: &Opts) -> Option<Box<dyn Panel>> {
         "claude" => Box::new(panels2::ClaudePanel::new(opts)),
         "media" => Box::new(panels2::MediaPanel::new(opts)),
         "quick" => Box::new(quick::QuickPanel::new(opts)),
-        "clipboard" => Box::new(panels3::ClipboardPanel::new()),
+        "clipboard" => Box::new(panels3::ClipboardPanel::new(opts)),
         "notifications" => Box::new(panels3::NotificationsPanel::new(opts)),
         "tasks" => Box::new(panels3::TasksPanel::new(opts)),
         "launcher" => Box::new(launcher::LauncherPanel::new(opts, false)),
-        "batteries" => Box::new(batteries::BatteriesPanel::new()),
+        "batteries" => Box::new(batteries::BatteriesPanel::new(opts)),
+        "disk" => Box::new(panels::DiskPanel::new(opts)),
         _ => return None,
     })
 }

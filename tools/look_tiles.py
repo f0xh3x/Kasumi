@@ -3,9 +3,10 @@
 data), its panel cut from the bar (as if on its own, corners rounded, see-through around
 it), scaled down into public/looks/.
 
-    python -I tools/look_tiles.py
+    python -I tools/look_tiles.py [widget ...]
 
-Needs a release build (target/release/kasumi.exe). Run again after changing a look.
+Needs a release build (target/release/kasumi.exe). Run again after changing a look
+(name widgets to draw only theirs).
 """
 import base64
 import json
@@ -16,6 +17,8 @@ import struct
 import subprocess
 import tempfile
 import time
+import math
+import sys
 import zlib
 
 repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -33,7 +36,14 @@ LOOKS = {
     "quick": ("bottom", ["", "blocks", "rings", "list"], "panel"),
     "launcher": ("bottom", ["", "centre", "grid", "prompt"], "search"),
     "tasks": ("bottom", ["", "labels", "dots"], "open"),  # dots: resting (closed)
+    "temps": ("top", ["", "dials", "graph", "table"], "panel"),
+    "tray": ("top", ["", "list"], "panel"),
+    "clipboard": ("top", ["", "tiles", "compact"], "panel"),
+    "disk": ("top", ["drives", "rings"], "panel"),
+    "claude": ("top", ["", "rings", "pace", "sessions"], "panel"),
 }
+if sys.argv[1:]:
+    LOOKS = {w: v for w, v in LOOKS.items() if w in sys.argv[1:]}
 
 
 def png(w, h):
@@ -66,6 +76,45 @@ data = {
                           {"hwnd": 2, "title": "GitHub", "app": "app:Firefox", "monitor": "", "z": 1},
                           {"hwnd": 3, "title": "Docs", "app": "app:Firefox", "monitor": "", "z": 2},
                           {"hwnd": 4, "title": "Spotify", "app": "app:Spotify", "monitor": "", "z": 3}]},
+}
+
+
+def icon(w, rgb, shape):
+    """A made-up tray icon (no real app's): a rounded square, circle or diamond."""
+    px = b""
+    for y in range(w):
+        for x in range(w):
+            dx, dy = x - w / 2 + 0.5, y - w / 2 + 0.5
+            inside = {"circle": dx * dx + dy * dy < (w / 2 - 2) ** 2, "diamond": abs(dx) + abs(dy) < w / 2 - 1}.get(shape, max(abs(dx), abs(dy)) < w / 2 - 3)
+            px += bytes(rgb + (255,)) if inside else b"\0\0\0\0"
+    return base64.b64encode(px).decode()
+
+
+sec = time.time()
+tray_apps = [("Cloud sync", (60, 130, 230), "circle"), ("Chat", (110, 90, 230), "square"), ("Music", (40, 185, 90), "circle"), ("Games", (30, 40, 70), "square"),
+             ("Security", (40, 120, 210), "diamond"), ("Graphics", (110, 180, 30), "square"), ("Notes", (240, 180, 40), "diamond"), ("Mail", (220, 70, 60), "circle")]
+data["tray"] = [{"id": f"i{i}", "tip": n, "name": n, "exe": n.lower().replace(" ", "") + ".exe", "w": 32, "h": 32, "rgba": icon(32, c, sh)} for i, (n, c, sh) in enumerate(tray_apps)]
+data["temps"] = {"ok": True, "cpu": 63, "gpu": 51, "cpuLoad": 24, "cpuPower": 48, "cpuClock": 4475, "gpuLoad": 18, "gpuPower": 41, "vramUsed": 3100, "vramTotal": 12288,
+                 "ramUsed": 14.2, "ramAvailable": 17.6, "cpuName": "AMD Ryzen 7 7800X3D", "gpuName": "NVIDIA GeForce RTX 4070"}
+data["temps~series"] = [dict(data["temps"], cpu=56 + 7 * math.sin(i / 30), gpu=47 + 4 * math.sin(i / 45 + 1)) for i in range(300)]
+data["clipboard"] = [
+    {"id": 1, "time": sec - 40, "kind": "text", "text": "shell:Downloads"},
+    {"id": 2, "time": sec - 300, "kind": "image", "width": 1280, "height": 720, "thumb": {"w": 96, "h": 54, "rgba": base64.b64encode(b"".join(bytes((40 + x, 70 + y, 160, 255)) for y in range(54) for x in range(96))).decode()}},
+    {"id": 3, "time": sec - 900, "kind": "text", "text": "Meeting moved to Thursday 15:00, same room."},
+    {"id": 4, "time": sec - 3600, "kind": "text", "text": "https://example.com/notes/kasumi"},
+    {"id": 5, "time": sec - 7200, "kind": "text", "text": "#eeff00"},
+]
+data["disks"] = [{"id": "C:", "label": "System", "total": 1000e9, "free": 312e9}, {"id": "D:", "label": "Games", "total": 2000e9, "free": 160e9}]
+data["recycle"] = {"bytes": 2.4e9, "items": 37}
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+day0 = sec - sec % 86400
+data["claude"] = {
+    "buckets": [{"h": day0 - d * 86400 + h * 3600, "model": "claude-opus", "tokens": t * (1 + d % 3 * 0.4), "cacheRead": 0, "messages": 30, "sessions": [f"s{d}"]}
+                for d in range(7) for h, t in [(9, 1.2e6), (14, 2e6)] if day0 - d * 86400 + h * 3600 < sec],
+    "window": {"start": sec - 2 * 3600, "end": sec + 3 * 3600, "tokens": 3.1e6, "messages": 58}, "busy": False, "now": sec,
+    "account": {"session": {"percent": 42, "resetsAt": iso(sec + 3 * 3600)}, "week": {"percent": 61, "resetsAt": iso(sec + 2.5 * 86400)}},
+    "sessions": [{"id": "a", "project": "website", "title": "", "state": "working", "quiet": 3}, {"id": "b", "project": "notes", "title": "", "state": "asks", "quiet": 140},
+                 {"id": "c", "project": "scripts", "title": "", "state": "done", "quiet": 600}],
 }
 data_path = os.path.join(work, "data.json")
 json.dump(data, open(data_path, "w"))

@@ -39,6 +39,11 @@ struct State {
     /// ([widgets.launcher] clipboard).
     clip: Vec<(u64, String)>,
     clipboard: bool,
+    /// Opened from the clipboard panel's search box: its search works this time even
+    /// with `clipboard` off; 1 to 9 (before anything is typed) paste that copy.
+    clip_once: bool,
+    /// A number key pasted: its typed character is dropped.
+    swallow: bool,
     /// The open windows (handle, title, app key, app name; most recent first), found by
     /// their title or app ([widgets.launcher] windows): Enter switches to one.
     windows: Vec<(isize, String, String, String)>,
@@ -55,7 +60,9 @@ struct State {
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, windows: Vec::new(), window_search: false, style: String::new(), grid_cols: 0, typed: Instant::now(), owner: String::new() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, clip_once: false, swallow: false, windows: Vec::new(), window_search: false, style: String::new(), grid_cols: 0, typed: Instant::now(), owner: String::new() });
+    /// What the next opening starts with typed (the clipboard panel's search: ",").
+    static PREFILL: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Something shown changed since the box in the middle of the screen was drawn.
     static CHANGED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -297,7 +304,7 @@ fn search(s: &mut State) {
         s.results = (0..s.pins.len().min(room)).map(|k| PIN + k).collect();
     }
     // A comma first: the clipboard's history (newest first), what follows it searched.
-    if let Some(rest) = q.strip_prefix(',').filter(|_| s.clipboard) {
+    if let Some(rest) = q.strip_prefix(',').filter(|_| s.clipboard || s.clip_once) {
         let rest = rest.trim();
         s.calc = None;
         s.results = (0..s.clip.len()).filter(|&k| rest.is_empty() || s.clip[k].1.to_lowercase().contains(rest)).take(s.max).map(|k| CLIP + k).collect();
@@ -334,7 +341,12 @@ fn ghost(s: &State) -> String {
     name.chars().skip(q.chars().count()).collect()
 }
 
-/// Rust opened or closed the launcher on `surface`: an empty query either way.
+/// The next opening starts with `q` typed (the clipboard panel's search box: ",").
+pub fn prefill(q: &str) {
+    PREFILL.with(|p| *p.borrow_mut() = Some(q.to_string()));
+}
+
+/// Rust opened or closed the launcher on `surface`: an empty query (or the prefilled one).
 pub fn set_open(open: bool, surface: &str) {
     S.with(|s| {
         let mut s = s.borrow_mut();
@@ -344,6 +356,14 @@ pub fn set_open(open: bool, surface: &str) {
         s.open = open;
         s.owner = surface.to_string();
         s.query.clear();
+        s.clip_once = false;
+        s.swallow = false;
+        if open {
+            if let Some(q) = PREFILL.with(|p| p.borrow_mut().take()) {
+                s.clip_once = q.starts_with(',');
+                s.query = q;
+            }
+        }
         s.typed = Instant::now();
         search(&mut s);
     });
@@ -512,6 +532,18 @@ pub fn key(vk: u16, ctrl: bool, bottom: bool) -> Out {
         let grid = s.style == "grid" && s.query.trim().is_empty() && s.grid_cols > 0;
         let across = grid || s.style == "prompt";
         let cols = s.grid_cols.max(1);
+        // The clipboard's list with nothing typed after the comma: 1 to 9 paste that copy.
+        let digit = match vk {
+            0x31..=0x39 => Some((vk - 0x31) as usize),
+            0x61..=0x69 => Some((vk - 0x61) as usize),
+            _ => None,
+        };
+        if let Some(k) = digit.filter(|_| !ctrl && s.query.trim() == "," && (s.clipboard || s.clip_once)) {
+            if let Some(&i) = s.results.get(k) {
+                s.swallow = true;
+                return Out::Launch(entry(&s, i).0);
+            }
+        }
         match vk {
             0x25 if across && n > 0 => s.selected = (s.selected + n - 1) % n,
             0x27 if across && n > 0 => s.selected = (s.selected + 1) % n,
@@ -555,7 +587,7 @@ pub fn type_char(c: char) -> bool {
     }
     S.with(|s| {
         let mut s = s.borrow_mut();
-        if !s.open {
+        if !s.open || std::mem::take(&mut s.swallow) {
             return false;
         }
         s.query.push(c);

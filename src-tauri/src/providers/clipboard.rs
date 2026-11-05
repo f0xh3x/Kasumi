@@ -244,10 +244,15 @@ fn publish(app: &AppHandle) {
         .iter()
         .map(|i| match &i.content {
             Content::Text(t) => json!({ "id": i.id, "time": i.time, "kind": "text", "text": t.chars().take(600).collect::<String>() }),
-            Content::Image { thumb, dib } => json!({
-                "id": i.id, "time": i.time, "kind": "image", "bytes": dib.len(),
-                "thumb": thumb.as_ref().map(|(w, h, rgba)| super::rgba_json(*w, *h, rgba)),
-            }),
+            Content::Image { thumb, dib } => {
+                // The picture's size, from its DIB header (BITMAPINFOHEADER biWidth, biHeight).
+                let dim = |at: usize| dib.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]).unsigned_abs());
+                json!({
+                    "id": i.id, "time": i.time, "kind": "image", "bytes": dib.len(),
+                    "width": dim(4), "height": dim(8),
+                    "thumb": thumb.as_ref().map(|(w, h, rgba)| super::rgba_json(*w, *h, rgba)),
+                })
+            }
         })
         .collect();
     super::publish(app, "clipboard", json!(items));

@@ -1396,6 +1396,47 @@ const batteryPicks: Editor = (ctx) => {
   return box;
 };
 
+/** Your own names for batteries ([widgets.batteries] rename: device id → name), each
+ *  under its own name; empty keeps the device's. */
+const batteryNames: Editor = (ctx) => {
+  const rename: Record<string, string> = { ...((ctx.cfg as any).widgets?.batteries?.rename ?? {}) };
+  const list = $("div", "stack-tight");
+  const button = $("button", "button", "Rename…");
+  let open = false;
+  button.addEventListener("click", () => {
+    open = !open;
+    button.textContent = open ? "Done" : "Rename…";
+    if (!open) {
+      list.replaceChildren();
+      return;
+    }
+    list.replaceChildren($("p", "card-help", "Looking for batteries…"));
+    invoke<{ id: string; name: string; percent: number }[]>("batteries_list")
+      .then((found) => {
+        const devices = found.filter((d) => d.id !== "laptop");
+        if (!devices.length) {
+          list.replaceChildren($("p", "card-help", "No Bluetooth device with a battery is connected."));
+          return;
+        }
+        list.replaceChildren(
+          ...devices.map((d) => {
+            const field = input(rename[d.id] ?? "", d.name);
+            field.setAttribute("aria-label", `Name for ${d.name}`);
+            field.addEventListener("change", () => {
+              const v = field.value.trim();
+              if (v) rename[d.id] = v;
+              else delete rename[d.id];
+              ctx.save(["widgets", "batteries", "rename"], { ...rename });
+            });
+            return row(d.name, `${Math.round(d.percent)}%`, field);
+          }),
+        );
+      })
+      .catch((e) => list.replaceChildren($("p", "card-help", `Couldn't list the batteries: ${e}`)));
+  });
+  return $("div", "stack-tight", row("Rename devices", "Shorter names of your own, in the bar, the panel and pop-ups.", button), list);
+};
+
 /** The launcher's own buttons ([widgets.launcher] buttons): as a Buttons widget's. */
 const launcherButtons: Editor = (ctx) =>
   $(
@@ -2124,6 +2165,7 @@ export const editors: Record<string, Editor> = {
   menuItems,
   launcherButtons,
   batteryPicks,
+  batteryNames,
   explorerOptions,
   explorerParts,
 };

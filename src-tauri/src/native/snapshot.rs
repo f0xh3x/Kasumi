@@ -94,6 +94,18 @@ pub fn run(args: &[String]) {
                     continue;
                 }
             };
+            // "<key>~series": a list of values fed one after another before the last
+            // (histories: the temps graph, sparklines).
+            for (k, v) in &store {
+                if let (Some(key), Some(list)) = (k.strip_suffix("~series"), v.as_array()) {
+                    for item in list {
+                        surface.data(&gfx, key, item);
+                    }
+                    if let Some(last) = store.get(key) {
+                        surface.data(&gfx, key, last);
+                    }
+                }
+            }
             // As the engine would: the measured widths place the notches.
             let mut measured = HashMap::new();
             for _ in 0..3 {

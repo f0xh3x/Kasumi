@@ -10,7 +10,7 @@ use super::icon::{decode, AppIcon, Style};
 use super::weather::{deg, icon};
 use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply};
 use crate::native::geometry::{Cmd, Pt};
-use crate::native::gfx::{rect, rgba, white, with_alpha, Color, Font, Gfx};
+use crate::native::gfx::{arc_points, rect, rgba, white, with_alpha, Color, Font, Gfx};
 
 /// A line of text's height in a font.
 fn line(g: &Gfx, f: &Font) -> f32 {
@@ -509,70 +509,98 @@ fn fixed(v: Option<f64>, digits: usize) -> String {
     v.map_or("–".into(), |v| format!("{v:.digits$}"))
 }
 
-/// CPU / GPU cards (temperature, a 60 s sparkline, load, power) and memory, from LibreHardwareMonitor.
+/// The temps panel's look ([widgets.temps] style).
+#[derive(Clone, Copy, PartialEq)]
+enum TempsStyle {
+    /// CPU and GPU cards side by side, memory under them.
+    Cards,
+    /// Each temperature on a dial from 30° to 100°, the warning end marked.
+    Dials,
+    /// Both temperatures over the last five minutes on one chart.
+    Graph,
+    /// One part per line: temperature, load, power.
+    Table,
+}
+
+/// CPU / GPU temperatures, load, power and memory from LibreHardwareMonitor, in its
+/// look ([widgets.temps] style): cards (a 60 s sparkline each), dials, a graph or a table.
 pub struct TempsPanel {
     opts: Opts,
+    style: TempsStyle,
     t: Value,
+    /// The last five minutes of readings (CPU, GPU), oldest first.
     history: [Vec<f32>; 2],
 }
 
+/// Readings the graph keeps (five minutes at the default once a second).
+const GRAPH: usize = 300;
+/// Dials: their radius, stroke and the scale they show.
+const DIAL_R: f32 = 58.0;
+const DIAL_W: f32 = 7.0;
+const DIAL_LO: f64 = 30.0;
+const DIAL_HI: f64 = 100.0;
+
 impl TempsPanel {
     pub fn new(opts: &Opts) -> TempsPanel {
-        TempsPanel { opts: opts.clone(), t: Value::Null, history: [Vec::new(), Vec::new()] }
+        let style = match opts.str("style") {
+            Some("dials") => TempsStyle::Dials,
+            Some("graph") => TempsStyle::Graph,
+            Some("table") => TempsStyle::Table,
+            _ => TempsStyle::Cards,
+        };
+        TempsPanel { opts: opts.clone(), style, t: Value::Null, history: [Vec::new(), Vec::new()] }
     }
     fn get(&self, k: &str) -> Option<f64> {
         self.t.get(k).and_then(|v| v.as_f64())
     }
+    fn warn(&self) -> f64 {
+        self.opts.num("warn").unwrap_or(90.0)
+    }
     fn card_h(g: &Gfx, cx: &Ctx) -> f32 {
         line(g, &cx.secondary(11.0)) + 5.0 + 24.0f32.max(line(g, &cx.main(22.0))) + 5.0 + line(g, &cx.secondary(11.0)) + 5.0 + line(g, &cx.secondary(11.0))
     }
-}
-
-impl Panel for TempsPanel {
-    fn keys(&self) -> &'static [&'static str] {
-        &["temps"]
-    }
-    fn data(&mut self, _key: &str, v: &Value) -> bool {
-        self.t = v.clone();
-        for (i, k) in ["cpu", "gpu"].iter().enumerate() {
-            if let Some(t) = self.get(k) {
-                self.history[i].push(t as f32);
-                if self.history[i].len() > HISTORY {
-                    self.history[i].remove(0);
-                }
-            }
+    /// A temperature's colour: the warning one when hot, else the accent (with accent details) or the text.
+    fn temp_color(&self, cx: &Ctx, t: Option<f64>) -> Color {
+        if t.is_some_and(|t| t >= self.warn()) {
+            cx.look.warn
+        } else if cx.opts.accent {
+            cx.look.accent
+        } else {
+            cx.look.fg
         }
-        true
     }
-    fn pad(&self) -> (f32, f32, f32) {
-        (12.0, 12.0, 14.0)
+    /// Memory: used and total (GB).
+    fn memory(&self) -> Option<(f64, f64)> {
+        Some((self.get("ramUsed")?, self.get("ramUsed")? + self.get("ramAvailable")?))
     }
-    fn size(&mut self, cx: &Ctx) -> (f32, f32) {
+    /// A meter 4 px tall centred on `cy`, `v` percent full.
+    fn meter(g: &Gfx, left: f32, w: f32, cy: f32, v: Option<f64>, fill: Color, alpha: f32) {
+        g.fill_round(rect(left, cy - 2.0, w, 4.0), 2.0, white(0.15 * alpha));
+        let v = (v.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32;
+        if v > 0.0 {
+            g.fill_round(rect(left, cy - 2.0, w * v, 4.0), 2.0, fill);
+        }
+    }
+    /// The memory line under the cards and dials: "Memory [meter] 14.2 / 31.8 GB", `w` wide.
+    fn memory_row(&self, cx: &Ctx, x: f32, cy: f32, w: f32, alpha: f32) {
         let g = cx.gfx;
-        if !self.t.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
-            return (400.0, line(g, &cx.secondary(11.0)));
-        }
-        (400.0, Self::card_h(g, cx) + 10.0 + line(g, &cx.secondary(11.0)))
+        let small = cx.secondary(11.0);
+        let fill = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { with_alpha(cx.look.fg, alpha) };
+        let kw = g.text_at("Memory", &small, x, cy, with_alpha(cx.look.dimmed(), alpha));
+        let mem = self.memory();
+        let text = mem.map_or("–".into(), |(u, t)| format!("{u:.1} / {t:.1} GB"));
+        let tw = g.measure(&text, &small).max(90.0);
+        g.text_at(&text, &small, x + w - g.measure(&text, &small), cy, with_alpha(cx.look.fg, alpha));
+        Self::meter(g, x + kw + 8.0, w - kw - 8.0 - tw - 8.0, cy, mem.map(|(u, t)| u / t * 100.0), fill, alpha);
     }
-    fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+
+    fn draw_cards(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
         let g = cx.gfx;
         let fg = with_alpha(cx.look.fg, alpha);
         let dim = with_alpha(cx.look.dimmed(), alpha);
         let small = cx.secondary(11.0);
         let lh = line(g, &small);
-        if !self.t.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
-            g.text_at("LibreHardwareMonitor web server not reachable", &small, x, y + lh / 2.0, dim);
-            return;
-        }
-        let warn = self.opts.num("warn").unwrap_or(90.0);
         let fill = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { fg };
-        let bar = |left: f32, w: f32, cy: f32, v: Option<f64>| {
-            g.fill_round(rect(left, cy - 2.0, w, 4.0), 2.0, white(0.15 * alpha));
-            let v = (v.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32;
-            if v > 0.0 {
-                g.fill_round(rect(left, cy - 2.0, w * v, 4.0), 2.0, fill);
-            }
-        };
         let card_w = (400.0 - 18.0) / 2.0;
         let ghz = self.get("cpuClock").map_or(String::new(), |c| format!(" · {:.2} GHz", c / 1000.0));
         let vram = match (self.get("vramUsed"), self.get("vramTotal")) {
@@ -592,12 +620,10 @@ impl Panel for TempsPanel {
             yy += lh + 5.0;
             let main_h = 24.0f32.max(line(g, &cx.main(22.0)));
             let t = self.get(temp);
-            let hot = t.is_some_and(|t| t >= warn);
-            let tc = if hot { with_alpha(cx.look.warn, alpha) } else if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { fg };
             let tt = t.map_or("–".into(), deg);
-            let tw = g.text_at(&tt, &cx.main(22.0), left, yy + main_h / 2.0, tc).max(46.0);
+            let tw = g.text_at(&tt, &cx.main(22.0), left, yy + main_h / 2.0, with_alpha(self.temp_color(cx, t), alpha)).max(46.0);
             // The sparkline: the last minute, stretched to the card.
-            let hist = &self.history[i];
+            let hist = &self.history[i][self.history[i].len().saturating_sub(HISTORY)..];
             if hist.len() >= 2 {
                 let (sx, sw) = (left + tw + 8.0, card_w - tw - 8.0);
                 let lo = hist.iter().cloned().fold(f32::INFINITY, f32::min) - 2.0;
@@ -614,22 +640,421 @@ impl Panel for TempsPanel {
             let lt = format!("{}%", fixed(self.get(load), 0));
             let ltw = g.measure(&lt, &small);
             g.text_at(&lt, &small, left + card_w - ltw, cyy, fg);
-            bar(left + 30.0 + 8.0, card_w - 30.0 - 8.0 - 30.0 - 8.0, cyy, self.get(load));
+            Self::meter(g, left + 30.0 + 8.0, card_w - 30.0 - 8.0 - 30.0 - 8.0, cyy, self.get(load), fill, alpha);
             yy += lh + 5.0;
             g.text_at(&fit_text(g, detail, &small, card_w), &small, left, yy + lh / 2.0, dim);
         }
-        // Memory: used of total.
-        let cyy = y + Self::card_h(g, cx) + 10.0 + lh / 2.0;
-        let kw = g.text_at("Memory", &small, x, cyy, dim);
-        let (used, avail) = (self.get("ramUsed"), self.get("ramAvailable"));
-        let total = match (used, avail) {
-            (Some(u), Some(a)) => Some(u + a),
-            _ => None,
+        self.memory_row(cx, x, y + Self::card_h(g, cx) + 10.0 + lh / 2.0, 400.0, alpha);
+    }
+
+    fn draw_dials(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        use std::f32::consts::PI;
+        let g = cx.gfx;
+        let small = cx.secondary(12.0);
+        let share = |t: f64| ((t - DIAL_LO) / (DIAL_HI - DIAL_LO)).clamp(0.0, 1.0) as f32;
+        let warn = share(self.warn());
+        let dial_w = 2.0 * DIAL_R + DIAL_W;
+        for (i, (label, temp, load)) in [("CPU", "cpu", "cpuLoad"), ("GPU", "gpu", "gpuLoad")].iter().enumerate() {
+            let cx0 = x + dial_w / 2.0 + i as f32 * (dial_w + 22.0);
+            let cy0 = y + DIAL_W / 2.0 + DIAL_R;
+            // Left to right over the top: the track, the warning end, the reading.
+            g.polyline(&arc_points(cx0, cy0, DIAL_R, PI, 0.0), DIAL_W, white(0.15 * alpha));
+            g.polyline(&arc_points(cx0, cy0, DIAL_R, PI * (1.0 - warn), 0.0), DIAL_W, with_alpha(cx.look.warn, 0.5 * alpha));
+            let t = self.get(temp);
+            let color = with_alpha(self.temp_color(cx, t), alpha);
+            if let Some(v) = t.map(share).filter(|v| *v > 0.0) {
+                g.polyline(&arc_points(cx0, cy0, DIAL_R, PI, PI * (1.0 - v)), DIAL_W, color);
+            }
+            let big = cx.main(26.0);
+            let tt = t.map_or("–".into(), deg);
+            let tw = g.measure(&tt, &big);
+            g.text_at(&tt, &big, cx0 - tw / 2.0, cy0 - 14.0, color);
+            let lt = format!("{label} · load {}%", fixed(self.get(load), 0));
+            let lw = g.measure(&lt, &small);
+            let ly = cy0 + 10.0 + line(g, &small) / 2.0;
+            let nw = g.text_at(label, &small, cx0 - lw / 2.0, ly, with_alpha(cx.look.fg, alpha));
+            g.text_at(&lt[label.len()..], &small, cx0 - lw / 2.0 + nw, ly, with_alpha(cx.look.dimmed(), alpha));
+        }
+        let my = y + DIAL_W / 2.0 + DIAL_R + 10.0 + line(g, &small) + 14.0 + line(g, &cx.secondary(11.0)) / 2.0;
+        self.memory_row(cx, x, my, 2.0 * dial_w + 22.0, alpha);
+    }
+
+    fn draw_graph(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let body = cx.secondary(12.0);
+        let small = cx.secondary(11.0);
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let colors = [if cx.opts.accent { cx.look.accent } else { cx.look.fg }, white(0.6)];
+        // The key: a dot and the reading per part, the span on the right.
+        let hh = line(g, &body);
+        let mut kx = x;
+        for (i, (label, k)) in [("CPU", "cpu"), ("GPU", "gpu")].iter().enumerate() {
+            g.fill_round(rect(kx, y + hh / 2.0 - 3.0, 6.0, 6.0), 3.0, with_alpha(colors[i], alpha));
+            kx += 12.0;
+            kx += g.text_at(&format!("{label} {}", self.get(k).map_or("–".into(), deg)), &body, kx, y + hh / 2.0, fg) + 16.0;
+        }
+        let span = "last 5 minutes";
+        g.text_at(span, &small, x + 400.0 - g.measure(span, &small), y + hh / 2.0, dim);
+        // The chart: 30° (or lower) up to past the warning level.
+        let top = y + hh + 10.0;
+        let (ch, axis) = (100.0, 28.0);
+        let all = self.history.iter().flatten().cloned();
+        let lo = all.clone().fold(30.0f32, f32::min).floor();
+        let hi = all.fold(self.warn() as f32 + 5.0, f32::max).ceil();
+        let yv = |v: f32| top + ch - (v - lo) / (hi - lo) * ch;
+        let warn_y = yv(self.warn() as f32);
+        let mut dx = x + axis;
+        while dx < x + 400.0 {
+            g.polyline(&[(dx, warn_y), ((dx + 3.0).min(x + 400.0), warn_y)], 1.0, with_alpha(cx.look.warn, 0.6 * alpha));
+            dx += 7.0;
+        }
+        g.fill_rect(rect(x + axis, yv(lo + (hi - lo) / 2.0).round(), 400.0 - axis, 1.0), white(0.08 * alpha));
+        for v in [self.warn() as f32, lo] {
+            g.text_at(&format!("{}°", v.round()), &small, x, yv(v), dim);
+        }
+        let step = (400.0 - axis - 4.0) / (GRAPH - 1) as f32;
+        for (i, h) in self.history.iter().enumerate().rev() {
+            if h.len() < 2 {
+                continue;
+            }
+            let x0 = x + 400.0 - 4.0 - step * (h.len() - 1) as f32;
+            let pts: Vec<(f32, f32)> = h.iter().enumerate().map(|(k, v)| (x0 + k as f32 * step, yv(*v))).collect();
+            g.polyline(&pts, if i == 0 { 1.8 } else { 1.5 }, with_alpha(colors[i], alpha));
+            if let Some(&(lx, ly)) = pts.last() {
+                g.fill_round(rect(lx - 3.0, ly - 3.0, 6.0, 6.0), 3.0, with_alpha(colors[i], alpha));
+            }
+        }
+        // Under it: load, power, memory.
+        let fy = top + ch + 10.0 + line(g, &small) / 2.0;
+        let pct = |k: &str| fixed(self.get(k), 0);
+        let left = format!("Load {}% · {}%     Power {} W · {} W", pct("cpuLoad"), pct("gpuLoad"), pct("cpuPower"), pct("gpuPower"));
+        g.text_at(&left, &small, x, fy, dim);
+        if let Some((u, t)) = self.memory() {
+            let m = format!("RAM {u:.1} / {t:.1} GB");
+            g.text_at(&m, &small, x + 400.0 - g.measure(&m, &small), fy, dim);
+        }
+    }
+
+    /// The table's rows: name, temperature, load %, the last column.
+    fn table_rows(&self) -> Vec<(&'static str, Option<f64>, Option<f64>, String)> {
+        let mut rows = vec![
+            ("CPU", self.get("cpu"), self.get("cpuLoad"), format!("{} W", fixed(self.get("cpuPower"), 0))),
+            ("GPU", self.get("gpu"), self.get("gpuLoad"), format!("{} W", fixed(self.get("gpuPower"), 0))),
+        ];
+        if let Some((u, t)) = self.memory() {
+            rows.push(("Memory", None, Some(u / t * 100.0), format!("{u:.1} GB")));
+        }
+        if let (Some(u), Some(t)) = (self.get("vramUsed"), self.get("vramTotal")) {
+            rows.push(("Video memory", None, Some(u / t * 100.0), format!("{:.1} GB", u / 1024.0)));
+        }
+        rows
+    }
+
+    fn draw_table(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let f = cx.secondary(12.5);
+        let small = cx.secondary(11.0);
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let fill = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { fg };
+        // Right edges of the columns: temperature, load, the last.
+        let cols = [TABLE_W - 130.0, TABLE_W - 58.0, TABLE_W];
+        let right = |s: &str, f: &Font, edge: f32, cy: f32, c: Color| {
+            g.text_at(s, f, edge - g.measure(s, f), cy, c);
         };
-        let text = total.map_or("–".into(), |t| format!("{} / {t:.1} GB", fixed(used, 1)));
-        let tw = g.measure(&text, &small).max(90.0);
-        g.text_at(&text, &small, x + 400.0 - g.measure(&text, &small), cyy, fg);
-        bar(x + kw + 8.0, 400.0 - kw - 8.0 - tw - 8.0, cyy, total.map(|t| used.unwrap_or(0.0) / t * 100.0));
+        let hh = line(g, &small);
+        for (h, edge) in ["Temp", "Load", "Power"].iter().zip(cols) {
+            right(h, &small, x + edge, y + hh / 2.0, dim);
+        }
+        let mut yy = y + hh + 4.0;
+        for (name, t, load, last) in self.table_rows() {
+            g.fill_rect(rect(x, yy.round(), TABLE_W, 1.0), white(0.08 * alpha));
+            let cy = yy + TABLE_ROW / 2.0;
+            g.text_at(name, &f, x, cy, fg);
+            match t {
+                Some(t) => right(&deg(t), &f, x + cols[0], cy, with_alpha(self.temp_color(cx, Some(t)), alpha)),
+                None => right("–", &f, x + cols[0], cy, dim),
+            }
+            let lt = format!("{}%", fixed(load, 0));
+            let lw = g.measure(&lt, &f);
+            right(&lt, &f, x + cols[1], cy, fg);
+            Self::meter(g, x + cols[1] - lw - 6.0 - 24.0, 24.0, cy, load, if load.is_some_and(|l| l >= 90.0) { with_alpha(cx.look.warn, alpha) } else { fill }, alpha);
+            right(&last, &f, x + cols[2], cy, if t.is_some() { fg } else { dim });
+            yy += TABLE_ROW;
+        }
+    }
+}
+
+const TABLE_W: f32 = 300.0;
+const TABLE_ROW: f32 = 28.0;
+
+impl Panel for TempsPanel {
+    fn keys(&self) -> &'static [&'static str] {
+        &["temps"]
+    }
+    fn data(&mut self, _key: &str, v: &Value) -> bool {
+        self.t = v.clone();
+        for (i, k) in ["cpu", "gpu"].iter().enumerate() {
+            if let Some(t) = self.get(k) {
+                self.history[i].push(t as f32);
+                if self.history[i].len() > GRAPH {
+                    self.history[i].remove(0);
+                }
+            }
+        }
+        true
+    }
+    fn pad(&self) -> (f32, f32, f32) {
+        (12.0, 12.0, 14.0)
+    }
+    fn size(&mut self, cx: &Ctx) -> (f32, f32) {
+        let g = cx.gfx;
+        if !self.t.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+            return (if self.style == TempsStyle::Table { TABLE_W } else { 400.0 }, line(g, &cx.secondary(11.0)));
+        }
+        let small = line(g, &cx.secondary(11.0));
+        match self.style {
+            TempsStyle::Cards => (400.0, Self::card_h(g, cx) + 10.0 + small),
+            TempsStyle::Dials => (4.0 * DIAL_R + 2.0 * DIAL_W + 22.0, DIAL_W / 2.0 + DIAL_R + 10.0 + line(g, &cx.secondary(12.0)) + 14.0 + small),
+            TempsStyle::Graph => (400.0, line(g, &cx.secondary(12.0)) + 10.0 + 100.0 + 10.0 + small),
+            TempsStyle::Table => (TABLE_W, small + 4.0 + self.table_rows().len() as f32 * TABLE_ROW),
+        }
+    }
+    fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let small = cx.secondary(11.0);
+        if !self.t.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+            g.text_at("LibreHardwareMonitor web server not reachable", &small, x, y + line(g, &small) / 2.0, with_alpha(cx.look.dimmed(), alpha));
+            return;
+        }
+        match self.style {
+            TempsStyle::Cards => self.draw_cards(cx, x, y, alpha),
+            TempsStyle::Dials => self.draw_dials(cx, x, y, alpha),
+            TempsStyle::Graph => self.draw_graph(cx, x, y, alpha),
+            TempsStyle::Table => self.draw_table(cx, x, y, alpha),
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+
+/// The disk widget's panel, in its look ([widgets.disk] style): "drives" (each drive's
+/// free space, the Recycle Bin with Empty, This PC and Disk Cleanup) or "rings" (a big
+/// ring per drive). A drive opens it.
+pub struct DiskPanel {
+    opts: Opts,
+    rings: bool,
+    /// Drives: id ("C:"), name, total and free bytes.
+    drives: Vec<(String, String, f64, f64)>,
+    /// The Recycle Bin: bytes, items.
+    bin: Option<(f64, f64)>,
+    hovered: Option<DiskHit>,
+    /// Drives: the buttons under the bin (what, label, x, width), as last measured.
+    btns: Vec<(DiskHit, &'static str, f32, f32)>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum DiskHit {
+    Drive(usize),
+    Empty,
+    ThisPc,
+    Cleanup,
+}
+
+const DISK_W: f32 = 330.0;
+const DRIVE_H: f32 = 34.0;
+const RING_D: f32 = 72.0;
+const RING_GAP: f32 = 22.0;
+const DISK_BTN_H: f32 = 26.0;
+
+impl DiskPanel {
+    pub fn new(opts: &Opts) -> DiskPanel {
+        DiskPanel { opts: opts.clone(), rings: opts.str("style") == Some("rings"), drives: Vec::new(), bin: None, hovered: None, btns: Vec::new() }
+    }
+    fn warn(&self) -> f64 {
+        self.opts.num("warn").unwrap_or(90.0) / 100.0
+    }
+    /// "System (C:)", or "C:" for a drive without a name.
+    fn name(d: &(String, String, f64, f64)) -> String {
+        if d.1.is_empty() { d.0.clone() } else { format!("{} ({})", d.1, d.0) }
+    }
+    fn small_name(d: &(String, String, f64, f64)) -> String {
+        if d.1.is_empty() { d.0.clone() } else { d.1.clone() }
+    }
+    /// Drives: the buttons' row under the bin (its y in the content) and each button's x and width.
+    fn buttons(&self, g: &Gfx, cx: &Ctx) -> Vec<(DiskHit, &'static str, f32, f32)> {
+        let f = cx.secondary(12.0);
+        let mut x = 0.0;
+        [(DiskHit::ThisPc, "Open This PC"), (DiskHit::Cleanup, "Clean up")]
+            .into_iter()
+            .map(|(h, t)| {
+                let w = g.measure(t, &f) + 20.0;
+                let out = (h, t, x, w);
+                x += w + 6.0;
+                out
+            })
+            .collect()
+    }
+    /// The parts under a point, as last laid out.
+    fn hit_at(&self, p: (f32, f32)) -> Option<DiskHit> {
+        if self.rings {
+            let i = (p.0 / (RING_D + RING_GAP)).floor();
+            return (i >= 0.0 && (i as usize) < self.drives.len() && p.0 - i * (RING_D + RING_GAP) < RING_D).then_some(DiskHit::Drive(i as usize));
+        }
+        let n = self.drives.len() as f32;
+        if p.1 < n * DRIVE_H {
+            return Some(DiskHit::Drive((p.1 / DRIVE_H) as usize));
+        }
+        let bin_y = n * DRIVE_H + 9.0;
+        if p.1 >= bin_y && p.1 < bin_y + DISK_BTN_H {
+            return (p.0 >= DISK_W - 64.0 && self.bin.is_some_and(|b| b.1 > 0.0)).then_some(DiskHit::Empty);
+        }
+        let row = bin_y + DISK_BTN_H + 8.0;
+        if p.1 >= row && p.1 < row + DISK_BTN_H {
+            return self.btns.iter().find(|b| p.0 >= b.2 && p.0 < b.2 + b.3).map(|b| b.0);
+        }
+        None
+    }
+}
+
+impl Panel for DiskPanel {
+    fn keys(&self) -> &'static [&'static str] {
+        &["disks", "recycle"]
+    }
+    fn data(&mut self, key: &str, v: &Value) -> bool {
+        if key == "recycle" {
+            self.bin = v.get("bytes").and_then(|b| b.as_f64()).zip(v.get("items").and_then(|i| i.as_f64()));
+            return true;
+        }
+        let chosen: Vec<String> = self.opts.table.get("disks").and_then(|d| d.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        self.drives = v
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|d| {
+                let id = d.get("id")?.as_str()?.to_string();
+                let label = d.get("label").and_then(|l| l.as_str()).unwrap_or("").to_string();
+                (chosen.is_empty() || chosen.contains(&id)).then(|| (id, label, d.get("total").and_then(|t| t.as_f64()).unwrap_or(0.0), d.get("free").and_then(|f| f.as_f64()).unwrap_or(0.0)))
+            })
+            .collect();
+        true
+    }
+    fn pad(&self) -> (f32, f32, f32) {
+        (12.0, 12.0, 14.0)
+    }
+    fn size(&mut self, cx: &Ctx) -> (f32, f32) {
+        let g = cx.gfx;
+        self.btns = self.buttons(g, cx);
+        if self.drives.is_empty() {
+            let f = cx.secondary(12.0);
+            return (g.measure("No drives", &f), line(g, &f));
+        }
+        if self.rings {
+            let n = self.drives.len() as f32;
+            return (n * RING_D + (n - 1.0) * RING_GAP, RING_D + 6.0 + line(g, &cx.secondary(12.0)) + 2.0 + line(g, &cx.secondary(11.0)));
+        }
+        (DISK_W, self.drives.len() as f32 * DRIVE_H + 9.0 + DISK_BTN_H + 8.0 + DISK_BTN_H)
+    }
+    fn draw(&self, cx: &Ctx, x: f32, y: f32, alpha: f32) {
+        let g = cx.gfx;
+        let f = cx.secondary(12.0);
+        let small = cx.secondary(11.0);
+        let (fg, dim, warn) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha), with_alpha(cx.look.warn, alpha));
+        let accent = if cx.opts.accent { with_alpha(cx.look.accent, alpha) } else { fg };
+        if self.drives.is_empty() {
+            g.text_at("No drives", &f, x, y + line(g, &f) / 2.0, dim);
+            return;
+        }
+        let fmt = super::basic::format_bytes;
+        if self.rings {
+            for (i, d) in self.drives.iter().enumerate() {
+                let share = if d.2 > 0.0 { (d.2 - d.3) / d.2 } else { 0.0 };
+                let full = share >= self.warn();
+                let left = x + i as f32 * (RING_D + RING_GAP);
+                let (rcx, rcy) = (left + RING_D / 2.0, y + RING_D / 2.0);
+                if self.hovered == Some(DiskHit::Drive(i)) {
+                    g.fill_round(rect(left - 4.0, y - 4.0, RING_D + 8.0, RING_D + 8.0), 12.0, with_alpha(cx.hover_bg(0.12), alpha));
+                }
+                g.ring(rcx, rcy, RING_D / 2.0 - 5.0, 7.0, share as f32, white(0.15 * alpha), if full { warn } else { accent });
+                let pct = format!("{}%", (share * 100.0).round());
+                let big = cx.main(15.0);
+                g.text_at(&pct, &big, rcx - g.measure(&pct, &big) / 2.0, rcy, fg);
+                let name = fit_text(g, &Self::small_name(d), &f, RING_D + RING_GAP - 4.0);
+                let ny = y + RING_D + 6.0 + line(g, &f) / 2.0;
+                g.text_at(&name, &f, rcx - g.measure(&name, &f) / 2.0, ny, fg);
+                let free = format!("{} free", fmt(d.3));
+                g.text_at(&free, &small, rcx - g.measure(&free, &small) / 2.0, ny + line(g, &f) / 2.0 + 2.0 + line(g, &small) / 2.0, if full { warn } else { dim });
+            }
+            return;
+        }
+        for (i, d) in self.drives.iter().enumerate() {
+            let share = if d.2 > 0.0 { (d.2 - d.3) / d.2 } else { 0.0 };
+            let full = share >= self.warn();
+            let top = y + i as f32 * DRIVE_H;
+            if self.hovered == Some(DiskHit::Drive(i)) {
+                g.fill_round(rect(x - 6.0, top - 4.0, DISK_W + 12.0, DRIVE_H - 2.0), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+            }
+            let cy = top + 8.0;
+            let gw = g.text_at("\u{EDA2}", &Font::icons(14.0), x, cy + 1.0, fg);
+            let free = format!("{} free of {}", fmt(d.3), fmt(d.2));
+            let fw = g.measure(&free, &small);
+            g.text_at(&free, &small, x + DISK_W - fw, cy, if full { warn } else { dim });
+            g.text_at(&fit_text(g, &Self::name(d), &f, DISK_W - gw - 8.0 - fw - 10.0), &f, x + gw + 8.0, cy, fg);
+            g.fill_round(rect(x, top + 19.0, DISK_W, 4.0), 2.0, white(0.15 * alpha));
+            if share > 0.0 {
+                g.fill_round(rect(x, top + 19.0, DISK_W * share as f32, 4.0), 2.0, if full { warn } else { accent });
+            }
+        }
+        // The Recycle Bin, with Empty while it holds something.
+        let bin_y = y + self.drives.len() as f32 * DRIVE_H;
+        g.fill_rect(rect(x, bin_y.round(), DISK_W, 1.0), white(0.08 * alpha));
+        let by = bin_y + 9.0;
+        let cy = by + DISK_BTN_H / 2.0;
+        let gw = g.text_at("\u{E74D}", &Font::icons(14.0), x, cy + 1.0, fg);
+        let nw = g.text_at("Recycle Bin", &f, x + gw + 8.0, cy, fg);
+        let (bytes, items) = self.bin.unwrap_or((0.0, 0.0));
+        let what = if items > 0.0 { format!("{} · {} item{}", fmt(bytes), items, if items == 1.0 { "" } else { "s" }) } else { "Empty".into() };
+        g.text_at(&what, &small, x + gw + 8.0 + nw + 8.0, cy, dim);
+        let button = |hit: DiskHit, t: &str, bx: f32, bw: f32, y0: f32| {
+            let on = self.hovered == Some(hit);
+            g.fill_round(rect(bx, y0, bw, DISK_BTN_H), 8.0, if on { with_alpha(cx.hover_bg(0.18), alpha) } else { white(0.1 * alpha) });
+            g.text_at(t, &f, bx + (bw - g.measure(t, &f)) / 2.0, y0 + DISK_BTN_H / 2.0, fg);
+        };
+        if items > 0.0 {
+            button(DiskHit::Empty, "Empty", x + DISK_W - 64.0, 64.0, by);
+        }
+        let row = by + DISK_BTN_H + 8.0;
+        for &(hit, t, bx, bw) in &self.btns {
+            button(hit, t, x + bx, bw, row);
+        }
+    }
+    fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
+        let h = at.and_then(|p| self.hit_at(p));
+        let changed = h != self.hovered;
+        self.hovered = h;
+        changed
+    }
+    fn tooltip(&self) -> Option<String> {
+        match self.hovered? {
+            DiskHit::Drive(i) => self.drives.get(i).map(|d| format!("Open {}", Self::name(d))),
+            DiskHit::Empty => Some("Empty the Recycle Bin (Windows asks first)".into()),
+            DiskHit::ThisPc => None,
+            DiskHit::Cleanup => Some("Disk Cleanup: Windows' tool for freeing space".into()),
+        }
+    }
+    fn click(&mut self, button: Button, at: (f32, f32)) -> Reply {
+        if button != Button::Left {
+            return Reply::None;
+        }
+        match self.hit_at(at) {
+            Some(DiskHit::Drive(i)) => self.drives.get(i).map_or(Reply::None, |d| Reply::CloseAnd(Act::open(&format!("{}\\", d.0)))),
+            Some(DiskHit::Empty) => Reply::CloseAnd(Act::call(|app| crate::providers::extras::empty_recycle_bin(&app))),
+            Some(DiskHit::ThisPc) => Reply::CloseAnd(Act::open("shell:MyComputerFolder")),
+            Some(DiskHit::Cleanup) => Reply::CloseAnd(Act::open("cleanmgr.exe")),
+            None => Reply::None,
+        }
+    }
+    fn closed(&mut self) {
+        self.hovered = None;
     }
 }
 
@@ -690,12 +1115,16 @@ impl Panel for PrivacyPanel {
 
 // ----------------------------------------------------------------------
 
-/// The hosted tray icons in a grid (`icons_per_row`); a click goes to the app and closes the panel.
+/// The hosted tray icons behind the chevron (not the `pinned` ones, which stay in the
+/// bar): a grid (`icons_per_row`), or style "list", each with its app's name and hint.
+/// A click goes to the app and closes the panel.
 pub struct TrayPanel {
     opts: Opts,
+    list: bool,
     icons: Vec<(String, String)>,
-    /// Each icon's hint (its app's tooltip), by id.
+    /// Each icon's hint (its app's tooltip) and its app's name, by id.
     tips: HashMap<String, String>,
+    names: HashMap<String, String>,
     pixels: HashMap<String, super::icon::Pixels>,
     bitmaps: HashMap<String, (String, AppIcon)>,
     style: Option<Style>,
@@ -704,21 +1133,35 @@ pub struct TrayPanel {
 
 const CELL: f32 = 32.0;
 const CELL_GAP: f32 = 4.0;
+/// The list: its width, a row's height and the gap between rows.
+const TRAY_LIST_W: f32 = 280.0;
+const TRAY_ROW: f32 = 30.0;
+const TRAY_ROW_GAP: f32 = 2.0;
 
 impl TrayPanel {
     pub fn new(opts: &Opts) -> TrayPanel {
-        TrayPanel { opts: opts.clone(), icons: Vec::new(), tips: HashMap::new(), pixels: HashMap::new(), bitmaps: HashMap::new(), style: None, hovered: None }
+        let list = opts.str("style") == Some("list");
+        TrayPanel { opts: opts.clone(), list, icons: Vec::new(), tips: HashMap::new(), names: HashMap::new(), pixels: HashMap::new(), bitmaps: HashMap::new(), style: None, hovered: None }
     }
     fn per_row(&self) -> usize {
+        if self.list {
+            return 1;
+        }
         self.opts.num("icons_per_row").unwrap_or(5.0).max(1.0) as usize
     }
-    fn at(&self, p: (f32, f32)) -> Option<usize> {
-        let (c, r) = ((p.0 / (CELL + CELL_GAP)).floor(), (p.1 / (CELL + CELL_GAP)).floor());
-        if c < 0.0 || r < 0.0 || c as usize >= self.per_row() || p.0 - c * (CELL + CELL_GAP) >= CELL || p.1 - r * (CELL + CELL_GAP) >= CELL {
-            return None;
+    /// The box of the `i`th icon's cell or row (content px).
+    fn cell_box(&self, i: usize) -> (f32, f32, f32, f32) {
+        if self.list {
+            return (0.0, i as f32 * (TRAY_ROW + TRAY_ROW_GAP), TRAY_LIST_W, TRAY_ROW);
         }
-        let i = r as usize * self.per_row() + c as usize;
-        (i < self.icons.len()).then_some(i)
+        let (c, r) = ((i % self.per_row()) as f32, (i / self.per_row()) as f32);
+        (c * (CELL + CELL_GAP), r * (CELL + CELL_GAP), CELL, CELL)
+    }
+    fn at(&self, p: (f32, f32)) -> Option<usize> {
+        (0..self.icons.len()).find(|&i| {
+            let (x, y, w, h) = self.cell_box(i);
+            p.0 >= x && p.0 < x + w && p.1 >= y && p.1 < y + h
+        })
     }
 }
 
@@ -727,9 +1170,14 @@ impl Panel for TrayPanel {
         &["tray"]
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
+        let pins = super::shell::tray_pins(&self.opts);
         self.icons.clear();
         for i in v.as_array().cloned().unwrap_or_default() {
             let (Some(id), Some(rgba)) = (i.get("id").and_then(|x| x.as_str()), i.get("rgba").and_then(|x| x.as_str())) else { continue };
+            let s = |k: &str| i.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
+            if super::shell::tray_pinned(&pins, &s("exe")) {
+                continue;
+            }
             if !self.bitmaps.get(id).is_some_and(|(r, _)| r == rgba) {
                 if let Some(px) = decode(&i) {
                     self.pixels.insert(id.to_string(), px);
@@ -737,8 +1185,9 @@ impl Panel for TrayPanel {
             }
             self.icons.push((id.to_string(), rgba.to_string()));
             // Its app's tooltip, else its program's name (as the tray widget's).
-            let s = |k: &str| i.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
             self.tips.insert(id.to_string(), Some(s("tip")).filter(|t| !t.is_empty()).unwrap_or_else(|| s("exe")));
+            let name = Some(s("name")).filter(|t| !t.is_empty()).unwrap_or_else(|| s("exe").trim_end_matches(".exe").to_string());
+            self.names.insert(id.to_string(), name);
         }
         true
     }
@@ -747,7 +1196,7 @@ impl Panel for TrayPanel {
         self.tips.get(id).cloned().filter(|t| !t.is_empty())
     }
     fn pad(&self) -> (f32, f32, f32) {
-        (8.0, 12.0, 10.0)
+        if self.list { (8.0, 8.0, 8.0) } else { (8.0, 12.0, 10.0) }
     }
     fn size(&mut self, cx: &Ctx) -> (f32, f32) {
         let style = Style::from(self.opts.str("icons"), cx.look.accent);
@@ -768,6 +1217,9 @@ impl Panel for TrayPanel {
             let f = cx.secondary(12.0);
             return (cx.gfx.measure("No tray icons", &f) + 8.0, line(cx.gfx, &f) + 12.0);
         }
+        if self.list {
+            return (TRAY_LIST_W, self.icons.len() as f32 * (TRAY_ROW + TRAY_ROW_GAP) - TRAY_ROW_GAP);
+        }
         let cols = self.per_row().min(self.icons.len()) as f32;
         let rows = self.icons.len().div_ceil(self.per_row()) as f32;
         (cols * CELL + (cols - 1.0) * CELL_GAP, rows * CELL + (rows - 1.0) * CELL_GAP)
@@ -779,14 +1231,32 @@ impl Panel for TrayPanel {
             g.text_at("No tray icons", &f, x + 4.0, y + 6.0 + line(g, &f) / 2.0, with_alpha(cx.look.dimmed(), alpha));
             return;
         }
+        let body = cx.body();
+        let small = cx.secondary(12.0);
         for (i, (id, _)) in self.icons.iter().enumerate() {
-            let (c, r) = ((i % self.per_row()) as f32, (i / self.per_row()) as f32);
-            let (cx0, cy0) = (x + c * (CELL + CELL_GAP), y + r * (CELL + CELL_GAP));
+            let (bx, by, bw, bh) = self.cell_box(i);
+            let (cx0, cy0) = (x + bx, y + by);
             if self.hovered == Some(i) {
-                g.fill_round(rect(cx0, cy0, CELL, CELL), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
+                g.fill_round(rect(cx0, cy0, bw, bh), 8.0, with_alpha(cx.hover_bg(0.12), alpha));
             }
+            if !self.list {
+                if let Some((_, b)) = self.bitmaps.get(id) {
+                    b.draw(g, cx0 + 7.0, cy0 + 7.0, 18.0, alpha);
+                }
+                continue;
+            }
+            // A row: the icon, its app's name, and its hint when that says more.
             if let Some((_, b)) = self.bitmaps.get(id) {
-                b.draw(g, cx0 + 7.0, cy0 + 7.0, 18.0, alpha);
+                b.draw(g, g.snap(cx0 + 8.0), g.snap(cy0 + (TRAY_ROW - 17.0) / 2.0), 17.0, alpha);
+            }
+            let name = self.names.get(id).cloned().unwrap_or_default();
+            let tx = cx0 + 8.0 + 17.0 + 10.0;
+            let room = bx + bw - 8.0 - (tx - x);
+            let nw = g.text_at(&fit_text(g, &name, &body, room), &body, tx, cy0 + TRAY_ROW / 2.0, with_alpha(cx.look.fg, alpha)).min(room);
+            let tip = self.tips.get(id).cloned().unwrap_or_default();
+            if !tip.is_empty() && tip != name && !tip.eq_ignore_ascii_case(&format!("{name}.exe")) && room - nw > 40.0 {
+                let tip = tip.lines().next().unwrap_or("").to_string();
+                g.text_at(&fit_text(g, &tip, &small, room - nw - 8.0), &small, tx + nw + 8.0, cy0 + TRAY_ROW / 2.0, with_alpha(cx.look.dimmed(), alpha));
             }
         }
     }
@@ -803,14 +1273,15 @@ impl Panel for TrayPanel {
             Button::Right => "right",
             Button::Middle => return Reply::None,
         };
-        let (c, r) = ((i % self.per_row()) as f32, (i / self.per_row()) as f32);
-        let centre = (c * (CELL + CELL_GAP) + CELL / 2.0, r * (CELL + CELL_GAP) + CELL / 2.0);
+        let (bx, by, bw, bh) = self.cell_box(i);
+        // Apps put their menus at the point: the icon's middle.
+        let centre = if self.list { (bx + 16.5, by + bh / 2.0) } else { (bx + bw / 2.0, by + bh / 2.0) };
         Reply::CloseAnd(Act::Tray { id: self.icons[i].0.clone(), button, at: centre })
     }
     fn closed(&mut self) {
         self.hovered = None;
     }
     fn pieces(&self) -> Vec<(f32, f32, f32, f32)> {
-        (0..self.icons.len()).map(|i| ((i % self.per_row()) as f32 * (CELL + CELL_GAP), (i / self.per_row()) as f32 * (CELL + CELL_GAP), CELL, CELL)).collect()
+        (0..self.icons.len()).map(|i| self.cell_box(i)).collect()
     }
 }

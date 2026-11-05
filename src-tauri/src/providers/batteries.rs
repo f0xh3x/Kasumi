@@ -83,6 +83,40 @@ fn wanted(app: &AppHandle) -> bool {
     super::placed(app, "batteries") || super::widget_opts(app, "quick").get("devices").and_then(|v| v.as_bool()) == Some(true)
 }
 
+/// Where the devices seen connected are remembered.
+fn seen_path() -> std::path::PathBuf {
+    crate::config::dir().join("batteries-seen.json")
+}
+
+/// The pop-ups ([widgets.batteries] low_warning, charged_at): once when a battery gets
+/// down to `low_at` (not while charging), once when the laptop charges up to `charged_at`.
+/// `last` keeps each battery's previous level (none yet: no pop-up for how it starts).
+fn warn(app: &AppHandle, opts: &toml::Table, list: &[(String, String, u8)], laptop: &Value, last: &mut std::collections::HashMap<String, f64>) {
+    let low = opts.get("low_at").and_then(|v| v.as_integer().map(|i| i as f64).or(v.as_float())).unwrap_or(20.0);
+    let warn_low = opts.get("low_warning").and_then(|v| v.as_bool()) == Some(true);
+    let charged = opts.get("charged_at").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
+    let rename = opts.get("rename").and_then(|v| v.as_table());
+    let name = |id: &str, n: &str| rename.and_then(|r| r.get(id)).and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()).unwrap_or(n).to_string();
+    let charging = laptop.get("charging").and_then(|c| c.as_bool()).unwrap_or(false);
+    let mut now: Vec<(String, String, f64, bool)> = list.iter().map(|(id, n, p)| (id.clone(), name(id, n), *p as f64, false)).collect();
+    if let Some(p) = laptop.get("percent").and_then(|p| p.as_f64()) {
+        now.push(("laptop".into(), "This PC".into(), p, charging));
+    }
+    for (id, n, p, charging) in now {
+        if let Some(&before) = last.get(&id) {
+            if warn_low && !charging && before > low && p <= low {
+                crate::osd::emit(app, "battery", "notch://osd", json!({ "kind": "battery", "level": p / 100.0, "muted": false, "text": format!("{n} {}%", p.round()), "ms": 4000 }));
+            }
+            if let Some(c) = charged.filter(|_| id == "laptop" && charging) {
+                if before < c && p >= c {
+                    crate::osd::emit(app, "charged", "notch://osd", json!({ "kind": "charged", "level": p / 100.0, "muted": false, "text": format!("Charged to {}%", p.round()), "ms": 4000 }));
+                }
+            }
+        }
+        last.insert(id, p);
+    }
+}
+
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
@@ -91,6 +125,11 @@ pub fn start(app: &AppHandle) {
             // Devices every minute (their levels move slowly), the laptop every 5 s.
             let mut list: Vec<(String, String, u8)> = Vec::new();
             let mut read: Option<Instant> = None;
+            // Devices seen connected (id → name, level, when), kept across starts for
+            // `keep_disconnected`; the last level of each battery, for the pop-ups.
+            let mut known: serde_json::Map<String, Value> =
+                std::fs::read_to_string(seen_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            let mut last: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
             loop {
                 if !wanted(&app) {
                     read = None;
@@ -100,9 +139,26 @@ pub fn start(app: &AppHandle) {
                 if read.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
                     list = devices();
                     read = Some(Instant::now());
+                    let now = chrono::Utc::now().timestamp();
+                    for (id, name, p) in &list {
+                        known.insert(id.clone(), json!({ "name": name, "percent": p, "seen": now }));
+                    }
+                    if !list.is_empty() {
+                        let _ = std::fs::write(seen_path(), Value::Object(known.clone()).to_string());
+                    }
                 }
-                let devices: Vec<Value> = list.iter().map(|(id, name, p)| json!({ "id": id, "name": name, "percent": p })).collect();
-                super::publish(&app, "batteries", json!({ "laptop": super::system::battery(), "devices": devices }));
+                let opts = super::widget_opts(&app, "batteries");
+                let mut devices: Vec<Value> = list.iter().map(|(id, name, p)| json!({ "id": id, "name": name, "percent": p, "connected": true })).collect();
+                if opts.get("keep_disconnected").and_then(|v| v.as_bool()) == Some(true) {
+                    for (id, d) in &known {
+                        if !list.iter().any(|(i, _, _)| i == id) {
+                            devices.push(json!({ "id": id, "name": d["name"], "percent": d["percent"], "connected": false, "seen": d["seen"] }));
+                        }
+                    }
+                }
+                let laptop = super::system::battery();
+                warn(&app, &opts, &list, &laptop, &mut last);
+                super::publish(&app, "batteries", json!({ "laptop": laptop, "devices": devices }));
                 std::thread::sleep(Duration::from_secs(5));
             }
         })

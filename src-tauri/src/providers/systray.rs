@@ -55,6 +55,8 @@ struct TrayIcon {
     /// (width, height, RGBA) of the current icon.
     image: Option<(u32, u32, Vec<u8>)>,
     exe: String,
+    /// Its app's name (the program's description).
+    name: String,
     /// Insertion order, so the widget lists icons stably.
     order: u64,
 }
@@ -129,7 +131,8 @@ fn apply(data: &[u8]) -> bool {
                 let order = t.next_order;
                 t.next_order += 1;
                 let exe = process_name(hwnd);
-                t.icons.insert(key.clone(), TrayIcon { hwnd, uid, guid, exe, order, ..Default::default() });
+                let name = app_name(hwnd);
+                t.icons.insert(key.clone(), TrayIcon { hwnd, uid, guid, exe, name, order, ..Default::default() });
             }
             let icon = t.icons.get_mut(&key).unwrap();
             icon.hwnd = hwnd;
@@ -160,6 +163,15 @@ fn apply(data: &[u8]) -> bool {
 
 fn process_name(hwnd: u32) -> String {
     crate::win::window_process(HWND(hwnd as usize as *mut _))
+}
+
+/// The icon's app as it names itself ("Steam"), else its program's name.
+fn app_name(hwnd: u32) -> String {
+    let path = crate::win::process_path(crate::win::window_pid(HWND(hwnd as usize as *mut _)));
+    path.as_deref()
+        .and_then(crate::win::file_description)
+        .or_else(|| path.as_deref().and_then(|p| std::path::Path::new(p).file_stem()).map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_default()
 }
 
 /// Reads an icon's pixels as straight RGBA (falls back to the AND mask for icons without alpha).
@@ -217,6 +229,7 @@ fn snapshot(app: &AppHandle) -> Value {
                     "id": i.guid.clone().unwrap_or_else(|| format!("{:x}:{}", i.hwnd, i.uid)),
                     "tip": i.tip,
                     "exe": i.exe,
+                    "name": i.name,
                     "w": w, "h": h,
                     "rgba": b64.encode(px),
                 })

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use super::{row_draw, row_width, Act, Button, Ctx, Opts, Piece, Reply, Roll, Widget};
-use crate::native::gfx::{rgba, white, with_alpha, Color};
+use crate::native::gfx::{mix, rgba, white, with_alpha, Color};
 
 /// Segoe Fluent Icons glyphs.
 const TEMP: &str = "\u{E9CA}";
@@ -32,32 +32,80 @@ pub(super) fn meter_fill(cx: &Ctx, high: bool) -> Color {
 // ----------------------------------------------------------------------
 
 /// CPU · GPU temperatures from LibreHardwareMonitor; `warn` (°C) highlights hot ones.
+/// `heat_colour` warms the numbers towards the warning colour as they near it,
+/// `sparkline` draws the last minute beside each, `bar_shows` = "load" shows the
+/// load instead.
 pub struct Temps {
     opts: Opts,
     cpu: Roll,
     gpu: Roll,
-    hot: (bool, bool),
+    /// Latest readings: temperatures and loads.
+    temp: (Option<f64>, Option<f64>),
+    load: (Option<f64>, Option<f64>),
+    /// The last minute of temperatures (for the sparklines).
+    history: (Vec<f32>, Vec<f32>),
     ok: bool,
 }
 
+/// Readings the bar's sparkline keeps.
+const SPARK: usize = 60;
+
 impl Temps {
     pub fn new(opts: Opts) -> Temps {
-        Temps { opts, cpu: Roll::default(), gpu: Roll::default(), hot: (false, false), ok: false }
+        Temps { opts, cpu: Roll::default(), gpu: Roll::default(), temp: (None, None), load: (None, None), history: (Vec::new(), Vec::new()), ok: false }
+    }
+    fn load_shown(&self) -> bool {
+        self.opts.str("bar_shows") == Some("load")
+    }
+    fn color(&self, cx: &Ctx, t: Option<f64>) -> Color {
+        let warn = self.opts.num("warn").unwrap_or(90.0);
+        match t {
+            _ if !self.ok => cx.look.dimmed(),
+            Some(t) if t >= warn => cx.look.warn,
+            // Warming from 30° under the warning level up to it.
+            Some(t) if self.opts.flag("heat_colour") == Some(true) => mix(cx.look.fg, cx.look.warn, ((t - (warn - 30.0)) / 30.0) as f32 * 0.85),
+            _ => cx.look.fg,
+        }
+    }
+    fn spark(&self, cx: &Ctx, h: &[f32], color: Color) -> Option<Piece> {
+        if self.opts.flag("sparkline") != Some(true) || h.len() < 2 {
+            return None;
+        }
+        let lo = h.iter().cloned().fold(f32::INFINITY, f32::min) - 2.0;
+        let hi = h.iter().cloned().fold(f32::NEG_INFINITY, f32::max) + 2.0;
+        let fill = if cx.opts.accent { cx.look.accent } else { color };
+        Some(Piece::Spark { pts: h.iter().map(|v| (v - lo) / (hi - lo)).collect(), w: 26.0, color: with_alpha(fill, 0.85) })
     }
     fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
         let body = cx.body();
-        let color = |hot: bool| if !self.ok { cx.look.dimmed() } else if hot { cx.look.warn } else { cx.look.fg };
-        vec![
-            Piece::glyph(TEMP, 14.0, color(self.hot.0)),
-            Piece::Gap(4.0),
-            self.cpu.piece(body.clone(), color(self.hot.0)),
-            Piece::Gap(6.0 + 2.0),
-            Piece::text("·", body.clone(), cx.look.dimmed()),
-            Piece::Gap(2.0 + 6.0),
-            Piece::glyph(TEMP, 14.0, color(self.hot.1)),
-            Piece::Gap(4.0),
-            self.gpu.piece(body, color(self.hot.1)),
-        ]
+        if self.load_shown() {
+            let small = cx.secondary(cx.look.font_size - 2.0);
+            let mut out = Vec::new();
+            for (i, (name, l)) in [("CPU", self.load.0), ("GPU", self.load.1)].into_iter().enumerate() {
+                if i > 0 {
+                    out.push(Piece::Gap(12.0));
+                }
+                let v = l.unwrap_or(0.0);
+                out.push(Piece::text(name, small.clone(), cx.look.dimmed()));
+                out.push(Piece::Gap(6.0));
+                out.push(Piece::Bar { len: 24.0, v: (v / 100.0) as f32, fill: meter_fill(cx, v >= 90.0) });
+                out.push(Piece::Gap(6.0));
+                out.push(Piece::text(l.map_or("–".into(), |l| format!("{}%", l.round())), body.clone(), if self.ok { cx.look.fg } else { cx.look.dimmed() }));
+            }
+            return out;
+        }
+        let (c, g) = (self.color(cx, self.temp.0), self.color(cx, self.temp.1));
+        let mut out = vec![Piece::glyph(TEMP, 14.0, c), Piece::Gap(4.0), self.cpu.piece(body.clone(), c)];
+        if let Some(sp) = self.spark(cx, &self.history.0, c) {
+            out.push(Piece::Gap(6.0));
+            out.push(sp);
+        }
+        out.extend([Piece::Gap(6.0 + 2.0), Piece::text("·", body.clone(), cx.look.dimmed()), Piece::Gap(2.0 + 6.0), Piece::glyph(TEMP, 14.0, g), Piece::Gap(4.0), self.gpu.piece(body, g)]);
+        if let Some(sp) = self.spark(cx, &self.history.1, g) {
+            out.push(Piece::Gap(6.0));
+            out.push(sp);
+        }
+        out
     }
 }
 
@@ -66,21 +114,33 @@ impl Widget for Temps {
         &["temps"]
     }
     fn tooltip(&self) -> Option<String> {
-        Some(if self.ok { format!("CPU {}  ·  GPU {}", self.cpu.text, self.gpu.text) } else { "Temperatures (LibreHardwareMonitor not reachable)".into() })
+        let pct = |l: Option<f64>| l.map_or("–".into(), |l| format!("{}%", l.round()));
+        Some(if !self.ok {
+            "Temperatures (LibreHardwareMonitor not reachable)".into()
+        } else if self.load_shown() {
+            format!("CPU {} ({})  ·  GPU {} ({})", pct(self.load.0), self.cpu.text, pct(self.load.1), self.gpu.text)
+        } else {
+            format!("CPU {}  ·  GPU {}", self.cpu.text, self.gpu.text)
+        })
     }
     fn data(&mut self, _key: &str, v: &Value) -> bool {
-        let warn = self.opts.num("warn").unwrap_or(90.0);
         let read = |k: &str| v.get(k).and_then(num);
         let fmt = |t: Option<f64>| t.map_or("–".to_string(), |t| format!("{}°", t.round()));
         let (c, g) = (read("cpu"), read("gpu"));
-        let ok = v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
-        let hot = (c.is_some_and(|t| t >= warn), g.is_some_and(|t| t >= warn));
-        let mut changed = self.cpu.set(fmt(c), self.opts.roll);
-        changed |= self.gpu.set(fmt(g), self.opts.roll);
-        changed |= hot != self.hot || ok != self.ok;
-        self.hot = hot;
-        self.ok = ok;
-        changed
+        self.ok = v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
+        self.cpu.set(fmt(c), self.opts.roll);
+        self.gpu.set(fmt(g), self.opts.roll);
+        self.temp = (c, g);
+        self.load = (read("cpuLoad"), read("gpuLoad"));
+        for (h, t) in [(&mut self.history.0, c), (&mut self.history.1, g)] {
+            if let Some(t) = t {
+                h.push(t as f32);
+                if h.len() > SPARK {
+                    h.remove(0);
+                }
+            }
+        }
+        true
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
         row_width(cx.gfx, &self.pieces(cx))
@@ -105,7 +165,9 @@ struct Drive {
 }
 
 /// Disk usage per chosen drive: letter, meter (bar | circle | none), text
-/// (percent | used | free | none). A click opens This PC.
+/// (percent | used | free | none). Drives past `warn` percent full turn the warning
+/// colour; with `only_when_full` it takes no room until one is. A click opens This PC,
+/// or its panel with a look (`style` = "drives" | "rings").
 pub struct Disk {
     opts: Opts,
     drives: Vec<Drive>,
@@ -130,6 +192,14 @@ impl Disk {
     pub fn new(opts: Opts) -> Disk {
         Disk { opts, drives: Vec::new() }
     }
+    /// How full counts as nearly full (0..1).
+    fn warn(&self) -> f64 {
+        self.opts.num("warn").unwrap_or(90.0) / 100.0
+    }
+    /// Shown at all: always, or (`only_when_full`) while a drive is nearly full.
+    fn shown(&self) -> bool {
+        self.opts.flag("only_when_full") != Some(true) || self.drives.iter().any(|d| d.share >= self.warn())
+    }
     fn pieces(&self, cx: &Ctx) -> Vec<Piece> {
         let kind = self.opts.str("indicator").unwrap_or("bar");
         let show = self.opts.str("show").unwrap_or("percent");
@@ -144,7 +214,7 @@ impl Disk {
             if letters {
                 parts.push(Piece::text(d.id.clone(), cx.secondary(cx.look.font_size), cx.look.dimmed()));
             }
-            let fill = meter_fill(cx, d.share >= 0.9);
+            let fill = meter_fill(cx, d.share >= self.warn());
             match kind {
                 "none" => {}
                 "circle" => parts.push(Piece::Ring { v: d.share as f32, fill }),
@@ -199,16 +269,27 @@ impl Widget for Disk {
         changed
     }
     fn width(&mut self, cx: &Ctx) -> f32 {
+        if !self.shown() {
+            return 0.0;
+        }
         row_width(cx.gfx, &self.pieces(cx))
     }
     fn draw(&self, cx: &Ctx, x: f32, cy: f32, alpha: f32) {
-        row_draw(cx.gfx, &self.pieces(cx), x, cy, alpha);
+        if self.shown() {
+            row_draw(cx.gfx, &self.pieces(cx), x, cy, alpha);
+        }
     }
     fn animating(&self, now: Instant) -> bool {
         self.drives.iter().any(|d| d.text.animating(now))
     }
-    fn click(&mut self, _: Button, _: (f32, f32)) -> Reply {
-        Reply::Do(Act::open("shell:MyComputerFolder"))
+    fn click(&mut self, button: Button, _: (f32, f32)) -> Reply {
+        if button != Button::Left {
+            return Reply::None;
+        }
+        match self.opts.str("style") {
+            Some("drives" | "rings") => Reply::TogglePanel,
+            _ => Reply::Do(Act::open("shell:MyComputerFolder")),
+        }
     }
 }
 

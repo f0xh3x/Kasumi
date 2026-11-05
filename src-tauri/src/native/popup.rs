@@ -80,6 +80,9 @@ impl Popups {
             "timer" => "\u{E916}",
             "update" => "\u{E896}",
             "progress" => "\u{E8C8}",
+            // Batteries: one getting low, the laptop charged.
+            "battery" => "\u{E851}",
+            "charged" => "\u{E83E}",
             "volume" => volume_glyph(pct, muted),
             _ => "\u{E706}",
         };
