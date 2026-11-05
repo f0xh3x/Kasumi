@@ -65,9 +65,8 @@ pub struct Media {
     due: std::cell::Cell<Option<Instant>>,
 }
 
-// .media-btn: 24 × 22, 2 px apart, 12 px icons; the title 2 px from the keys, 6 px gap.
+// .media-btn: 24 wide, 2 px apart, 12 px icons; the title 2 px from the keys, 6 px gap.
 const KEY_W: f32 = 24.0;
-const KEY_H: f32 = 22.0;
 const KEYS_W: f32 = 3.0 * KEY_W + 2.0 * 2.0;
 /// The look's mark before the title, and the gap after it.
 const MARK_W: f32 = 16.0;
@@ -263,10 +262,8 @@ impl Widget for Media {
             let glyphs = [PREV, if self.playing { PAUSE } else { PLAY }, NEXT];
             for (i, glyph) in glyphs.iter().enumerate() {
                 let bx = kx + i as f32 * (KEY_W + 2.0);
+                // No hover box (nothing in the bar highlights on hover).
                 let on = if self.can[i] { 1.0 } else { 0.35 };
-                if self.hovered == Some(i) && self.can[i] {
-                    g.fill_round(rect(bx, cy - KEY_H / 2.0, KEY_W, KEY_H), 6.0, with_alpha(cx.hover_bg(0.12), alpha * shown));
-                }
                 let f = crate::native::gfx::Font::icons(12.0);
                 let w = g.measure(glyph, &f);
                 g.text_at(glyph, &f, bx + (KEY_W - w) / 2.0, cy, with_alpha(cx.look.fg, alpha * shown * on));
