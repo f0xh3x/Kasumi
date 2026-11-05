@@ -2324,7 +2324,7 @@ export const pages: Page[] = [
     id: "colors",
     label: "Colours",
     icon: 0xe790,
-    sections: [part("appearance", "Colors", ["Background tint", "Background", "Tint", "Opacity", "Text", "Secondary text opacity", "Use Windows' accent colour", "Accent", "Accent on widget details", "Warning"], { title: "Colours" })],
+    sections: [part("appearance", "Colors", ["Background tint", "Background", "Tint", "Opacity", "Text", "Secondary text opacity", "Use Windows' accent colour", "Accent", "Accent on widget details", "Hover highlights", "Warning"], { title: "Colours" })],
   },
   {
     id: "shape",
