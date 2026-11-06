@@ -214,7 +214,7 @@ mod tests {
         assert!(hidden(r"C:\Users\x\.cache\a\spot.js"));
         assert!(hidden(r"C:\p\node_modules\lucide\spot.js"));
         assert!(!hidden(r"C:\Users\x\Documents\.notes.txt"));
-        assert!(!hidden(r"C:\General\Tools\Shortcuts\Spotify.lnk"));
+        assert!(!hidden(r"C:\Tools\Shortcuts\Spotify.lnk"));
     }
 
     /// Windows Search on this PC: `cargo test index_answers -- --ignored --nocapture`.
