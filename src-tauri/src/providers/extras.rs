@@ -11,7 +11,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -174,9 +174,9 @@ fn privacy() -> serde_json::Value {
     for (key, dev) in [("microphone", "mic"), ("webcam", "camera"), ("location", "location")] {
         let mut apps: Vec<String> = Vec::new();
         let path = format!(r"{base}\{key}");
-        for sub in subkeys(HKEY_CURRENT_USER, &path) {
+        for sub in crate::win::reg_subkeys(HKEY_CURRENT_USER, &path) {
             if sub == "NonPackaged" {
-                for exe in subkeys(HKEY_CURRENT_USER, &format!(r"{path}\NonPackaged")) {
+                for exe in crate::win::reg_subkeys(HKEY_CURRENT_USER, &format!(r"{path}\NonPackaged")) {
                     // "C:#Program Files#App#App.exe"
                     let name = exe.rsplit('#').next().unwrap_or(&exe);
                     if running.contains(&name.to_lowercase()) && in_use(&format!(r"{path}\NonPackaged\{exe}")) {
@@ -215,29 +215,6 @@ fn running_exes() -> std::collections::HashSet<String> {
             ok = Process32NextW(snap, &mut e).is_ok();
         }
         let _ = CloseHandle(snap);
-    }
-    out
-}
-
-fn subkeys(root: HKEY, path: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    unsafe {
-        let mut key = HKEY::default();
-        let p = crate::win::wide(path);
-        if RegOpenKeyExW(root, PCWSTR(p.as_ptr()), None, KEY_READ, &mut key).is_err() {
-            return out;
-        }
-        let mut i = 0;
-        loop {
-            let mut buf = [0u16; 512];
-            let mut len = buf.len() as u32;
-            if RegEnumKeyExW(key, i, Some(windows::core::PWSTR(buf.as_mut_ptr())), &mut len, None, None, None, None).is_err() {
-                break;
-            }
-            out.push(String::from_utf16_lossy(&buf[..len as usize]));
-            i += 1;
-        }
-        let _ = RegCloseKey(key);
     }
     out
 }

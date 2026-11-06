@@ -569,6 +569,30 @@ pub fn reg_string(root: windows::Win32::System::Registry::HKEY, path: &str, name
     Some(String::from_utf16_lossy(&buf[..(len as usize / 2).saturating_sub(1)]))
 }
 
+/// The names of a registry key's subkeys (none when it can't be opened).
+pub fn reg_subkeys(root: windows::Win32::System::Registry::HKEY, path: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    unsafe {
+        let mut key = windows::Win32::System::Registry::HKEY::default();
+        let p = wide(path);
+        if windows::Win32::System::Registry::RegOpenKeyExW(root, PCWSTR(p.as_ptr()), None, windows::Win32::System::Registry::KEY_READ, &mut key).is_err() {
+            return out;
+        }
+        let mut i = 0;
+        loop {
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            if windows::Win32::System::Registry::RegEnumKeyExW(key, i, Some(windows::core::PWSTR(buf.as_mut_ptr())), &mut len, None, None, None, None).is_err() {
+                break;
+            }
+            out.push(String::from_utf16_lossy(&buf[..len as usize]));
+            i += 1;
+        }
+        let _ = windows::Win32::System::Registry::RegCloseKey(key);
+    }
+    out
+}
+
 /// A DWORD value from the registry.
 pub fn reg_dword(root: windows::Win32::System::Registry::HKEY, path: &str, name: &str) -> Option<u32> {
     use windows::Win32::System::Registry::RRF_RT_REG_DWORD;

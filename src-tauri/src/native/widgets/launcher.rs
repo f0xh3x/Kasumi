@@ -6,7 +6,7 @@
 //! the middle of the screen (centre.rs draws it), a grid of pins, or a prompt.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -48,6 +48,11 @@ struct State {
     /// their title or app ([widgets.launcher] windows): Enter switches to one.
     windows: Vec<(isize, String, String, String)>,
     window_search: bool,
+    /// Windows Search's files, folders and shortcuts ([widgets.launcher] index): id
+    /// (`found:<path>`), name and kind ([`Found`]), for the query `asked`.
+    index: bool,
+    found: Vec<(String, String, Found)>,
+    asked: String,
     /// The look ([widgets.launcher] style): "" (a list), "centre", "grid", "prompt".
     style: String,
     /// Grid: how many pins a row holds, as last laid out (up / down move by a row).
@@ -60,7 +65,7 @@ struct State {
 }
 
 thread_local! {
-    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, clip_once: false, swallow: false, windows: Vec::new(), window_search: false, style: String::new(), grid_cols: 0, typed: Instant::now(), owner: String::new() });
+    static S: RefCell<State> = RefCell::new(State { open: false, query: String::new(), selected: 0, apps: Vec::new(), results: Vec::new(), max: 8, calc: None, calculator: false, settings: false, pins: Vec::new(), pinned: false, user: false, clip: Vec::new(), clipboard: false, clip_once: false, swallow: false, windows: Vec::new(), window_search: false, index: false, found: Vec::new(), asked: String::new(), style: String::new(), grid_cols: 0, typed: Instant::now(), owner: String::new() });
     /// What the next opening starts with typed (the clipboard panel's search: ",").
     static PREFILL: RefCell<Option<String>> = const { RefCell::new(None) };
     /// Something shown changed since the box in the middle of the screen was drawn.
@@ -96,9 +101,39 @@ fn line_h(g: &Gfx, f: &Font) -> f32 {
     g.text("Ag", f).map_or(f.size * 1.21, |t| t.height)
 }
 
-/// Higher is better; -1: no match (launcher.ts score).
+/// What Windows Search found: a shortcut or program (an app, ranked nearly as one), a
+/// folder or a file.
+#[derive(Clone, Copy, PartialEq)]
+enum Found {
+    App,
+    Folder,
+    File,
+}
+
+/// Lower case without accents ("Skaičiuotuvas" -> "skaiciuotuvas"): typed with or
+/// without them, a name is found either way.
+fn fold(s: &str) -> String {
+    use windows::Win32::Globalization::{NormalizeString, NormalizationD};
+    let lower = s.to_lowercase();
+    if lower.is_ascii() {
+        return lower;
+    }
+    // Decomposed, a letter's accents are marks of their own after it: left out.
+    let src: Vec<u16> = lower.encode_utf16().collect();
+    let mut buf = vec![0u16; src.len() * 3 + 8];
+    let n = unsafe { NormalizeString(NormalizationD, &src, Some(&mut buf)) };
+    if n <= 0 {
+        return lower;
+    }
+    String::from_utf16_lossy(&buf[..n as usize])
+        .chars()
+        .filter(|c| !matches!(*c as u32, 0x300..=0x36f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff | 0xfe20..=0xfe2f))
+        .collect()
+}
+
+/// Higher is better; -1: no match (launcher.ts score). `q` is folded ([`fold`]).
 fn score(name: &str, q: &str) -> f64 {
-    let n = name.to_lowercase();
+    let n = fold(name);
     if n.starts_with(q) {
         return 100.0 - n.len() as f64 * 0.01;
     }
@@ -129,6 +164,8 @@ const CALC: usize = usize::MAX;
 const PIN: usize = 1 << 40;
 const CLIP: usize = 1 << 41;
 const WIN: usize = 1 << 42;
+/// Where Windows Search's finds' indices begin (below the pins').
+const FOUND: usize = 1 << 39;
 
 /// A sum typed into the field ([widgets.launcher] calculator): `24*7`, `(3+4)^2`,
 /// `1,5 / 3`, `2 x 8`, `sqrt(2)`, `pi*2`. None unless it's a whole sum with at least one
@@ -270,11 +307,15 @@ fn entry(s: &State, i: usize) -> (String, String) {
     if i >= PIN {
         return s.pins[i - PIN].clone();
     }
+    if i >= FOUND {
+        let (id, name, _) = &s.found[i - FOUND];
+        return (id.clone(), name.clone());
+    }
     (s.apps[i].0.clone(), s.apps[i].1.clone())
 }
 
 fn search(s: &mut State) {
-    let q = s.query.trim().to_lowercase();
+    let q = fold(s.query.trim());
     let settings = s.settings;
     let rate = |a: &(String, String, String)| {
         if a.0.starts_with("run:") {
@@ -291,6 +332,23 @@ fn search(s: &mut State) {
     if s.window_search && !q.is_empty() {
         let wins = s.windows.iter().enumerate().map(|(k, w)| (WIN + k, score(&w.1, &q).max(score(&w.3, &q) - 5.0)));
         found.extend(wins.filter(|(_, sc)| *sc >= 0.0));
+    }
+    // Windows Search's finds, asked for as the query changes (they come a moment later),
+    // under the apps that match as well: a shortcut nearly as an app, then folders, files.
+    if s.index && !q.starts_with(',') {
+        if q != s.asked {
+            s.asked = q.clone();
+            s.found.clear();
+            if q.chars().count() >= 2 {
+                crate::winsearch::ask(&q);
+            }
+        }
+        let rated = s.found.iter().enumerate().map(|(k, (_, name, kind))| {
+            // Windows matched it, if not quite as the launcher would.
+            let sc = score(name, &q).max(30.0);
+            (FOUND + k, sc - if *kind == Found::App { 10.0 } else { 25.0 })
+        });
+        found.extend(rated);
     }
     found.sort_by(|a, b| b.1.total_cmp(&a.1));
     // A sum: its answer first.
@@ -335,10 +393,19 @@ fn ghost(s: &State) -> String {
         return String::new();
     }
     let name = entry(s, i).1;
-    if !name.to_lowercase().starts_with(&q.to_lowercase()) {
+    if !fold(&name).starts_with(&fold(q)) {
         return String::new();
     }
     name.chars().skip(q.chars().count()).collect()
+}
+
+/// A Windows Search find's tag: what it is (a shortcut: none, like an app's).
+fn found_tag(id: &str) -> &'static str {
+    S.with(|s| match s.borrow().found.iter().find(|f| f.0 == id).map(|f| f.2) {
+        Some(Found::Folder) => "Folder",
+        Some(Found::File) => "File",
+        _ => "",
+    })
 }
 
 /// The next opening starts with `q` typed (the clipboard panel's search box: ",").
@@ -384,6 +451,7 @@ fn set_opts(opts: &Opts) {
         s.user = on("user");
         s.clipboard = on("clipboard");
         s.window_search = on("windows");
+        s.index = on("index");
         s.style = opts.str("style").unwrap_or("").to_string();
         // The grid is made of Start's pins.
         s.pinned = s.pinned || s.style == "grid";
@@ -432,6 +500,39 @@ fn take_list(key: &str, v: &Value) -> bool {
         let mut s = s.borrow_mut();
         match key {
             "launcher:apps" => s.apps = list(true),
+            // Windows Search's answer, if it's still the question: what the app list
+            // doesn't have already (by name).
+            "launcher:found" => {
+                if v.get("q").and_then(|q| q.as_str()) != Some(s.asked.as_str()) {
+                    return false;
+                }
+                let names: HashSet<String> = s.apps.iter().map(|a| fold(&a.1)).collect();
+                let text = |x: &Value, k: &str| x.get(k).and_then(|t| t.as_str()).map(String::from);
+                s.found = v
+                    .get("items")
+                    .and_then(|a| a.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| {
+                        let (path, name) = (text(x, "path")?, text(x, "name")?);
+                        let lower = path.to_lowercase();
+                        let kind = if x.get("folder").and_then(|f| f.as_bool()) == Some(true) {
+                            Found::Folder
+                        } else if [".lnk", ".url", ".exe", ".appref-ms"].iter().any(|e| lower.ends_with(e)) {
+                            Found::App
+                        } else {
+                            Found::File
+                        };
+                        (!names.contains(&fold(&name))).then(|| (format!("found:{path}"), name, kind))
+                    })
+                    .collect();
+                // The choice stays where it is.
+                let sel = s.selected;
+                search(&mut s);
+                s.selected = sel.min(s.results.len().saturating_sub(1));
+                touch();
+                return true;
+            }
             "launcher:pinned" => s.pins = list(false).into_iter().map(|(id, name, _)| (id, name)).collect(),
             "clipboard" => {
                 s.clip = v
@@ -689,7 +790,7 @@ impl LauncherWidget {
 
 impl Widget for LauncherWidget {
     fn keys(&self) -> &'static [&'static str] {
-        &["launcher:apps", "launcher:pinned", "clipboard", "tasks"]
+        &["launcher:apps", "launcher:found", "launcher:pinned", "clipboard", "tasks"]
     }
     fn tooltip(&self) -> Option<String> {
         (!self.searching()).then(|| "Search apps".into())
@@ -1079,7 +1180,7 @@ impl LauncherPanel {
 
 impl Panel for LauncherPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["appIcons", "taskIcons", "launcher:apps", "launcher:pinned", "launcher:user", "clipboard", "tasks"]
+        &["appIcons", "taskIcons", "launcher:apps", "launcher:found", "launcher:pinned", "launcher:user", "clipboard", "tasks"]
     }
     fn data(&mut self, key: &str, v: &Value) -> bool {
         match key {
@@ -1242,6 +1343,8 @@ impl Panel for LauncherPanel {
                         "Copy"
                     } else if id.starts_with("clip:") {
                         "Paste"
+                    } else if id.starts_with("found:") {
+                        found_tag(id)
                     } else {
                         ""
                     };
@@ -1480,7 +1583,7 @@ pub fn clipboard_text() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::calc;
+    use super::{calc, fold, score};
 
     #[test]
     fn sums() {
@@ -1492,6 +1595,15 @@ mod tests {
         assert_eq!(calc("10/3").as_deref(), Some("3.3333333333"));
         assert_eq!(calc("sqrt(16)").as_deref(), Some("4"));
         assert_eq!(calc("2^-1").as_deref(), Some("0.5"));
+    }
+
+    #[test]
+    fn accents_dont_matter() {
+        assert_eq!(fold("Skaičiuotuvas"), "skaiciuotuvas");
+        assert_eq!(fold("Café Ėžė"), "cafe eze");
+        assert!(score("Skaičiuotuvas", &fold("skaic")) > 90.0);
+        assert!(score("Skaiciuotuvas", &fold("SKAIČ")) > 90.0);
+        assert!(score("Užrašinė", &fold("uzras")) > 90.0);
     }
 
     #[test]

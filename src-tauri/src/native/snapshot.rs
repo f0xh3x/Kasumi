@@ -143,11 +143,20 @@ pub fn run(args: &[String]) {
                 surface.data(&gfx, "launcher:apps", &Value::Array(list.clone()));
                 // A name, a sum (with [widgets.launcher] calculator), a Settings page's search
                 // word (with [widgets.launcher] settings) and an app with open windows (with
-                // [widgets.launcher] windows and `tasks` in --data).
-                for (query, shot) in [("o", "search"), ("24*7", "calc"), ("wallpaper", "settings"), (",re", "clipboard"), ("code", "windows"), ("spo", "partial")] {
+                // [widgets.launcher] windows and `tasks` in --data), and Windows Search's
+                // sample finds (with [widgets.launcher] index).
+                for (query, shot) in [("o", "search"), ("24*7", "calc"), ("wallpaper", "settings"), (",re", "clipboard"), ("code", "windows"), ("spo", "partial"), ("des", "index")] {
                     super::widgets::launcher::set_open(true, &label);
                     for c in query.chars() {
                         super::widgets::launcher::type_char(c);
+                    }
+                    if shot == "index" {
+                        let items = serde_json::json!([
+                            { "path": r"C:\Tools\Designer.lnk", "name": "Designer", "folder": false },
+                            { "path": r"C:\Users\x\Pictures\Designs", "name": "Designs", "folder": true },
+                            { "path": r"C:\Users\x\Documents\Design brief.pdf", "name": "Design brief.pdf", "folder": false },
+                        ]);
+                        surface.data(&gfx, "launcher:found", &serde_json::json!({ "q": query, "items": items }));
                     }
                     for _ in 0..3 {
                         let Some(w) = surface.take_widths() else { break };

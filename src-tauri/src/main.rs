@@ -22,6 +22,7 @@ mod tray;
 mod ui;
 mod updater;
 mod win;
+mod winsearch;
 
 fn main() {
     // The keyboard hook's helper process (keyhook.rs): nothing else of the app.

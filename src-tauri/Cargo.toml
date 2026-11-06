@@ -48,6 +48,8 @@ features = [
   "Win32_System_Pipes",
   "Win32_System_IO",
   "Win32_System_Registry",
+  # Windows Search's index for the launcher (winsearch.rs): OLE DB.
+  "Win32_System_Search",
   "Win32_System_Ole",
   "Win32_System_Shutdown",
   "Win32_System_SystemServices",

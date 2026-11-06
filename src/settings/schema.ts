@@ -669,6 +669,13 @@ const sources: Page[] = [
           },
           {
             kind: "toggle",
+            label: "Windows Search results",
+            help: "Files, folders and shortcuts from Windows' search index (what Start and Explorer search) show under the apps. Which folders it covers is up to Windows: Settings › Privacy & security › Searching Windows.",
+            path: ["widgets", "launcher", "index"],
+            default: false,
+          },
+          {
+            kind: "toggle",
             label: "Pinned apps",
             help: "Before you type, the launcher lists the apps pinned to Windows' Start menu (as many as Results shown).",
             path: ["widgets", "launcher", "pinned"],
