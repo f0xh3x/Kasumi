@@ -210,7 +210,9 @@ run in order by `settings/main.ts` when settings opens.
   (no z-order churn) — a noisy host once cost Explorer ~50% CPU.
 * **Never force-kill** Kasumi (`taskkill /F`) — the graceful quit hands the tray back
   to Explorer. The installer's hooks use the quit event.
-* Fullscreen apps hide the bars (shell processes excluded, 500 ms debounce).
+* Fullscreen apps hide the bars (shell processes excluded, 500 ms debounce): on the
+  focused monitor when the foreground window is fullscreen, on the others when their
+  front-most app window is (so two fullscreen apps hide both screens' bars).
 * Window rects use `DWMWA_EXTENDED_FRAME_BOUNDS` (maximized windows' invisible borders
   otherwise bleed into neighbour monitors).
 * **Tasks:** windows follow Alt+Tab rules; minimized windows count for the monitor

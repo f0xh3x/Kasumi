@@ -1110,7 +1110,7 @@ impl Engine {
             let sh = self.shared.lock().unwrap();
             sh.overlays.values().filter_map(|o| o.hwnd).collect()
         };
-        let fs = win::fullscreen_monitor(&ours);
+        let fs = win::fullscreen_monitors(&ours);
         // A screen-capture overlay: its monitors' bars hide at once, whatever the
         // fullscreen settings (the picture it took still has them).
         let capture = win::capture_overlay();
@@ -1141,7 +1141,8 @@ impl Engine {
                 if over_fullscreen && !o.pinned {
                     continue;
                 }
-                let fullscreen = fs.as_ref().is_some_and(|(r, _)| o.monitor.same_rect(r));
+                let why = fs.iter().find(|(r, _)| o.monitor.same_rect(r)).map(|(_, why)| why);
+                let fullscreen = why.is_some();
                 // Hide only once fullscreen has lasted a moment, so short-lived
                 // full-screen windows can't make the overlay flicker; show at once.
                 o.fullscreen_since = if fullscreen { o.fullscreen_since.or(Some(Instant::now())) } else { None };
@@ -1163,10 +1164,10 @@ impl Engine {
                     if settling && !hide {
                         continue;
                     }
-                    match (&fs, hide) {
+                    match (why, hide) {
                         (_, true) if snoozed => eprintln!("[kasumi] hiding {label}: for a while (bar menu)"),
                         (_, true) if captured => eprintln!("[kasumi] hiding {label}: screen capture"),
-                        (Some((_, why)), true) => eprintln!("[kasumi] hiding {label}: {why}"),
+                        (Some(why), true) => eprintln!("[kasumi] hiding {label}: {why}"),
                         _ => eprintln!("[kasumi] showing {label}"),
                     }
                     o.hidden = hide;

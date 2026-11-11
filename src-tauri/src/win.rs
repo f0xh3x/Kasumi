@@ -364,21 +364,104 @@ pub fn capture_overlay() -> Vec<RECT> {
         .collect()
 }
 
-/// If the foreground window is fullscreen (or a D3D exclusive / presentation app
-/// is running), returns the rect of the monitor it occupies.
-pub fn fullscreen_monitor(ours: &[isize]) -> Option<(RECT, String)> {
+/// The rect of the monitor a window is (mostly) on.
+fn monitor_rect(h: HWND) -> Option<RECT> {
     unsafe {
-        let fg = GetForegroundWindow();
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool().then_some(mi.rcMonitor)
+    }
+}
+
+fn is_desktop_class(class: &str) -> bool {
+    matches!(class, "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd")
+}
+
+/// The monitors a fullscreen app fills, with why. The foreground window decides for
+/// its own monitor; every other monitor goes by its front-most app window, so an app
+/// fullscreen there counts too while you work on another screen.
+pub fn fullscreen_monitors(ours: &[isize]) -> Vec<(RECT, String)> {
+    let fg = unsafe { GetForegroundWindow() };
+    let mut out = Vec::new();
+    // The desktop and taskbar span or belong to no one screen: they decide for none.
+    let decided = (!fg.is_invalid() && !is_desktop_class(&class_name(fg))).then(|| monitor_rect(fg)).flatten();
+    if let Some(r) = fullscreen_foreground(fg, ours) {
+        out.push(r);
+    }
+    for (mr, h) in front_windows(ours) {
+        if Some(mr) == decided || out.iter().any(|(r, _)| *r == mr) {
+            continue;
+        }
+        if let Some(why) = fills_monitor(h, &mr, None) {
+            out.push((mr, format!("{why} (not in front)")));
+        }
+    }
+    out
+}
+
+/// Per monitor, the front-most window someone could be using there (z-order): not
+/// ours, the shell, a tool / click-through / owned window, or an always-on-top one
+/// that doesn't cover the monitor (a picture-in-picture video, an overlay).
+fn front_windows(ours: &[isize]) -> Vec<(RECT, HWND)> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GW_OWNER, WS_EX_TOPMOST};
+    unsafe extern "system" fn proc(h: HWND, data: LPARAM) -> BOOL {
+        (*(data.0 as *mut Vec<HWND>)).push(h);
+        BOOL(1)
+    }
+    let mut all: Vec<HWND> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(proc), LPARAM(&mut all as *mut _ as isize));
+    }
+    // Kasumi's other windows too (the notification centre's veil covers a monitor).
+    let own = std::process::id();
+    let mut out: Vec<(RECT, HWND)> = Vec::new();
+    for h in all {
+        unsafe {
+            if ours.contains(&(h.0 as isize)) || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() || window_pid(h) == own {
+                continue;
+            }
+            let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
+            if ex & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0 {
+                continue;
+            }
+            if GetWindow(h, GW_OWNER).is_ok_and(|o| !o.is_invalid()) && ex & WS_EX_APPWINDOW.0 == 0 {
+                continue;
+            }
+            let mut cloaked = 0u32;
+            let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, 4);
+            if cloaked != 0 || is_desktop_class(&class_name(h)) {
+                continue;
+            }
+            let Some(mr) = monitor_rect(h) else { continue };
+            if out.iter().any(|(r, _)| *r == mr) {
+                continue; // that monitor has its front window already
+            }
+            let mut wr = RECT::default();
+            if GetWindowRect(h, &mut wr).is_err() || wr.right <= wr.left || wr.bottom <= wr.top {
+                continue;
+            }
+            let covers = wr.left <= mr.left && wr.top <= mr.top && wr.right >= mr.right && wr.bottom >= mr.bottom;
+            if ex & WS_EX_TOPMOST.0 != 0 && !covers {
+                continue;
+            }
+            if SHELL_PROCESSES.contains(&window_process(h).as_str()) {
+                continue;
+            }
+            out.push((mr, h));
+        }
+    }
+    out
+}
+
+/// If the foreground window is fullscreen (or a D3D exclusive / presentation app
+/// is running), the rect of the monitor it occupies.
+fn fullscreen_foreground(fg: HWND, ours: &[isize]) -> Option<(RECT, String)> {
+    unsafe {
         if fg.is_invalid() || ours.contains(&(fg.0 as isize)) {
             return None;
         }
-        let mut class = [0u16; 64];
-        let n = GetClassNameW(fg, &mut class) as usize;
-        let class = String::from_utf16_lossy(&class[..n]);
-        if matches!(
-            class.as_str(),
-            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
-        ) {
+        let class = class_name(fg);
+        if is_desktop_class(&class) {
             return None;
         }
         // Windows' own shell surfaces (Alt+Tab switcher, Start, Search, flyouts,
@@ -386,14 +469,7 @@ pub fn fullscreen_monitor(ours: &[isize]) -> Option<(RECT, String)> {
         if SHELL_PROCESSES.contains(&window_process(fg).as_str()) {
             return None;
         }
-
-        let mon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
-        let mut mi: MONITORINFO = std::mem::zeroed();
-        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if !GetMonitorInfoW(mon, &mut mi).as_bool() {
-            return None;
-        }
-        let mr = mi.rcMonitor;
+        let mr = monitor_rect(fg)?;
 
         // Windows' own view (what hides its taskbar): this asks Explorer, so poll it
         // gently (the rect check below is local).
@@ -413,24 +489,33 @@ pub fn fullscreen_monitor(ours: &[isize]) -> Option<(RECT, String)> {
         if state == Some(QUNS_RUNNING_D3D_FULL_SCREEN) || state == Some(QUNS_PRESENTATION_MODE) {
             return Some((mr, format!("exclusive fullscreen / presentation ({class})")));
         }
+        fills_monitor(fg, &mr, state).map(|why| (mr, why))
+    }
+}
 
-        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
+/// Whether a window fills monitor `mr` the way a fullscreen app does (`state`:
+/// Windows' notification state, known for the foreground window only).
+fn fills_monitor(h: HWND, mr: &RECT, state: Option<QUERY_USER_NOTIFICATION_STATE>) -> Option<String> {
+    unsafe {
+        let mr = *mr;
+        let class = class_name(h);
+        let style = GetWindowLongW(h, GWL_STYLE) as u32;
         let mut wr = RECT::default();
-        GetWindowRect(fg, &mut wr).ok()?;
+        GetWindowRect(h, &mut wr).ok()?;
         // A maximized normal window can cover the monitor when the taskbar is hidden;
         // that is not fullscreen: it overhangs the monitor by its frame. A browser's
         // fullscreen (Firefox / Zen, F11 or a video) stays "maximized" but drops its
         // title bar and fits the monitor exactly; Windows may also say so (busy), though
         // not while Explorer's taskbar is hidden.
         let fits = wr.left == mr.left && wr.top == mr.top && wr.right == mr.right && wr.bottom == mr.bottom;
-        if IsZoomed(fg).as_bool() && state != Some(QUNS_BUSY) && !(fits && style & WS_CAPTION.0 != WS_CAPTION.0) {
+        if IsZoomed(h).as_bool() && state != Some(QUNS_BUSY) && !(fits && style & WS_CAPTION.0 != WS_CAPTION.0) {
             return None;
         }
         if style & WS_CAPTION.0 == WS_CAPTION.0 {
             return None;
         }
         let covers = wr.left <= mr.left && wr.top <= mr.top && wr.right >= mr.right && wr.bottom >= mr.bottom;
-        covers.then(|| (mr, format!("{class} covers monitor ({},{},{},{})", wr.left, wr.top, wr.right, wr.bottom)))
+        covers.then(|| format!("{class} covers monitor ({},{},{},{})", wr.left, wr.top, wr.right, wr.bottom))
     }
 }
 
