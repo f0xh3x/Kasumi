@@ -337,11 +337,20 @@ const CAPTURE_PROCESSES: &[&str] = &[
 ];
 
 /// While a screen-capture tool's overlay is in front (Snipping Tool's Win+Shift+S...):
-/// the monitors it covers (one window over them all, or one per monitor).
+/// the monitors it covers (one window over them all, or one per monitor). Only the
+/// area picker counts: a frameless window that takes the clicks, not the tool's own
+/// window (even maximized) or the click-through border it draws while recording.
 pub fn capture_overlay() -> Vec<RECT> {
     unsafe extern "system" fn proc(h: HWND, data: LPARAM) -> BOOL {
         let (pid, list) = &mut *(data.0 as *mut (u32, Vec<RECT>));
-        if window_pid(h) == *pid && IsWindowVisible(h).as_bool() {
+        let picker = || {
+            let style = GetWindowLongW(h, GWL_STYLE) as u32;
+            let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
+            !IsZoomed(h).as_bool()
+                && style & (WS_CAPTION.0 | WS_THICKFRAME.0) == 0
+                && ex & WS_EX_TRANSPARENT.0 == 0
+        };
+        if window_pid(h) == *pid && IsWindowVisible(h).as_bool() && picker() {
             let mut r = RECT::default();
             if GetWindowRect(h, &mut r).is_ok() {
                 list.push(r);
@@ -508,14 +517,27 @@ fn fills_monitor(h: HWND, mr: &RECT, state: Option<QUERY_USER_NOTIFICATION_STATE
         // title bar and fits the monitor exactly; Windows may also say so (busy), though
         // not while Explorer's taskbar is hidden.
         let fits = wr.left == mr.left && wr.top == mr.top && wr.right == mr.right && wr.bottom == mr.bottom;
-        if IsZoomed(h).as_bool() && state != Some(QUNS_BUSY) && !(fits && style & WS_CAPTION.0 != WS_CAPTION.0) {
+        let zoomed = IsZoomed(h).as_bool();
+        if zoomed && state != Some(QUNS_BUSY) && !(fits && style & WS_CAPTION.0 != WS_CAPTION.0) {
             return None;
         }
-        if style & WS_CAPTION.0 == WS_CAPTION.0 {
+        // Apps that draw their own title bar (FL Studio...) have no caption either, but
+        // keep the resizing frame; going fullscreen drops it (browsers, players, games).
+        if style & WS_CAPTION.0 == WS_CAPTION.0 || style & WS_THICKFRAME.0 != 0 {
             return None;
         }
         let covers = wr.left <= mr.left && wr.top <= mr.top && wr.right >= mr.right && wr.bottom >= mr.bottom;
-        covers.then(|| format!("{class} covers monitor ({},{},{},{})", wr.left, wr.top, wr.right, wr.bottom))
+        covers.then(|| {
+            format!(
+                "{class} ({}) covers monitor ({},{},{},{}), style {style:08X}{}",
+                window_process(h),
+                wr.left,
+                wr.top,
+                wr.right,
+                wr.bottom,
+                if zoomed { ", maximized" } else { "" }
+            )
+        })
     }
 }
 
