@@ -958,6 +958,15 @@ fn run(chosen: Option<(Open, Run)>) {
                 if verb.is_empty() || verb.to_lowercase().contains("pin") {
                     crate::launcher::pins_changed();
                 }
+                // Pinned to Start (or unpinned): the dock follows.
+                let start_pin = match verb.to_lowercase().as_str() {
+                    "pintostartscreen" => Some(true),
+                    "unpinfromstartscreen" => Some(false),
+                    _ => None,
+                };
+                if let (Some(pin), Some(app), Some(id)) = (start_pin, &open.app, LAUNCHER_ID.with(|l| l.borrow().clone())) {
+                    dock_follow_start(app, &id, pin);
+                }
             }
         }
         (Run::View(cmd), Some((t, _)), _) => shell::run_view(t, cmd),
@@ -1325,7 +1334,23 @@ pub fn launcher_menu(app: tauri::AppHandle, id: String) {
         _ => None,
     };
     let entries = layout::arrange_with(&rules, &[], entries, &ctx, None, &children);
+    LAUNCHER_ID.with(|l| *l.borrow_mut() = Some(id));
     show(entries, POINT { x, y }, None, item, Some(app), Some(ctx), look(cfg.as_ref()), true, anim);
+}
+
+thread_local! {
+    /// The app the launcher's menu was last opened for (its id: launcher.rs).
+    static LAUNCHER_ID: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Pin to Start / Unpin from Start chosen for a launcher app: the dock pins or unpins
+/// it too (when it can hold the app, pinning is on, and it isn't so already).
+fn dock_follow_start(app: &tauri::AppHandle, id: &str, pin: bool) {
+    let Some(entry) = crate::launcher::dock_entry(id) else { return };
+    if crate::providers::tasks::dock_pinned(app, &entry) == Some(!pin) {
+        let app = app.clone();
+        std::thread::spawn(move || crate::providers::tasks::dock_toggle(&app, &entry));
+    }
 }
 
 /// Kasumi's own entries in the launcher's menu: the dock's pin (when the dock can hold
