@@ -112,6 +112,12 @@ pub(crate) fn battery() -> Value {
     })
 }
 
+/// Whether Windows says its battery / energy saver is on (any PC).
+pub(crate) fn saver_on() -> bool {
+    let mut s = SYSTEM_POWER_STATUS::default();
+    unsafe { GetSystemPowerStatus(&mut s) }.is_ok() && s.SystemStatusFlag == 1
+}
+
 fn network() -> Value {
     let Ok(profile) = NetworkInformation::GetInternetConnectionProfile() else {
         return json!({ "connected": false });

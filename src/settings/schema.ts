@@ -1066,6 +1066,18 @@ const sources: Page[] = [
             default: false,
           },
           {
+            kind: "select",
+            label: "Power settings",
+            help: "Energy saver, the power mode (while the Balanced plan is on) and your power plans. Or add the Power mode tile under Tiles: it opens them too.",
+            path: ["widgets", "quick", "power"],
+            default: "off",
+            options: [
+              { value: "off", label: "Off" },
+              { value: "battery", label: "Click the battery to open them" },
+              { value: "row", label: "Always shown, under battery and network" },
+            ],
+          },
+          {
             kind: "toggle",
             label: "Wi-Fi and Bluetooth tiles switch",
             help: "Their tiles turn Wi-Fi and Bluetooth on and off (lit while on) instead of opening Settings. The Dark mode tile always switches.",

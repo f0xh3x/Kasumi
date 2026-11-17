@@ -13,6 +13,7 @@ pub mod komorebi;
 pub mod media;
 pub mod notifications;
 pub mod perf;
+pub mod power;
 pub mod security;
 pub mod switches;
 pub mod systray;

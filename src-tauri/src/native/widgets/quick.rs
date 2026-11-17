@@ -20,7 +20,7 @@ use super::{fit_text, Act, Button, Ctx, Opts, Panel, Reply};
 use crate::native::gfx::{rect, rgba, white, with_alpha, Color, Font, Gfx};
 
 /// Tiles: id -> (label, glyph, what it opens) (src/quick-tiles.ts).
-const TILES: [(&str, &str, &str, &str); 17] = [
+const TILES: [(&str, &str, &str, &str); 18] = [
     ("wifi", "Wi-Fi", "\u{E701}", "ms-settings:network-wifi"),
     ("bluetooth", "Bluetooth", "\u{E702}", "ms-settings:bluetooth"),
     ("display", "Display", "\u{E7F4}", "ms-settings:display"),
@@ -39,7 +39,14 @@ const TILES: [(&str, &str, &str, &str); 17] = [
     ("kasumi", "Kasumi", "", "kasumi:settings"),
     // Switches Windows between light and dark (switches.rs).
     ("darkmode", "Dark mode", "\u{E708}", "kasumi:dark"),
+    // Opens the power box (energy saver, power mode, plans: providers/power.rs).
+    ("powermode", "Power mode", "\u{E945}", "kasumi:power"),
 ];
+/// The power box's power modes: id (providers/power.rs) and label.
+const MODES: [(&str, &str); 3] = [("efficiency", "Efficiency"), ("balanced", "Balanced"), ("performance", "Performance")];
+const SAVER_H: f32 = 26.0;
+const SEG_H: f32 = 28.0;
+const CHIP_H: f32 = 26.0;
 const DEFAULT_TILES: [&str; 6] = ["wifi", "bluetooth", "display", "sound", "power", "settings"];
 
 /// The Power tile's row: action, label, glyph, and whether it takes a second click.
@@ -88,6 +95,8 @@ enum QStyle {
 enum List {
     Outputs,
     Apps,
+    /// The power box (the battery line or the Power mode tile opened it).
+    Power,
 }
 
 /// What can be clicked, by where it was drawn (content px).
@@ -102,6 +111,11 @@ enum Hit {
     Tile(usize),
     Power(usize),
     PowerBack,
+    /// The battery line (opens the power box with [widgets.quick] power = "battery").
+    Battery,
+    Saver,
+    Mode(usize),
+    Plan(usize),
 }
 
 pub struct QuickPanel {
@@ -142,6 +156,9 @@ pub struct QuickPanel {
     /// Bluetooth devices' batteries (name, percent; providers/batteries.rs), listed under
     /// battery and network with [widgets.quick] devices.
     devices: Vec<(String, f64)>,
+    /// The power box's state (providers/power.rs state) and when it was last asked for.
+    power: Value,
+    power_asked: Option<Instant>,
 }
 
 const W: f32 = 540.0;
@@ -188,7 +205,160 @@ impl QuickPanel {
             switches: Value::Null,
             switches_asked: None,
             devices: Vec::new(),
+            power: Value::Null,
+            power_asked: None,
         }
+    }
+
+    /// Where the power box shows ([widgets.quick] power): "off", "battery" (the battery
+    /// line opens it) or "row" (always, under battery and network).
+    fn power_place(&self) -> &str {
+        self.opts.str("power").unwrap_or("off")
+    }
+
+    /// The power box can show: placed, or the Power mode tile chosen.
+    fn has_power(&self) -> bool {
+        self.power_place() != "off" || self.tiles().iter().any(|t| t.0 == "powermode")
+    }
+
+    /// Asks for the power box's state (it comes back as data).
+    fn fetch_power() -> Act {
+        Act::call(|_| crate::native::post(crate::native::Msg::Data("quick:power".into(), crate::providers::power::state())))
+    }
+
+    /// The power box's parts: Energy saver (on, off), the power mode (its index; None:
+    /// one Settings doesn't list), the plans (name, active).
+    #[allow(clippy::type_complexity)]
+    fn power_parts(&self) -> (Option<bool>, Option<Option<usize>>, Vec<(String, bool)>) {
+        let p = &self.power;
+        let saver = p.get("saver").and_then(|v| v.as_bool());
+        let mode = p.get("mode").and_then(|v| v.as_str()).map(|m| MODES.iter().position(|x| x.0 == m));
+        let plans: Vec<(String, bool)> = p
+            .get("plans")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().map(|x| (x.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(), x.get("active").and_then(|v| v.as_bool()).unwrap_or(false))).collect())
+            .unwrap_or_default();
+        // One plan is no choice.
+        (saver, mode, if plans.len() > 1 { plans } else { Vec::new() })
+    }
+
+    /// The plan chips laid out in rows `w` wide: (row, x offset, width) each.
+    fn plan_chips(&self, g: &Gfx, cx: &Ctx, w: f32) -> Vec<(usize, f32, f32)> {
+        let f = cx.secondary(12.0);
+        let (mut row, mut at) = (0usize, 0.0f32);
+        let mut out = Vec::new();
+        for (name, _) in self.power_parts().2 {
+            let cw = (g.measure(&name, &f) + 24.0).min(w);
+            if at > 0.0 && at + cw > w {
+                row += 1;
+                at = 0.0;
+            }
+            out.push((row, at, cw));
+            at += cw + 6.0;
+        }
+        out
+    }
+
+    /// The power box's height `w` wide (0: nothing to show).
+    fn power_h(&self, g: &Gfx, cx: &Ctx, w: f32) -> f32 {
+        let (saver, mode, plans) = self.power_parts();
+        let caption = line(g, &cx.secondary(11.0)) + 4.0;
+        let mut parts = Vec::new();
+        if saver.is_some() {
+            parts.push(SAVER_H);
+        }
+        if mode.is_some() {
+            parts.push(caption + SEG_H);
+        }
+        if !plans.is_empty() {
+            let rows = self.plan_chips(g, cx, w).last().map_or(0, |c| c.0 + 1) as f32;
+            parts.push(caption + rows * CHIP_H + (rows - 1.0) * 6.0);
+        }
+        if parts.is_empty() {
+            return 0.0;
+        }
+        parts.iter().sum::<f32>() + (parts.len() - 1) as f32 * 10.0
+    }
+
+    /// The power box at (x, y), `w` wide: Energy saver's switch, the power mode as a
+    /// segmented choice (locked while Energy saver is on, as Windows does), the plans
+    /// as chips. Returns the height taken.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_power(&self, cx: &Ctx, x: f32, y: f32, w: f32, alpha: f32, boxes: &mut Vec<(Hit, f32, f32, f32, f32)>, (ox, oy): (f32, f32)) -> f32 {
+        let g = cx.gfx;
+        let (saver, mode, plans) = self.power_parts();
+        let (fg, dim) = (with_alpha(cx.look.fg, alpha), with_alpha(cx.look.dimmed(), alpha));
+        let accent = if cx.opts.accent { cx.look.accent } else { cx.look.fg };
+        let dark = with_alpha(cx.look.bg, alpha);
+        let (cf, lf) = (cx.secondary(11.0), cx.secondary(12.0));
+        let caption = line(g, &cf) + 4.0;
+        let mut yy = y;
+        let mut first = true;
+        let mut gap = |yy: &mut f32| {
+            if !first {
+                *yy += 10.0;
+            }
+            first = false;
+        };
+        if let Some(on) = saver {
+            gap(&mut yy);
+            let cy = yy + SAVER_H / 2.0;
+            let hovered = self.hovered == Some(Hit::Saver);
+            g.text_at("Energy saver", &cx.body(), x, cy, fg);
+            let (sx, sy) = (x + w - 30.0, cy - 9.0);
+            let track = if on { with_alpha(accent, alpha) } else { white(if hovered { 0.3 } else { 0.2 } * alpha) };
+            g.fill_round(rect(sx, sy, 30.0, 18.0), 9.0, track);
+            g.fill_round(rect(if on { sx + 15.0 } else { sx + 3.0 }, sy + 3.0, 12.0, 12.0), 6.0, if on { dark } else { fg });
+            boxes.push((Hit::Saver, x - ox, yy - oy, w, SAVER_H));
+            yy += SAVER_H;
+        }
+        if let Some(current) = mode {
+            gap(&mut yy);
+            let locked = saver == Some(true);
+            let title = if locked { "Power mode · set by Energy saver" } else { "Power mode" };
+            g.text_at(&fit_text(g, title, &cf, w), &cf, x, yy + line(g, &cf) / 2.0, dim);
+            yy += caption;
+            let a = if locked { alpha * 0.4 } else { alpha };
+            g.fill_round(rect(x, yy, w, SEG_H), SEG_H / 2.0, white(0.06 * a));
+            let sw = w / MODES.len() as f32;
+            for (i, (_, label)) in MODES.iter().enumerate() {
+                let sx = x + i as f32 * sw;
+                let on = current == Some(i);
+                let hovered = !locked && self.hovered == Some(Hit::Mode(i));
+                if on {
+                    g.fill_round(rect(sx + 2.0, yy + 2.0, sw - 4.0, SEG_H - 4.0), (SEG_H - 4.0) / 2.0, with_alpha(accent, a));
+                } else if hovered {
+                    g.fill_round(rect(sx + 2.0, yy + 2.0, sw - 4.0, SEG_H - 4.0), (SEG_H - 4.0) / 2.0, white(0.1 * a));
+                }
+                let text = fit_text(g, label, &lf, sw - 12.0);
+                let tw = g.measure(&text, &lf);
+                let c = if on { with_alpha(cx.look.bg, a) } else if hovered { with_alpha(cx.look.fg, a) } else { with_alpha(cx.look.dimmed(), a) };
+                g.text_at(&text, &lf, sx + (sw - tw) / 2.0, yy + SEG_H / 2.0, c);
+                if !locked {
+                    boxes.push((Hit::Mode(i), sx - ox, yy - oy, sw, SEG_H));
+                }
+            }
+            yy += SEG_H;
+        }
+        if !plans.is_empty() {
+            gap(&mut yy);
+            g.text_at("Power plan", &cf, x, yy + line(g, &cf) / 2.0, dim);
+            yy += caption;
+            let chips = self.plan_chips(g, cx, w);
+            for (i, ((name, on), (row, at, cw))) in plans.iter().zip(chips.iter()).enumerate() {
+                let (bx, by) = (x + at, yy + *row as f32 * (CHIP_H + 6.0));
+                let hovered = self.hovered == Some(Hit::Plan(i));
+                let bg = if *on { with_alpha(accent, alpha) } else { white(if hovered { 0.14 } else { 0.06 } * alpha) };
+                g.fill_round(rect(bx, by, *cw, CHIP_H), CHIP_H / 2.0, bg);
+                let text = fit_text(g, name, &lf, cw - 24.0);
+                let tw = g.measure(&text, &lf);
+                g.text_at(&text, &lf, bx + (cw - tw) / 2.0, by + CHIP_H / 2.0, if *on { dark } else if hovered { fg } else { dim });
+                boxes.push((Hit::Plan(i), bx - ox, by - oy, *cw, CHIP_H));
+            }
+            let rows = chips.last().map_or(0, |c| c.0 + 1) as f32;
+            yy += rows * CHIP_H + (rows - 1.0) * 6.0;
+        }
+        yy - y
     }
 
     /// The devices line: shown with [widgets.quick] devices when there are any.
@@ -250,6 +420,7 @@ impl QuickPanel {
             let (key, v) = match list {
                 List::Outputs => ("quick:outputs", tauri::async_runtime::block_on(crate::providers::audio::audio_outputs())),
                 List::Apps => ("quick:apps", tauri::async_runtime::block_on(crate::providers::audio::audio_sessions())),
+                List::Power => ("quick:power", Ok(crate::providers::power::state())),
             };
             if let Ok(v) = v {
                 crate::native::post(crate::native::Msg::Data(key.into(), v));
@@ -304,6 +475,10 @@ impl QuickPanel {
             Some(List::Outputs) => rows(self.outputs.len(), 12.0 + line(g, &cx.secondary(12.0))),
             Some(List::Apps) if self.apps.is_empty() => line(g, &cx.secondary(12.0)),
             Some(List::Apps) => rows(self.apps.len(), 24.0),
+            Some(List::Power) => match self.power_h(g, cx, self.w() - 28.0) {
+                0.0 => line(g, &cx.secondary(12.0)),
+                h => h,
+            },
             None => 0.0,
         };
         inner + 24.0
@@ -368,12 +543,13 @@ impl QuickPanel {
 
 impl Panel for QuickPanel {
     fn keys(&self) -> &'static [&'static str] {
-        &["system", "quick:outputs", "quick:apps", "quick:switches", "batteries"]
+        &["system", "quick:outputs", "quick:apps", "quick:switches", "quick:power", "batteries"]
     }
     fn data(&mut self, key: &str, v: &Value) -> bool {
         match key {
             "system" => self.system = v.clone(),
             "quick:switches" => self.switches = v.clone(),
+            "quick:power" => self.power = v.clone(),
             "batteries" => {
                 self.devices = v
                     .get("devices")
@@ -445,11 +621,21 @@ impl Panel for QuickPanel {
             self.switches_asked = Some(Instant::now());
             self.pending = Some(Self::fetch_switches());
         }
+        // The power box's state likewise (when the switches didn't just take the turn).
+        if self.has_power() && self.power_asked.is_none_or(|t| t.elapsed() > Duration::from_secs(2)) && self.pending.is_none() {
+            self.power_asked = Some(Instant::now());
+            self.pending = Some(Self::fetch_power());
+        }
         self.box_h = self.list_h(g, cx);
         self.sliders = self.sliders_h(g, cx);
         let tiles = self.tiles_h(g, cx);
+        let power = if self.power_place() == "row" { self.power_h(g, cx, self.w()) } else { 0.0 };
         // .quick-panel: 4 px / 2 px inside the panel's padding, 14 px between its parts.
-        let h = 4.0 + self.grid_h(g, cx).round() + if tiles > 0.0 { 14.0 + 4.0 + tiles } else { 0.0 } + 4.0;
+        let h = 4.0
+            + self.grid_h(g, cx).round()
+            + if power > 0.0 { 14.0 + power.round() } else { 0.0 }
+            + if tiles > 0.0 { 14.0 + 4.0 + tiles } else { 0.0 }
+            + 4.0;
         // The open list lies over what's under the volume row: taller only if it's longer.
         let list = if self.shown_list.is_some() { self.list_y() + (self.box_h * open).round() + 4.0 } else { 0.0 };
         self.width = self.w() + 4.0;
@@ -518,11 +704,11 @@ impl Panel for QuickPanel {
         let sf = cx.secondary(cx.look.font_size);
         let sh = line(g, &sf).max(18.0);
         let cy = y + sh / 2.0;
-        let status = |sx: f32, glyph: &str, text: &str, w: f32| {
+        let status = |sx: f32, glyph: &str, text: &str, w: f32, c: Color| {
             let f = Font::icons(14.0);
             let gw = g.measure(glyph, &f);
             g.text_at(glyph, &f, sx + (18.0 - gw) / 2.0, cy + 1.0, fg);
-            g.text_at(&fit_text(g, text, &sf, w - 30.0), &sf, sx + 30.0, cy, dim);
+            g.text_at(&fit_text(g, text, &sf, w - 30.0), &sf, sx + 30.0, cy, c);
         };
         // (Rings show the battery as one of them.)
         let battery = self.battery().filter(|_| self.style != QStyle::Rings);
@@ -534,7 +720,13 @@ impl Panel for QuickPanel {
             let plugged = b.get("plugged").and_then(|c| c.as_bool()).unwrap_or(false);
             let state = if charging { "Charging".into() } else if plugged { "Plugged in".into() } else { left(b.get("secondsLeft").and_then(|s| s.as_f64())) };
             let text = format!("{}%{}", p.map_or("?".into(), |p| p.to_string()), if state.is_empty() { String::new() } else { format!(" · {state}") });
-            status(x, &battery_glyph(p.unwrap_or(0.0), charging), &text, col);
+            // With [widgets.quick] power = "battery" it opens the power box.
+            let opens = self.power_place() == "battery";
+            let lit = opens && (self.hovered == Some(Hit::Battery) || self.list == Some(List::Power));
+            status(x, &battery_glyph(p.unwrap_or(0.0), charging), &text, col, if lit { fg } else { dim });
+            if opens {
+                boxes.push((Hit::Battery, x - ox, y - oy, col, sh));
+            }
             nx = x + col + COL_GAP;
             nw = col;
         }
@@ -548,7 +740,7 @@ impl Panel for QuickPanel {
         } else {
             "Not connected".into()
         };
-        status(nx, network_glyph(&n), &net, nw);
+        status(nx, network_glyph(&n), &net, nw, dim);
         y += sh;
         // The devices' batteries: one line, each its icon and level (low ones warn).
         if self.devices_line() {
@@ -573,6 +765,11 @@ impl Panel for QuickPanel {
                 }
             }
             y += sh;
+        }
+        // The power box, always shown ([widgets.quick] power = "row").
+        if self.power_place() == "row" && self.power_h(g, cx, self.w()) > 0.0 {
+            y += 14.0;
+            y += self.draw_power(cx, x, y, self.w(), alpha, &mut boxes, (ox, oy)).round();
         }
         // Tiles: one row filling the width; three or fewer are slim pills. After a click
         // on Power: the power tiles instead, a back tile first.
@@ -750,6 +947,47 @@ impl Panel for QuickPanel {
                 self.armed = None;
                 Reply::Redraw
             }
+            Some(Hit::Battery) => self.open_power(),
+            Some(h @ (Hit::Saver | Hit::Mode(_) | Hit::Plan(_))) => {
+                // Shown at once, then read back from Windows (Energy saver takes a moment).
+                let map = self.power.as_object_mut();
+                let change: Box<dyn FnOnce() -> Result<(), String> + Send> = match h {
+                    Hit::Saver => {
+                        let on = !map.as_ref().and_then(|m| m.get("saver")).and_then(|v| v.as_bool()).unwrap_or(false);
+                        if let Some(m) = map {
+                            m.insert("saver".into(), Value::Bool(on));
+                        }
+                        Box::new(move || crate::providers::power::set_saver(on))
+                    }
+                    Hit::Mode(i) => {
+                        let id = MODES[i].0;
+                        if let Some(m) = map {
+                            m.insert("mode".into(), Value::String(id.into()));
+                        }
+                        Box::new(move || crate::providers::power::set_mode(id))
+                    }
+                    Hit::Plan(i) => {
+                        let mut id = String::new();
+                        if let Some(plans) = map.and_then(|m| m.get_mut("plans")).and_then(|p| p.as_array_mut()) {
+                            for (k, p) in plans.iter_mut().enumerate() {
+                                if k == i {
+                                    id = p.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                }
+                                p["active"] = Value::Bool(k == i);
+                            }
+                        }
+                        Box::new(move || crate::providers::power::set_plan(&id))
+                    }
+                    _ => return Reply::None,
+                };
+                Reply::Do(Act::call(move |_| {
+                    if let Err(e) = change() {
+                        eprintln!("[kasumi] quick settings: {e}");
+                    }
+                    std::thread::sleep(Duration::from_millis(400));
+                    crate::native::post(crate::native::Msg::Data("quick:power".into(), crate::providers::power::state()));
+                }))
+            }
             Some(Hit::Tile(i)) => {
                 let id = self.tiles().get(i).map(|t| t.0).unwrap_or("");
                 let target = self.tiles().get(i).map(|t| t.3).unwrap_or("");
@@ -774,6 +1012,9 @@ impl Panel for QuickPanel {
                     self.power_row = true;
                     return Reply::Redraw;
                 }
+                if id == "powermode" {
+                    return self.open_power();
+                }
                 if target == "kasumi:settings" {
                     Reply::CloseAnd(Act::call(|app| crate::settings::open(&app)))
                 } else {
@@ -790,6 +1031,10 @@ impl Panel for QuickPanel {
             Hit::Expand(0) => Some("Volume per app".into()),
             Hit::Expand(_) => Some("Output device".into()),
             Hit::Display => Some("Display settings".into()),
+            Hit::Battery => Some("Power settings".into()),
+            Hit::Saver => Some(format!("Energy saver: {}", if self.power_parts().0 == Some(true) { "on" } else { "off" })),
+            Hit::Mode(i) => Some(["Best power efficiency", "Balanced", "Best performance"][i].into()),
+            Hit::Plan(i) => self.power_parts().2.get(i).map(|p| p.0.clone()),
             Hit::Output(i) => self.outputs.get(i).map(|o| o.1.clone()),
             Hit::Track(Slider::Volume) => Some(format!("Volume {}%", self.value(Slider::Volume).round())),
             Hit::Track(Slider::Brightness) => Some(format!("Brightness {}%", self.value(Slider::Brightness).round())),
@@ -817,6 +1062,15 @@ impl Panel for QuickPanel {
 }
 
 impl QuickPanel {
+    /// Opens (or closes) the power box in the list's place, read fresh from Windows.
+    fn open_power(&mut self) -> Reply {
+        self.toggle_list(List::Power);
+        match self.pending.take() {
+            Some(a) => Reply::Do(a),
+            None => Reply::Redraw,
+        }
+    }
+
     /// Where the list box starts (content px): under the volume row.
     fn list_y(&self) -> f32 {
         4.0 + self.sliders
@@ -926,7 +1180,12 @@ impl QuickPanel {
                 let fill = if p <= 20.0 && !charging { with_alpha(cx.look.warn, alpha) } else { rgba(0.11, 0.73, 0.33, alpha) };
                 g.ring(rx, cy, r, 5.0, (p / 100.0) as f32, white(0.14 * alpha), fill);
                 centred(&battery_glyph(p, charging), &Font::icons(16.0), rx, cy + 1.0, fg);
-                centred(&format!("{}%", p.round()), &vf, rx, label_y, dim);
+                let lit = self.hovered == Some(Hit::Battery) || self.list == Some(List::Power);
+                centred(&format!("{}%", p.round()), &vf, rx, label_y, if lit { fg } else { dim });
+                // With [widgets.quick] power = "battery" it opens the power box.
+                if self.power_place() == "battery" {
+                    boxes.push((Hit::Battery, rx - RING_D / 2.0 - ox, y - oy, RING_D, RING_D));
+                }
             }
             return RING_D + 4.0 + line(g, &vf) + 12.0;
         }
@@ -990,6 +1249,14 @@ impl QuickPanel {
     fn tile_note(&self, id: &str) -> String {
         let n = self.system.get("network");
         let net = n.filter(|n| n.get("connected").and_then(|c| c.as_bool()).unwrap_or(false) && n.get("wifi").and_then(|w| w.as_bool()).unwrap_or(false)).and_then(|n| n.get("name")).and_then(|v| v.as_str());
+        if id == "powermode" {
+            // The mode while there is one, else the plan.
+            let (_, mode, plans) = self.power_parts();
+            return match mode {
+                Some(Some(i)) => MODES[i].1.to_string(),
+                _ => plans.iter().find(|p| p.1).map(|p| p.0.clone()).unwrap_or_default(),
+            };
+        }
         match (id, self.switch(id)) {
             ("wifi", Some(Some(false))) => "Off".into(),
             ("wifi", _) => net.unwrap_or("").to_string(),
@@ -1162,6 +1429,15 @@ impl QuickPanel {
             Some(List::Apps) if self.apps.is_empty() => {
                 let f = cx.secondary(12.0);
                 g.text_at("No apps are playing sound.", &f, ix, iy + line(g, &f) / 2.0, with_alpha(cx.look.dimmed(), a));
+            }
+            Some(List::Power) => {
+                if self.power_h(g, cx, iw) == 0.0 {
+                    let f = cx.secondary(12.0);
+                    let text = if self.power.is_null() { "…" } else { "No power settings to change on this PC." };
+                    g.text_at(text, &f, ix, iy + line(g, &f) / 2.0, with_alpha(cx.look.dimmed(), a));
+                } else {
+                    self.draw_power(cx, ix, iy, iw, a, boxes, (ox, oy));
+                }
             }
             Some(List::Apps) => {
                 for (i, (pid, _, _, muted)) in self.apps.iter().enumerate() {

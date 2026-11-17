@@ -19,6 +19,8 @@ export const QUICK_TILES: Record<string, [label: string, glyph: number, target: 
   kasumi: ["Kasumi", 0, "kasumi:settings"],
   // Switches Windows between light and dark (native quick settings).
   darkmode: ["Dark mode", 0xe708, "kasumi:dark"],
+  // Opens Energy saver, the power mode and the power plans (native quick settings).
+  powermode: ["Power mode", 0xe945, "kasumi:power"],
 };
 
 /** Kasumi's logo (src-tauri/icons/kasumi-mark.svg) in the text colour, glyph-sized. */
