@@ -120,19 +120,39 @@ fn set(h: HANDLE, on: bool) {
 
 // --- In the app ----------------------------------------------------------------
 
-/// Starts the helper, and hands the volume key presses it signals to `on_volume`.
+/// Starts the helper (again if it ends: the Windows key, Alt + Tab and the volume keys
+/// all went dead until Kasumi restarted), and hands the volume key presses it
+/// signals to `on_volume`. Its switches live in the named events, so a new helper
+/// carries on as the last one was told.
 pub fn start(on_volume: fn(VolumeKey)) {
+    use std::time::{Duration, Instant};
     let ev = events();
-    let exe = std::env::current_exe();
-    let spawn = |exe| {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new(exe).arg("--keyhook").arg(std::process::id().to_string()).creation_flags(CREATE_NO_WINDOW).spawn()
-    };
-    match exe.and_then(spawn) {
-        Ok(_) => {}
-        Err(e) => eprintln!("[kasumi] keyboard helper didn't start: {e}"),
-    }
+    std::thread::Builder::new()
+        .name("kasumi-keyhelper".into())
+        .spawn(|| {
+            let spawn = || {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                let exe = std::env::current_exe()?;
+                std::process::Command::new(exe).arg("--keyhook").arg(std::process::id().to_string()).creation_flags(CREATE_NO_WINDOW).spawn()
+            };
+            // Ending again and again (within a minute each time): give up after a few.
+            let mut quick = 0;
+            loop {
+                let since = Instant::now();
+                match spawn().and_then(|mut c| c.wait()) {
+                    Ok(status) => eprintln!("[kasumi] keyboard helper ended ({status})"),
+                    Err(e) => eprintln!("[kasumi] keyboard helper didn't start: {e}"),
+                }
+                quick = if since.elapsed() < Duration::from_secs(60) { quick + 1 } else { 0 };
+                if quick >= 5 {
+                    eprintln!("[kasumi] keyboard helper keeps ending; not starting it again");
+                    return;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        })
+        .expect("spawn keyboard helper thread");
     let volume = ev.volume.map(|h| h.0 as isize);
     std::thread::Builder::new()
         .name("kasumi-volumekeys".into())

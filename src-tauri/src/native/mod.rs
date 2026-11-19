@@ -190,6 +190,7 @@ const WM_WAKE: u32 = WM_APP + 1;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const TIMER_WIDGETS: usize = 1;
 const TIMER_SCROLL: usize = 2;
+const TIMER_INBOX: usize = 3;
 
 /// Hands a message to the native thread.
 pub fn post(msg: Msg) {
@@ -873,9 +874,16 @@ unsafe extern "system" fn wake_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 report(n);
             });
             if handled.is_none() {
-                // Busy (a call that pumps messages): the messages wait in the channel.
-                let _ = PostMessageW(Some(hwnd), WM_WAKE, WPARAM(0), LPARAM(0));
+                // Busy (a call that pumps messages): the messages wait in the channel
+                // and are looked at again shortly. Posting the wake again at once spun a
+                // core for as long as that call lasted.
+                SetTimer(Some(hwnd), TIMER_INBOX, 15, None);
             }
+            LRESULT(0)
+        }
+        WM_TIMER if wp.0 == TIMER_INBOX => {
+            let _ = KillTimer(Some(hwnd), TIMER_INBOX);
+            let _ = PostMessageW(Some(hwnd), WM_WAKE, WPARAM(0), LPARAM(0));
             LRESULT(0)
         }
         WM_TIMER if wp.0 == TIMER_SCROLL => {

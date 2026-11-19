@@ -303,8 +303,12 @@ pub fn build(t: &Target, hit: &Hit, shift: bool) -> Option<Built> {
             (|| {
                 let sel: IShellItemArray = t.view.GetSelection(false).ok()?;
                 ctx.kind = selection_kind(&sel, &mut ctx.paths);
+                // A folder with no path of its own (This PC, Network, a library) keeps the
+                // view's: indexing the empty list crashed the menu helper.
                 if ctx.kind == Kind::Folder || ctx.kind == Kind::Drive {
-                    ctx.here = ctx.paths[0].clone();
+                    if let Some(p) = ctx.paths.first() {
+                        ctx.here = p.clone();
+                    }
                 }
                 let n = sel.GetCount().ok()?;
                 let mut pidls: Vec<*mut ITEMIDLIST> = Vec::new();

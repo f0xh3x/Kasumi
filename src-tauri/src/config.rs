@@ -1164,6 +1164,23 @@ pub fn path() -> PathBuf {
     dir().join("config.toml")
 }
 
+/// Held while config.toml is read, changed and written back: the settings page saves
+/// in parallel (a slider sends many), and two edits at once each read the old file,
+/// so one of them was lost.
+pub static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Replaces config.toml in one step (written beside it, then moved over it), so the
+/// hot reload and an edit never read it half written.
+pub fn write(text: &str) -> std::io::Result<()> {
+    let p = path();
+    let tmp = p.with_extension("toml.tmp");
+    fs::write(&tmp, text)?;
+    fs::rename(&tmp, &p).or_else(|_| {
+        let _ = fs::remove_file(&tmp);
+        fs::write(&p, text)
+    })
+}
+
 /// Loads the user config, writing the default one first if none exists.
 pub fn load() -> Result<Config, String> {
     let p = path();

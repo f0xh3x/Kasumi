@@ -45,6 +45,7 @@ pub async fn config_write_many(ops: Vec<Op>) -> Result<(), String> {
 }
 
 fn write_ops(ops: Vec<Op>) -> Result<(), String> {
+    let _held = config::WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let file = config::path();
     let text = fs::read_to_string(&file).map_err(|e| e.to_string())?;
     let mut doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
@@ -59,13 +60,14 @@ fn write_ops(ops: Vec<Op>) -> Result<(), String> {
     // Never write a config the app can't load.
     let cfg: Config = toml::from_str(&new_text).map_err(|e| format!("invalid setting: {e}"))?;
     cfg.validate()?;
-    fs::write(&file, new_text).map_err(|e| e.to_string())
+    config::write(&new_text).map_err(|e| e.to_string())
 }
 
 /// Replaces the whole file with the built-in default config.
 #[tauri::command]
 pub async fn config_reset() -> Result<(), String> {
-    fs::write(config::path(), config::DEFAULT_CONFIG).map_err(|e| e.to_string())
+    let _held = config::WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    config::write(config::DEFAULT_CONFIG).map_err(|e| e.to_string())
 }
 
 fn edit(root: &mut Item, path: &[Seg], value: Option<Json>) -> Result<(), String> {

@@ -21,7 +21,7 @@ import {
   surfaceName,
   type Op,
 } from "./editors";
-import { $, glyph, row, segmented, toggleSwitch } from "./dom";
+import { $, glyph, iconButton, row, segmented, toggleSwitch } from "./dom";
 import { kasumiLogo } from "../quick-tiles";
 import { areaOf, areas, pageAliases, pages, type Cfg, type Field, type Page, type Path, type Section } from "./schema";
 import { renderNotes, renderSetup, type Host } from "./setup";
@@ -113,6 +113,45 @@ function toast(text: string, error = false, undoable = false): void {
   toastTimer = window.setTimeout(() => t.classList.remove("show"), error ? 4000 : undoable ? 5000 : 1200);
 }
 
+// --- Restart note -----------------------------------------------------------------
+
+/** Put away for this window (it comes back the next time Settings opens). */
+let restartDismissed = false;
+
+/** A setting changed: a note at the bottom recommends restarting Kasumi, with the
+ *  button. Changes apply at once, but a restart rebuilds everything from scratch. */
+function changed(): void {
+  if (VIEW || restartDismissed) return;
+  const note = document.getElementById("restart-note")!;
+  if (note.classList.contains("show")) return;
+  const go = $("button", "button restart-go", "Restart Kasumi") as HTMLButtonElement;
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    go.textContent = "Restarting…";
+    try {
+      await invoke("restart_app");
+    } catch (e) {
+      go.disabled = false;
+      go.textContent = "Restart Kasumi";
+      toast(String(e), true);
+    }
+  });
+  const close = iconButton(0xe711, "Not now", () => {
+    restartDismissed = true;
+    note.classList.remove("show");
+    document.body.classList.remove("restart-shown");
+  });
+  close.classList.add("restart-close");
+  note.replaceChildren(
+    glyph(0xe72c),
+    $("div", "restart-text", $("div", "restart-title", "Restart recommended"), $("div", "restart-help", "Your changes are already on. For the most reliable, bug-free experience, restart Kasumi after changing settings.")),
+    go,
+    close,
+  );
+  note.classList.add("show");
+  document.body.classList.add("restart-shown");
+}
+
 // --- Undo -------------------------------------------------------------------------
 
 /** What each change replaced (newest last): Undo (or Ctrl+Z) puts it back. */
@@ -127,6 +166,7 @@ async function undoLast(): Promise<void> {
     await invoke("config_write_many", { ops });
     last.forEach((c) => setIn(cfg, c.path, c.before));
     toast("Undone");
+    changed();
   } catch (e) {
     toast(String(e), true);
   }
@@ -170,6 +210,7 @@ async function save(path: Path, value: unknown): Promise<void> {
     setIn(cfg, path, value);
     history.push([{ path, before: was }]);
     toast("Saved", false, true);
+    changed();
     // A setting that shows or hides others: redraw (not on every save: a slider
     // being dragged would lose its grip). The setup's own fields: always.
     if (VIEW || shownFields() !== before) render();
@@ -188,6 +229,7 @@ async function saveMany(ops: Op[]): Promise<void> {
     // In reverse, so putting them back undoes later edits first.
     history.push(was.reverse());
     toast("Saved", false, true);
+    changed();
   } catch (e) {
     toast(String(e), true);
   }
@@ -221,7 +263,10 @@ function control(f: Field): HTMLElement | null {
       saveMany,
       toast,
       rerender: () => render(),
-      reload: load,
+      reload: async () => {
+        await load();
+        changed();
+      },
       goto,
     });
   }
@@ -257,6 +302,7 @@ function control(f: Field): HTMLElement | null {
           await invoke("config_reset");
           await load();
           toast("Reset to defaults");
+          changed();
         } else if (f.run === "setup") {
           await invoke("open_setup_window");
         } else if (f.run === "notes") {

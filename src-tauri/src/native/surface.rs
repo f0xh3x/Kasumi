@@ -488,6 +488,17 @@ impl Surface {
         self.drops.clear();
         self.widgets.clear();
         self.panels.clear();
+        // What pointed into those lists points at nothing now: a settings change once
+        // left Alt + Tab's panel index behind, and its next opening crashed the bars.
+        self.alt_panel = None;
+        self.alt = None;
+        self.alt_replace = false;
+        self.hover_panel = None;
+        if self.captured.take().is_some() | self.captured_widget.take().is_some() {
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+        }
         let dock = self.dock();
         let notched: Vec<String> = if dock { Vec::new() } else { self.layout.notches.iter().flat_map(|n| n.widgets.clone()).collect() };
 

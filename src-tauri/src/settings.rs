@@ -83,27 +83,40 @@ pub async fn open_notes_window(app: AppHandle, version: Option<String>) {
     open_notes(&app, version.as_deref().unwrap_or(env!("CARGO_PKG_VERSION")));
 }
 
+/// Started by Settings' "Restart Kasumi": Settings opens again once it's up.
+const REOPEN_SETTINGS: &str = "--reopen-settings";
+
+/// Settings' "Restart Kasumi": a new Kasumi starts and takes over (the running one
+/// quits gracefully, instance.rs), then opens Settings again.
+#[tauri::command]
+pub async fn restart_app() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    eprintln!("[kasumi] restarting from Settings");
+    std::process::Command::new(exe).arg(REOPEN_SETTINGS).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// At start: a first run (no config.toml before this start) opens Settings (the
-/// first-time setup is paused until it's reworked); a new version since the last
-/// start shows what's new (`[general] update_notes`).
+/// first-time setup is paused until it's reworked), as does a restart from Settings;
+/// a new version since the last start shows what's new (`[general] update_notes`).
 /// The version is remembered in `last-version` beside the config.
 pub fn startup(app: &AppHandle, first_run: bool) {
     let marker = crate::config::dir().join("last-version");
     let current = env!("CARGO_PKG_VERSION");
     let last = std::fs::read_to_string(&marker).ok().map(|s| s.trim().to_string());
     let _ = std::fs::write(&marker, current);
+    let reopen = std::env::args().any(|a| a == REOPEN_SETTINGS);
     // Nothing remembered on an existing setup: updated from a version before this one.
     let updated = !first_run && last.as_deref() != Some(current);
     let notes = updated && app.state::<crate::providers::SharedConfig>().read().unwrap().general.update_notes;
-    if !first_run && !notes {
+    if !first_run && !notes && !reopen {
         return;
     }
     let app = app.clone();
     std::thread::spawn(move || {
         // Once the bars are up.
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        if first_run {
-            eprintln!("[kasumi] first run: opening settings");
+        std::thread::sleep(std::time::Duration::from_secs(if reopen { 1 } else { 3 }));
+        if first_run || reopen {
+            eprintln!("[kasumi] {}: opening settings", if first_run { "first run" } else { "restarted from Settings" });
             open(&app);
         } else {
             eprintln!("[kasumi] updated from {}: showing what's new", last.as_deref().unwrap_or("an older version"));

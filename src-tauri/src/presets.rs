@@ -170,11 +170,11 @@ pub async fn preset_apply(name: String) -> Result<(), String> {
         Ok(t) => t,
         Err(e) => SHIPPED.iter().find(|(n, _)| *n == name.trim()).map(|(_, t)| t.to_string()).ok_or(e.to_string())?,
     };
+    let _held = config::WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let text = with_personal(&text, &fs::read_to_string(config::path()).unwrap_or_default());
     toml::from_str::<config::Config>(&text).map_err(|e| format!("This preset isn't a valid config: {e}"))?;
-    let path = config::path();
-    let _ = fs::copy(&path, config::dir().join("config.before-preset.toml"));
-    fs::write(path, text).map_err(|e| e.to_string())
+    let _ = fs::copy(config::path(), config::dir().join("config.before-preset.toml"));
+    config::write(&text).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

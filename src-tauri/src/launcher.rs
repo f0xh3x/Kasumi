@@ -700,9 +700,11 @@ pub fn start(app: &AppHandle) {
                     continue;
                 }
                 if msg.message == WM_TIMER && msg.hwnd.is_invalid() {
+                    // The engine shares the config once it has read it: until then, wait
+                    // (asking earlier panicked, and this thread died with every hotkey).
+                    let Some(cfg) = app.try_state::<crate::providers::SharedConfig>() else { continue };
                     let want = {
-                        let cfg = app.state::<crate::providers::SharedConfig>();
-                        let cfg = cfg.read().unwrap();
+                        let cfg = cfg.read().unwrap_or_else(|e| e.into_inner());
                         let start = cfg.launcher.enabled && cfg.launcher.start_menu;
                         if start != start_registered {
                             start_registered = start;
