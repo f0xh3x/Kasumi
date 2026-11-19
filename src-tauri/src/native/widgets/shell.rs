@@ -707,12 +707,15 @@ impl Widget for Tray {
                 }
             }
         }
-        // A bare chevron as before; with a count or sliding, a button around it.
+        // A bare chevron (also sliding: an icon-wide cell left ~9 px empty on each side
+        // of the narrow arrow, a wider gap than the bar's); with a count, a button around it.
         let g = cx.gfx.measure(self.glyph(), &crate::native::gfx::Font::icons(14.0));
         self.chev_w = if self.counted() {
             8.0 + g + 5.0 + cx.gfx.measure(&self.behind().len().to_string(), &cx.secondary(11.0)) + 8.0
         } else if self.slides() {
-            self.cell().0
+            // › and ‹ are 6 px of ink in a 14 px glyph: fit the cell closer to it
+            // (drawn centred; its sides overhang into the bar's gap).
+            g * 0.6
         } else {
             g
         };
@@ -728,7 +731,9 @@ impl Widget for Tray {
             // With hover highlights on: a box behind the icon (or the arrow's button) under the cursor.
             let boxed = matches!(c.hit, TrayHit::Icon(_)) || self.counted() || self.slides();
             if cx.opts.hover && boxed && self.hovered == Some(c.hit) {
-                g.fill_round(rect(x + c.x, cy - side / 2.0, c.w, side), 8.0, with_alpha(cx.hover_bg(0.12), a));
+                // The sliding arrow's box stays icon-sized around its narrower cell.
+                let bw = c.w.max(side);
+                g.fill_round(rect(x + c.x - (bw - c.w) / 2.0, cy - side / 2.0, bw, side), 8.0, with_alpha(cx.hover_bg(0.12), a));
             }
             match c.hit {
                 TrayHit::Icon(i) => {
