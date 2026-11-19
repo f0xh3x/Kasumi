@@ -1592,6 +1592,68 @@ interface Preset {
   current: boolean;
 }
 
+/** A "More options" button (three dots) with a small menu under it. An entry with
+ *  `confirm` asks for a second click (it turns red with that text) before it runs. */
+function moreMenu(entries: { label: string; icon: number; confirm?: string; run: () => void }[]): HTMLButtonElement {
+  const b = iconButton(0xe712, "More options", () => {});
+  b.setAttribute("aria-haspopup", "menu");
+  b.setAttribute("aria-expanded", "false");
+  let menu: HTMLElement | null = null;
+  const close = () => {
+    menu?.remove();
+    menu = null;
+    b.setAttribute("aria-expanded", "false");
+    removeEventListener("pointerdown", outside, true);
+    removeEventListener("keydown", esc, true);
+    removeEventListener("blur", close);
+    document.removeEventListener("scroll", close, true);
+  };
+  const outside = (e: Event) => {
+    if (!menu?.contains(e.target as Node) && !b.contains(e.target as Node)) close();
+  };
+  const esc = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+      b.focus();
+    }
+  };
+  b.addEventListener("click", () => {
+    if (menu) return close();
+    menu = $("div", "more-menu");
+    menu.setAttribute("role", "menu");
+    for (const en of entries) {
+      const text = $("span", "", en.label);
+      const item = $("button", "more-item", glyph(en.icon), text);
+      item.setAttribute("role", "menuitem");
+      item.addEventListener("click", () => {
+        if (en.confirm && !item.classList.contains("danger")) {
+          item.classList.add("danger");
+          text.textContent = en.confirm;
+          return;
+        }
+        close();
+        en.run();
+      });
+      menu.append(item);
+    }
+    // On the page itself (a card would clip it), under the button's right edge.
+    document.body.append(menu);
+    const r = b.getBoundingClientRect();
+    menu.style.top = `${r.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+    const below = innerHeight - menu.offsetHeight - 8;
+    if (r.bottom + 4 > below) menu.style.top = `${Math.max(8, r.top - 4 - menu.offsetHeight)}px`;
+    b.setAttribute("aria-expanded", "true");
+    addEventListener("pointerdown", outside, true);
+    addEventListener("keydown", esc, true);
+    addEventListener("blur", close);
+    document.addEventListener("scroll", close, true);
+    (menu.firstElementChild as HTMLElement | null)?.focus();
+  });
+  return b;
+}
+
 /** First click arms the button (red, with a hint), a second within 3s runs it. */
 function confirmClick(b: HTMLButtonElement, hint: string, run: () => void): void {
   let timer = 0;
@@ -1658,7 +1720,7 @@ function presets(ctx: EditorCtx): HTMLElement {
       }
     });
 
-    const rename = iconButton(0xe8ac, "Rename", () => {
+    const rename = () => {
       const field = input(p.name, "Preset name");
       field.classList.add("preset-rename");
       let finished = false;
@@ -1683,10 +1745,9 @@ function presets(ctx: EditorCtx): HTMLElement {
       label.replaceWith(field);
       field.focus();
       field.select();
-    });
+    };
 
-    const remove = iconButton(0xe74d, "Delete", () => {});
-    confirmClick(remove, "Click again to delete", async () => {
+    const remove = async () => {
       try {
         await invoke("preset_delete", { name: p.name });
         ctx.toast(`Deleted “${p.name}”`);
@@ -1694,9 +1755,14 @@ function presets(ctx: EditorCtx): HTMLElement {
         fail(e);
       }
       await refresh();
-    });
+    };
 
-    return $("div", "row", text, $("div", "row-control preset-actions", update, rename, remove, apply));
+    // Rename and Delete under "More options", away from Apply (easy to hit by mistake).
+    const more = moreMenu([
+      { label: "Rename", icon: 0xe8ac, run: rename },
+      { label: "Delete", icon: 0xe74d, confirm: "Click again to delete", run: remove },
+    ]);
+    return $("div", "row", text, $("div", "row-control preset-actions", update, apply, more));
   };
 
   // Save the current setup.

@@ -480,6 +480,15 @@ body.maximized { border: 0; border-radius: 0; }
 .preset-actions .button { margin-left: 6px; min-width: 84px; }
 .preset-actions .button:disabled { opacity: 0.45; cursor: default; background: var(--raised); }
 .preset-actions .icon-button.danger { background: rgba(255, 80, 80, 0.25); }
+.preset-actions .button + .icon-button { margin-left: 2px; }
+
+/* A "More options" menu (editors.ts moreMenu), on the page so no card clips it. */
+.more-menu { position: fixed; z-index: 30; min-width: 150px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6); }
+.more-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
+.more-item .icon { font-size: 13px; color: var(--dim); }
+.more-item:hover, .more-item:focus-visible { background: rgba(255, 255, 255, 0.08); outline: none; }
+.more-item.danger, .more-item.danger .icon { color: #ff6b6b; }
+.more-item.danger:hover { background: rgba(255, 80, 80, 0.15); }
 .preset-tag {
   margin-left: 8px;
   padding: 1px 8px;
