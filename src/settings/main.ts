@@ -115,15 +115,26 @@ function toast(text: string, error = false, undoable = false): void {
 
 // --- Restart note -----------------------------------------------------------------
 
-/** Put away for this window (it comes back the next time Settings opens). */
-let restartDismissed = false;
+/** Settings changed since this window opened (and the note wasn't put away). */
+let restartWanted = false;
 
-/** A setting changed: a note at the bottom recommends restarting Kasumi, with the
- *  button. Changes apply at once, but a restart rebuilds everything from scratch. */
+/** A setting changed: the sidebar's foot recommends restarting Kasumi. Changes apply
+ *  at once, but a restart builds everything from scratch. */
 function changed(): void {
-  if (VIEW || restartDismissed) return;
-  const note = document.getElementById("restart-note")!;
-  if (note.classList.contains("show")) return;
+  if (VIEW || restartWanted) return;
+  restartWanted = true;
+  const nav = document.querySelector(".nav");
+  if (!nav || nav.querySelector(".restart-note")) return;
+  const note = restartNote();
+  nav.insertBefore(note, nav.querySelector(".nav-foot"));
+  // A long sidebar (a widget's page) would have it out of sight below.
+  note.scrollIntoView({ block: "nearest" });
+}
+
+/** The note: a line and the button, above the version (render() draws it again). */
+function restartNote(): HTMLElement {
+  const note = $("div", "restart-note");
+  note.setAttribute("role", "status");
   const go = $("button", "button restart-go", "Restart Kasumi") as HTMLButtonElement;
   go.addEventListener("click", async () => {
     go.disabled = true;
@@ -137,19 +148,12 @@ function changed(): void {
     }
   });
   const close = iconButton(0xe711, "Not now", () => {
-    restartDismissed = true;
-    note.classList.remove("show");
-    document.body.classList.remove("restart-shown");
+    restartWanted = false;
+    note.remove();
   });
   close.classList.add("restart-close");
-  note.replaceChildren(
-    glyph(0xe72c),
-    $("div", "restart-text", $("div", "restart-title", "Restart recommended"), $("div", "restart-help", "Your changes are already on. For the most reliable, bug-free experience, restart Kasumi after changing settings.")),
-    go,
-    close,
-  );
-  note.classList.add("show");
-  document.body.classList.add("restart-shown");
+  note.append($("div", "restart-head", $("span", "restart-title", "Restart recommended"), close), $("div", "restart-help", "Changes are on; a restart keeps Kasumi bug-free."), go);
+  return note;
 }
 
 // --- Undo -------------------------------------------------------------------------
@@ -659,6 +663,7 @@ function render(): void {
     return;
   }
   const scroll = app.querySelector(".content")?.scrollTop ?? 0;
+  const navScroll = app.querySelector(".nav")?.scrollTop ?? 0;
   const nav = $("nav", "nav");
   // Search: typing redraws only the content, so the field keeps the focus.
   const search = $("input", "input nav-search") as HTMLInputElement;
@@ -725,7 +730,9 @@ function render(): void {
   const foot = $("div", "nav-foot");
   foot.innerHTML =
     '<svg viewBox="0 0 188.17 40.54" aria-hidden="true"><path d="M179.95,24.1h-76.73c-2.12,0-3.83-1.72-3.83-3.83s1.72-3.83,3.83-3.83h23.32c4.54,0,8.22-3.68,8.22-8.22s-3.68-8.22-8.22-8.22H8.22C3.68,0,0,3.68,0,8.22s3.68,8.22,8.22,8.22h67.68c2.12,0,3.83,1.72,3.83,3.83s-1.72,3.83-3.83,3.83h-14.27c-4.54,0-8.22,3.68-8.22,8.22h0c0,4.54,3.68,8.22,8.22,8.22h118.33c4.54,0,8.22-3.68,8.22-8.22h0c0-4.54-3.68-8.22-8.22-8.22Z"/></svg>';
+  if (restartWanted) nav.append(restartNote());
   nav.append(foot);
+  nav.scrollTop = navScroll;
   invoke<string>("app_version").then((v) => foot.append($("div", "version", `v${v}`)));
 }
 
